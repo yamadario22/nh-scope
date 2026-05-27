@@ -652,7 +652,7 @@
   function saveApiKey()    {}
   function updateKeyStatus() {}
 
-  async function callGemini(parts, systemText, maxTok=16000, retry=3) {
+  async function callGemini(parts, systemText, maxTok=16000, retry=2) {
     const key   = getApiKey();
     const model = getModel();
     if (!key)   throw new Error('APIキーが設定されていません。「🔑 APIキー設定」から入力してください。');
@@ -675,17 +675,24 @@
         if (!res.ok) {
           const e = await res.json().catch(()=>({}));
           const msg = e?.error?.message || 'Gemini API Error ' + res.status;
-          // 混雑エラーはリトライ
-          if (msg.includes('high demand') || msg.includes('overloaded') || res.status === 503 || res.status === 429) {
-            if (i < retry - 1) { await sleep(5000 * (i + 1)); continue; }
+
+          // quota超過はリトライしない（1日の上限に達している）
+          if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+            throw new Error('API利用上限に達しました。使用モデルを変更するか、明日また試してください。\n詳細：' + msg.substring(0, 200));
+          }
+          // 混雑エラーのみ1回だけリトライ
+          if ((msg.includes('high demand') || msg.includes('overloaded') || res.status === 503) && i < retry - 1) {
+            await sleep(20000);
+            continue;
           }
           throw new Error(msg);
         }
         const d = await res.json();
         return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
       } catch(e) {
+        if (e.message.includes('利用上限')) throw e;
         if (i < retry - 1 && (e.message.includes('high demand') || e.message.includes('fetch'))) {
-          await sleep(5000 * (i + 1));
+          await sleep(20000);
           continue;
         }
         throw e;
