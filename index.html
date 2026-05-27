@@ -241,7 +241,6 @@
   <select class="book-select" id="bookSel" onchange="switchBook(this.value)"></select>
   <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
   <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
-  <button class="btn btn-ghost btn-sm" onclick="resetLibrary()" style="margin-left:auto;font-size:11px">↺ 初期化</button>
 </div>
 
 <!-- API KEY BANNER -->
@@ -324,6 +323,12 @@
         <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
         <span id="jsonSt" style="font-size:12px;color:var(--muted)"></span>
       </div>
+    </div>
+
+    <div class="card" style="border-color:#FDE68A;background:#FFFBEB">
+      <div class="card-title" style="margin-bottom:8px">↺ 教科書リストを初期化</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">教科書のデータは残したまま、リスト表示が壊れた場合にリセットできます。</p>
+      <button class="btn btn-secondary btn-sm" onclick="resetLibrary()">↺ 中1・中2・中3に初期化する</button>
     </div>
   </div>
 
@@ -411,6 +416,22 @@
       <button class="btn btn-ghost btn-sm" onclick="closeKeyModal()">キャンセル</button>
       <button class="btn btn-primary btn-sm" id="saveKeyBtn" onclick="saveApiKey()">保存 &amp; モデル検出</button>
       <button class="btn btn-green btn-sm" id="confirmKeyBtn" onclick="updateKeyStatus();closeKeyModal()" style="display:none">✅ この設定で確定</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-ov" id="confirmModal" style="display:none">
+  <div class="modal" style="max-width:340px">
+    <div class="modal-head">
+      <div class="modal-title" id="confirmTitle">確認</div>
+    </div>
+    <div class="modal-body">
+      <p id="confirmMsg" style="font-size:14px;line-height:1.7"></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="resolveConfirm(false)">キャンセル</button>
+      <button class="btn btn-danger btn-sm" id="confirmOkBtn" onclick="resolveConfirm(true)">削除</button>
     </div>
   </div>
 </div>
@@ -525,6 +546,18 @@
     doSearch();
   }
 
+  // ── カスタム確認ダイアログ（ネイティブダイアログの代替） ─────────
+  let _confirmResolve = null;
+  function showConfirm(msg, okLabel='削除') {
+    document.getElementById('confirmMsg').textContent = msg;
+    document.getElementById('confirmOkBtn').textContent = okLabel;
+    document.getElementById('confirmModal').style.display = 'flex';
+    return new Promise(resolve => { _confirmResolve = resolve; });
+  }
+  function resolveConfirm(result) {
+    document.getElementById('confirmModal').style.display = 'none';
+    if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+  }
   function openAddBookModal() {
     document.getElementById('newBookName').value = '';
     document.getElementById('addBookModal').style.display = 'flex';
@@ -542,7 +575,6 @@
   function addBook() { openAddBookModal(); } // 後方互換
 
   function resetLibrary() {
-    if (!confirm('教科書の一覧をデフォルト（中1・中2・中3）にリセットしますか？\n※データは削除されません')) return;
     library = [];
     ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
     activeId = library[0].id;
@@ -551,11 +583,13 @@
     renderUnitView();
     updateBadge();
     saveBackup();
+    alert('初期化しました。教科書データは保持されています。');
   }
 
-  function deleteBook() {
+  async function deleteBook() {
     if (library.length <= 1) { alert('最後の1冊は削除できません。'); return; }
-    if (!confirm(`「${activeBook()?.name}」を削除しますか？`)) return;
+    const ok = await showConfirm(`「${activeBook()?.name}」を削除しますか？`);
+    if (!ok) return;
     library = library.filter(b => b.id !== activeId);
     switchBook(library[0].id);
   }
@@ -839,8 +873,9 @@
     return items;
   }
 
-  function clearCurrentData() {
-    if (!confirm(`「${activeBook()?.name}」のデータを全て削除して解析を開始しますか？`)) return;
+  async function clearCurrentData() {
+    const ok = await showConfirm(`「${activeBook()?.name}」のデータを全て削除して解析を開始しますか？`, '削除して解析開始');
+    if (!ok) return;
     setItems([]);
     renderPreview();
     updateBadge();
@@ -1179,8 +1214,10 @@
     closeEdit(); renderPreview(); renderUnitView(); updateBadge(); saveBackup();
   }
 
-  function deleteItem() {
-    if (editingIdx===-1||!confirm('この項目を削除しますか？')) return;
+  async function deleteItem() {
+    if (editingIdx===-1) return;
+    const ok = await showConfirm('この項目を削除しますか？');
+    if (!ok) return;
     const items=getItems(); items.splice(editingIdx,1); setItems(items);
     closeEdit(); renderPreview(); renderUnitView(); updateBadge(); saveBackup();
   }
