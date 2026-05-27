@@ -455,7 +455,8 @@
 
   // ── CONSTANTS ──────────────────────────────────────────────────────
   const BATCH = 1;    // 1ページ/バッチ（JSON切れ防止）
-  const PAR   = 3;    // 並列バッチ数
+  const PAR   = 2;    // 並列バッチ数（レート制限対応で2に削減）
+  const ROUND_DELAY = 12000; // ラウンド間の待機時間(ms)：2req/12sec = 10RPM（上限15RPM以内）
   const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
   const QUAL  = 0.88; // JPEG品質
 
@@ -778,8 +779,10 @@
   function updateEst() {
     const s=+document.getElementById('startP').value||1, e=+document.getElementById('endP').value||1;
     const pages=Math.max(0,e-s+1), rounds=Math.ceil(pages/(BATCH*PAR));
-    const minM=Math.ceil(rounds*8/60), maxM=Math.ceil(rounds*18/60);
-    document.getElementById('estLabel').textContent = `${pages}ページ / 約${minM}〜${maxM}分`;
+    const apiSec = rounds * 15;
+    const waitSec = Math.max(0, rounds - 1) * (ROUND_DELAY / 1000);
+    const totalMin = Math.ceil((apiSec + waitSec) / 60);
+    document.getElementById('estLabel').textContent = `${pages}ページ / 約${totalMin}分`;
   }
 
   // ── MAIN PROCESSING (3並列) ────────────────────────────────────────
@@ -825,13 +828,15 @@
         );
       }
 
-      document.getElementById('pInfo').textContent = `p.${rs}〜${re} をAIで解析中（3並列）...`;
+      document.getElementById('pInfo').textContent = `p.${rs}〜${re} をAIで解析中（${PAR}並列）...`;
 
       // ③ 全並列完了 → リアルタイム追加
       const results = await Promise.all(bps);
+      let roundErrors = 0;
       for (const { items, cnt } of results) {
-        getItems().push(...items);   // ← 検索にリアルタイム反映
+        getItems().push(...items);
         processed += cnt;
+        if (!items.length) roundErrors++;
       }
 
       // ④ UI更新・残り時間
@@ -848,20 +853,32 @@
       updateBadge();
       renderPreview();
       saveBackup();
+
+      // ⑤ レート制限防止：次ラウンドまで待機
+      if (rs + BATCH * PAR <= endP && !shouldStop) {
+        for (let w = Math.ceil(ROUND_DELAY/1000); w > 0; w--) {
+          if (shouldStop) break;
+          document.getElementById('pInfo').textContent = `レート制限防止のため ${w} 秒待機中...`;
+          await sleep(1000);
+        }
+      }
     }
 
     document.getElementById('procPanel').style.display = 'none';
     document.getElementById('setupCard').style.display = 'block';
     document.getElementById('pInfo').textContent = '';
 
-    if (!getItems().length) {
-      const msg = lastError
-        ? `エラー内容：${lastError}`
-        : 'ページ範囲や画像品質を確認してください。';
+    // エラーがある場合は既存データがあっても表示
+    if (lastError) {
+      document.getElementById('tbPreview').innerHTML =
+        `<div class="card"><div style="color:var(--red);font-weight:600;margin-bottom:6px">⚠️ 一部エラーが発生しました</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.8">${esc(lastError)}</div></div>` +
+        (document.getElementById('tbPreview').innerHTML || '');
+    } else if (!getItems().length) {
       document.getElementById('tbPreview').innerHTML = `
         <div class="card">
-          <div style="padding:8px 0;color:var(--red);font-weight:600;margin-bottom:8px">❌ 項目が0件でした</div>
-          <div style="font-size:13px;color:var(--muted);line-height:1.8">${esc(msg)}</div>
+          <div style="color:var(--red);font-weight:600;margin-bottom:8px">❌ 項目が0件でした</div>
+          <div style="font-size:13px;color:var(--muted)">ページ範囲や画像品質を確認してください。</div>
         </div>`;
     }
   }
