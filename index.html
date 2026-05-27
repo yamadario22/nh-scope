@@ -651,38 +651,77 @@
   function saveApiKey()    {}
   function updateKeyStatus() {}
 
-  async function callGemini(parts, systemText, maxTok=4000) {
+  async function callGemini(parts, systemText, maxTok=16000, retry=3) {
     const key   = getApiKey();
     const model = getModel();
     if (!key)   throw new Error('APIキーが設定されていません。「🔑 APIキー設定」から入力してください。');
     if (!model) throw new Error('モデルが未検出です。「🔑 APIキー設定」から再設定してください。');
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemText }] },
-          contents: [{ parts }],
-          generationConfig: {
-            maxOutputTokens: maxTok,
-            temperature: 0.1,
-            responseMimeType: 'application/json'
+    for (let i = 0; i < retry; i++) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemText }] },
+              contents: [{ parts }],
+              generationConfig: { maxOutputTokens: maxTok, temperature: 0.1 }
+            })
           }
-        })
+        );
+        if (!res.ok) {
+          const e = await res.json().catch(()=>({}));
+          const msg = e?.error?.message || 'Gemini API Error ' + res.status;
+          // 混雑エラーはリトライ
+          if (msg.includes('high demand') || msg.includes('overloaded') || res.status === 503 || res.status === 429) {
+            if (i < retry - 1) { await sleep(5000 * (i + 1)); continue; }
+          }
+          throw new Error(msg);
+        }
+        const d = await res.json();
+        return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } catch(e) {
+        if (i < retry - 1 && (e.message.includes('high demand') || e.message.includes('fetch'))) {
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
       }
-    );
-    if (!res.ok) {
-      const e = await res.json().catch(()=>({}));
-      throw new Error(e?.error?.message || 'Gemini API Error ' + res.status);
     }
-    const d = await res.json();
-    return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    throw new Error('リトライ上限に達しました。しばらく待ってから再試行してください。');
   }
 
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // 途中で切れたJSONでも取得済み部分を救済するパーサー
   function parseJ(raw) {
-    return JSON.parse(raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
+    const clean = raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+
+    // まず正常パース
+    try { return JSON.parse(clean); } catch {}
+
+    // 切れていても完了済みのitemを抽出
+    try {
+      const start = clean.indexOf('"items"');
+      if (start === -1) return { items: [] };
+      const arrStart = clean.indexOf('[', start);
+      if (arrStart === -1) return { items: [] };
+
+      // 最後の完全な } の後ろで切り取る
+      let content = clean.substring(arrStart);
+      const lastClose = Math.max(content.lastIndexOf('},'), content.lastIndexOf('} '));
+      if (lastClose > 0) {
+        content = content.substring(0, lastClose + 1) + ']';
+      } else {
+        content = content.substring(0, content.lastIndexOf('}') + 1) + ']';
+      }
+      const items = JSON.parse(content);
+      return { items: Array.isArray(items) ? items : [] };
+    } catch {}
+
+    return { items: [] };
   }
 
   async function extractBatch(images, pageNums) {
@@ -710,11 +749,12 @@
     // デバッグ用：最初の生レスポンスを保存
     if (!window._firstRawResponse) window._firstRawResponse = raw;
 
-    try {
-      return parseJ(raw).items || [];
-    } catch(e) {
-      throw new Error(`JSON解析失敗: ${e.message} | Geminiの返答（先頭200文字）: ${raw.substring(0,200)}`);
+    const parsed = parseJ(raw);
+    const items = parsed.items || [];
+    if (items.length === 0 && raw.length < 50) {
+      throw new Error('Geminiからの返答が空でした');
     }
+    return items;
   }
 
   // ── PDF LOAD ───────────────────────────────────────────────────────
