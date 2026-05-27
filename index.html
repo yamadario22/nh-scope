@@ -575,15 +575,27 @@
   function addBook() { openAddBookModal(); } // 後方互換
 
   function resetLibrary() {
-    library = [];
-    ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-    activeId = library[0].id;
-    renderBookSel();
-    renderPreview();
-    renderUnitView();
-    updateBadge();
-    saveBackup();
-    alert('初期化しました。教科書データは保持されています。');
+    try {
+      library = [];
+      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+      activeId = library[0].id;
+      renderBookSel();
+      renderPreview();
+      renderUnitView();
+      updateBadge();
+      saveBackup();
+      // フィードバックをDOMに表示
+      const btn = document.querySelector('[onclick="resetLibrary()"]');
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = '✅ 初期化しました';
+        btn.style.color = 'var(--green)';
+        setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 2500);
+      }
+    } catch(e) {
+      const card = document.querySelector('[onclick="resetLibrary()"]')?.closest('.card');
+      if (card) card.innerHTML += `<p style="color:red;font-size:12px;margin-top:8px">エラー: ${e.message}</p>`;
+    }
   }
 
   async function deleteBook() {
