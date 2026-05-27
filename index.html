@@ -287,6 +287,7 @@
       <p style="font-size:12px;color:var(--muted);margin-top:8px">💡 WORD BOX・単語リストのページだけ指定すると高速・高精度</p>
       <div class="row" style="margin-top:14px">
         <button class="btn btn-primary" onclick="startProcessing()">🤖 解析開始</button>
+        <button class="btn btn-danger btn-sm" onclick="clearCurrentData()">🗑 現在のデータをクリアしてから解析</button>
         <span id="estLabel" style="font-size:12px;color:var(--muted)"></span>
       </div>
     </div>
@@ -790,7 +791,14 @@
     return items;
   }
 
-  // ── PDF LOAD ───────────────────────────────────────────────────────
+  function clearCurrentData() {
+    if (!confirm(`「${activeBook()?.name}」のデータを全て削除して解析を開始しますか？`)) return;
+    setItems([]);
+    renderPreview();
+    updateBadge();
+    saveBackup();
+    startProcessing();
+  }
   async function onPDFLoaded(file) {
     document.getElementById('tbTitle').textContent = file.name;
     document.getElementById('tbSub').textContent   = (file.size/1024/1024).toFixed(1)+' MB';
@@ -823,7 +831,7 @@
     shouldStop = false;
     const startP=+document.getElementById('startP').value, endP=+document.getElementById('endP').value;
     const total=endP-startP+1, startMs=Date.now();
-    let processed=0, lastError='';
+    let processed=0, lastError='', errorPages=[], errorMessages=[];
 
     document.getElementById('setupCard').style.display = 'none';
     document.getElementById('procPanel').style.display = 'block';
@@ -856,7 +864,13 @@
         bps.push(
           extractBatch(bi, bn)
             .then(items => { bn.forEach(pg=>setThumb(pg,'done')); return { items, cnt:bn.length }; })
-            .catch((e)  => { lastError=e.message; bn.forEach(pg=>setThumb(pg,'error')); return { items:[], cnt:bn.length }; })
+            .catch((e)  => {
+              lastError = e.message;
+              errorPages.push(...bn);
+              if (!errorMessages.includes(e.message.substring(0,100))) errorMessages.push(e.message.substring(0,100));
+              bn.forEach(pg=>setThumb(pg,'error'));
+              return { items:[], cnt:bn.length };
+            })
         );
       }
 
@@ -900,18 +914,31 @@
     document.getElementById('setupCard').style.display = 'block';
     document.getElementById('pInfo').textContent = '';
 
-    // エラーがある場合は既存データがあっても表示
-    if (lastError) {
-      document.getElementById('tbPreview').innerHTML =
-        `<div class="card"><div style="color:var(--red);font-weight:600;margin-bottom:6px">⚠️ 一部エラーが発生しました</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.8">${esc(lastError)}</div></div>` +
-        (document.getElementById('tbPreview').innerHTML || '');
+    // エラーサマリーを常に表示（既存データがあっても）
+    if (errorPages.length > 0) {
+      const errHtml = `
+        <div class="card" style="border-color:#FECACA">
+          <div style="color:var(--red);font-weight:600;margin-bottom:8px">
+            ⚠️ ${errorPages.length}ページがエラーになりました
+          </div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
+            失敗したページ：${errorPages.join(', ')}
+          </div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8">
+            原因：${errorMessages.map(m=>esc(m)).join('<br>')}
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--navy)">
+            💡 上記のページ範囲を指定して再実行してください。成功済みのデータは残ります。
+          </div>
+        </div>`;
+      document.getElementById('tbPreview').innerHTML = errHtml + (document.getElementById('tbPreview').innerHTML || '');
     } else if (!getItems().length) {
       document.getElementById('tbPreview').innerHTML = `
         <div class="card">
           <div style="color:var(--red);font-weight:600;margin-bottom:8px">❌ 項目が0件でした</div>
           <div style="font-size:13px;color:var(--muted)">ページ範囲や画像品質を確認してください。</div>
         </div>`;
+    }
     }
   }
 
