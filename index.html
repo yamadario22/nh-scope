@@ -685,23 +685,22 @@
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
     parts.push({ text:
       `これらはNEW HORIZONの教科書ページ（p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}）の画像です。
-各ページから全ての学習項目（単語・文法・熟語）を一切漏れなく抽出し、以下のJSON形式のみで返してください。マークダウン不要。
+各ページから全ての学習項目（単語・文法・熟語）を抽出し、以下のJSON形式のみで返してください。マークダウン不要。
 
-{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
+{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ","notes":""}]}
 
 • typeは「単語」「文法」「熟語」のいずれか
-• pageは教科書本文に記載のページ番号（数字）
-• 文法はルール・構造・例をnotesに簡潔に
-• 本文の例文中に出てくる重要表現も含めること
-• 項目が見当たらないページは空配列でよい`
+• pageは教科書本文のページ番号（数字）
+• notesは空文字でよい（長い説明は不要）
+• 項目がないページは空配列でよい`
     });
 
     const raw = await callGemini(
       parts,
       `あなたはNEW HORIZON英語教科書の全項目データ抽出専門家です。
-画像を精密に読み取り、学習項目を一切漏らさずJSONで返します。
-単語リスト・WORD BOX・文法コーナー・本文の重要表現を全て網羅してください。
-JSONのみ返し、マークダウンや説明文は不要です。`
+画像を精密に読み取り、学習項目を一切漏らさずJSONのみで返します。
+説明文・マークダウン不要。notesフィールドは空文字で構いません。`,
+      16000
     );
 
     // デバッグ用：最初の生レスポンスを保存
