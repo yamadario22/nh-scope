@@ -1380,70 +1380,59 @@ JSONのみで返してください：
     inp.addEventListener('change', e=>{if(e.target.files[0])cb(e.target.files[0]);});
   }
 
-  // ── INIT ───────────────────────────────────────────────────────────
-  document.addEventListener('DOMContentLoaded', ()=>{
+  // ── INIT（即時実行） ───────────────────────────────────────────────
+  function _init() {
     try {
-      // 埋め込みデータ優先
       if (window.__NH_DATA__ && window.__NH_DATA__.library?.length) {
         library  = window.__NH_DATA__.library;
         activeId = window.__NH_DATA__.activeId || '';
       } else {
-        // localStorageから復元
         try {
           const raw = localStorage.getItem(BACKUP_KEY);
           if (raw) {
             const d = JSON.parse(raw);
-            if (d.library?.length) {
-              library  = d.library;
-              activeId = d.activeId || '';
-            }
+            if (d.library?.length) { library = d.library; activeId = d.activeId || ''; }
           }
         } catch {}
       }
     } catch {}
 
-    // libraryが空または壊れている場合はデフォルト作成
     if (!Array.isArray(library) || library.length === 0) {
       library = [];
       ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
     }
-
-    // activeIdが無効な場合は最初の本を選択
     if (!activeId || !library.find(b => b.id === activeId)) {
       activeId = library[0].id;
     }
+  }
+  _init(); // ← スクリプト読み込み時点で即座に実行
 
-    try { renderBookSel(); }   catch(e) { console.error('renderBookSel', e); }
-    try { renderPreview(); }   catch(e) { console.error('renderPreview', e); }
-    try { renderUnitView(); }  catch(e) { console.error('renderUnitView', e); }
-    try { updateBadge(); }     catch(e) { console.error('updateBadge', e); }
-    try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner', e); }
-    try { setupDrop('tbZone','tbFile',onPDFLoaded); }   catch(e) {}
+  // DOM構築後にUI更新
+  document.addEventListener('DOMContentLoaded', function() {
+    try { renderBookSel(); }   catch(e) { console.error(e); }
+    try { renderPreview(); }   catch(e) { console.error(e); }
+    try { renderUnitView(); }  catch(e) { console.error(e); }
+    try { updateBadge(); }     catch(e) { console.error(e); }
+    try { updateKeyBanner(); } catch(e) { console.error(e); }
+    try { setupDrop('tbZone','tbFile',onPDFLoaded); }    catch(e) {}
     try { setupDrop('testZone','testFile',analyzeTest); } catch(e) {}
   });
 </script>
 </body>
-<!-- JS動作確認インジケーター（常に右下に表示） -->
 <div id="jsIndicator" style="position:fixed;bottom:12px;right:12px;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;background:#EF4444;color:#fff;font-family:sans-serif">
   JS読込中...
 </div>
 <script>
-  // このscriptが実行されればJSは動いている
   document.getElementById('jsIndicator').style.background = '#10B981';
   document.getElementById('jsIndicator').textContent = 'JS✓';
 
-  // フォールバック：DOMContentLoadedが発火しなかった場合の保険
-  window.addEventListener('load', function() {
+  document.addEventListener('DOMContentLoaded', function() {
     var sel = document.getElementById('bookSel');
     if (sel && sel.options.length === 0) {
-      // 教科書リストが空なら強制初期化
-      if (typeof resetLibrary === 'function') {
-        resetLibrary();
-        document.getElementById('jsIndicator').textContent = 'JS✓ 初期化済';
-      }
-    } else if (sel) {
-      document.getElementById('jsIndicator').textContent = 'JS✓ 教科書' + sel.options.length + '冊';
+      if (typeof renderBookSel === 'function') renderBookSel();
     }
+    var count = sel ? sel.options.length : 0;
+    document.getElementById('jsIndicator').textContent = 'JS✓ ' + count + '冊';
   });
 </script>
 </html>
