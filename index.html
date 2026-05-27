@@ -1289,29 +1289,44 @@ JSONのみで返してください：
 
   // ── INIT ───────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', ()=>{
-    // 埋め込みデータがあればそれを最優先で読み込む（配布ファイル用）
-    if (window.__NH_DATA__) {
-      library  = window.__NH_DATA__.library  || [];
-      activeId = window.__NH_DATA__.activeId || '';
-      if (!library.length) {
-        ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-        activeId = library[0].id;
+    try {
+      // 埋め込みデータ優先
+      if (window.__NH_DATA__ && window.__NH_DATA__.library?.length) {
+        library  = window.__NH_DATA__.library;
+        activeId = window.__NH_DATA__.activeId || '';
+      } else {
+        // localStorageから復元
+        try {
+          const raw = localStorage.getItem(BACKUP_KEY);
+          if (raw) {
+            const d = JSON.parse(raw);
+            if (d.library?.length) {
+              library  = d.library;
+              activeId = d.activeId || '';
+            }
+          }
+        } catch {}
       }
-      if (!activeId && library.length) activeId = library[0].id;
-    } else {
-      const restored = loadBackup();
-      if (!restored) {
-        ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-        activeId = library[0].id;
-      }
+    } catch {}
+
+    // libraryが空または壊れている場合はデフォルト作成
+    if (!Array.isArray(library) || library.length === 0) {
+      library = [];
+      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
     }
-    renderBookSel();
-    renderPreview();
-    renderUnitView();
-    updateBadge();
-    updateKeyBanner();
-    setupDrop('tbZone','tbFile',onPDFLoaded);
-    setupDrop('testZone','testFile',analyzeTest);
+
+    // activeIdが無効な場合は最初の本を選択
+    if (!activeId || !library.find(b => b.id === activeId)) {
+      activeId = library[0].id;
+    }
+
+    try { renderBookSel(); }   catch(e) { console.error('renderBookSel', e); }
+    try { renderPreview(); }   catch(e) { console.error('renderPreview', e); }
+    try { renderUnitView(); }  catch(e) { console.error('renderUnitView', e); }
+    try { updateBadge(); }     catch(e) { console.error('updateBadge', e); }
+    try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner', e); }
+    try { setupDrop('tbZone','tbFile',onPDFLoaded); }   catch(e) {}
+    try { setupDrop('testZone','testFile',analyzeTest); } catch(e) {}
   });
 </script>
 </body>
