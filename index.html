@@ -607,9 +607,18 @@
   }
 
   function renderBookSel() {
-    document.getElementById('bookSel').innerHTML =
-      library.map(b => `<option value="${b.id}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`).join('');
-    document.getElementById('delBookBtn').disabled = library.length <= 1;
+    // 最終防衛：この関数が呼ばれた時点でもlibrary検証・修復
+    if (!Array.isArray(library) || library.length === 0 || !library.some(b => b?.id && b?.name)) {
+      library = [];
+      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+      if (!activeId) activeId = library[0].id;
+    }
+    const sel = document.getElementById('bookSel');
+    if (!sel) return;
+    sel.innerHTML = library.filter(b=>b?.id&&b?.name)
+      .map(b => `<option value="${esc(b.id)}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`).join('');
+    const delBtn = document.getElementById('delBookBtn');
+    if (delBtn) delBtn.disabled = library.length <= 1;
   }
 
   // ── TABS ───────────────────────────────────────────────────────────
@@ -1448,11 +1457,9 @@ JSONのみで返してください：
 
   document.addEventListener('DOMContentLoaded', function() {
     var sel = document.getElementById('bookSel');
-    if (sel && sel.options.length === 0) {
-      if (typeof renderBookSel === 'function') renderBookSel();
-    }
-    var count = sel ? sel.options.length : 0;
-    document.getElementById('jsIndicator').textContent = 'JS✓ ' + count + '冊';
+    var count = sel ? sel.options.length : -1;
+    var libLen = (typeof library !== 'undefined') ? library.length : -1;
+    document.getElementById('jsIndicator').textContent = 'JS✓ sel:' + count + ' lib:' + libLen;
   });
 </script>
 </html>
