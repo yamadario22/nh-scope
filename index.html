@@ -1409,6 +1409,15 @@ JSONのみで返してください：
 
   // DOM構築後にUI更新
   document.addEventListener('DOMContentLoaded', function() {
+    // 絶対保証：libraryが空なら必ずデフォルトを作成
+    if (!Array.isArray(library) || library.length === 0) {
+      library = [];
+      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+      activeId = library[0].id;
+    }
+    if (!activeId || !library.find(b => b.id === activeId)) {
+      activeId = library[0].id;
+    }
     try { renderBookSel(); }   catch(e) { console.error(e); }
     try { renderPreview(); }   catch(e) { console.error(e); }
     try { renderUnitView(); }  catch(e) { console.error(e); }
