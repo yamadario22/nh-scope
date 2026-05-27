@@ -1393,12 +1393,18 @@ JSONのみで返してください：
             const d = JSON.parse(raw);
             if (d.library?.length) { library = d.library; activeId = d.activeId || ''; }
           }
-        } catch {}
+        } catch { localStorage.removeItem(BACKUP_KEY); }
       }
     } catch {}
 
+    // 壊れたエントリを除去（id・nameのないものは無効）
+    if (Array.isArray(library)) {
+      library = library.filter(b => b && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name);
+    }
+
     if (!Array.isArray(library) || library.length === 0) {
       library = [];
+      try { localStorage.removeItem(BACKUP_KEY); } catch {}
       ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
     }
     if (!activeId || !library.find(b => b.id === activeId)) {
@@ -1409,11 +1415,16 @@ JSONのみで返してください：
 
   // DOM構築後にUI更新
   document.addEventListener('DOMContentLoaded', function() {
+    // 壊れたエントリを除去
+    if (Array.isArray(library)) {
+      library = library.filter(b => b && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name);
+    }
     // 絶対保証：libraryが空なら必ずデフォルトを作成
     if (!Array.isArray(library) || library.length === 0) {
       library = [];
       ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
       activeId = library[0].id;
+      try { localStorage.removeItem(BACKUP_KEY); } catch {}
     }
     if (!activeId || !library.find(b => b.id === activeId)) {
       activeId = library[0].id;
