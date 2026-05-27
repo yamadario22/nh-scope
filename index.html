@@ -1009,7 +1009,7 @@
         html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
       }
 
-      // </script> を文字列内に直接書くとHTMLパーサーが誤解析するため分割
+      // <\/script> を文字列内に直接書くとHTMLパーサーが誤解析するため分割
       const openTag  = '<' + 'script id="__nh_data__">';
       const closeTag = '<' + '/script>';
       const removeRe = new RegExp(openTag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '[\\s\\S]*?' + closeTag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\n?', 'g');
