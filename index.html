@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NH Scope — NEW HORIZON 分析ツール</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Syne:wght@800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    :root {
+      --navy:#0D2137; --blue:#1B4F8A; --sky:#3A7BD5;
+      --amber:#E8A820; --green:#10B981; --red:#EF4444;
+      --cream:#F5F4F0; --white:#fff; --text:#1C1C1E;
+      --muted:#6B7280; --border:#E2E0DB;
+    }
+    body { font-family:'Noto Sans JP',sans-serif; background:var(--cream); color:var(--text); min-height:100vh; }
+
+    /* HEADER */
+    .header { background:var(--navy); color:#fff; padding:0 24px; height:54px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:200; }
+    .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:20px; letter-spacing:-.5px; }
+    .logo span { color:var(--amber); }
+    #hBadge { font-size:12px; color:rgba(255,255,255,.4); }
+    #hBadge.on { color:var(--amber); }
+
+    /* TABS */
+    .tabs { background:var(--navy); display:flex; padding:0 24px; border-bottom:1px solid rgba(255,255,255,.1); }
+    .tab { padding:11px 20px; color:rgba(255,255,255,.4); font-size:13px; font-weight:500; cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; white-space:nowrap; user-select:none; }
+    .tab:hover { color:rgba(255,255,255,.75); }
+    .tab.active { color:#fff; border-bottom-color:var(--amber); }
+
+    /* BOOK BAR */
+    .book-bar { background:#fff; border-bottom:1px solid var(--border); padding:8px 24px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .book-bar label { font-size:12px; color:var(--muted); font-weight:500; white-space:nowrap; }
+    .book-select { padding:5px 10px; border:1px solid var(--border); border-radius:6px; font-family:'Noto Sans JP',sans-serif; font-size:13px; font-weight:600; color:var(--navy); background:var(--cream); cursor:pointer; outline:none; }
+
+    /* MAIN */
+    .main { max-width:960px; margin:0 auto; padding:24px 20px 60px; }
+    .tab-content { display:none; }
+    .tab-content.active { display:block; }
+
+    /* CARD */
+    .card { background:#fff; border-radius:12px; padding:20px 22px; border:1px solid var(--border); margin-bottom:14px; }
+    .card-title { font-size:14px; font-weight:700; color:var(--navy); margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; }
+
+    /* UPLOAD */
+    .upload-zone { border:2px dashed var(--border); border-radius:10px; padding:36px 28px; text-align:center; cursor:pointer; transition:all .2s; background:var(--cream); }
+    .upload-zone:hover,.upload-zone.over { border-color:var(--sky); background:#EBF2FF; }
+    .upload-zone.has { border-style:solid; border-color:var(--sky); background:#EBF2FF; }
+    .uz-ico { font-size:34px; margin-bottom:8px; }
+    .uz-title { font-size:15px; font-weight:600; color:var(--navy); margin-bottom:4px; }
+    .uz-sub { font-size:12px; color:var(--muted); }
+
+    /* BUTTONS */
+    .btn { display:inline-flex; align-items:center; gap:5px; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; font-family:'Noto Sans JP',sans-serif; cursor:pointer; border:none; transition:all .15s; }
+    .btn-primary   { background:var(--blue);  color:#fff; }
+    .btn-primary:hover { background:var(--navy); }
+    .btn-secondary { background:var(--cream); color:var(--navy); border:1px solid var(--border); }
+    .btn-secondary:hover { background:var(--border); }
+    .btn-amber  { background:var(--amber); color:var(--navy); }
+    .btn-amber:hover  { background:#D4951A; }
+    .btn-green  { background:var(--green); color:#fff; }
+    .btn-green:hover  { background:#059669; }
+    .btn-danger { background:#FEE2E2; color:#991B1B; border:1px solid #FECACA; }
+    .btn-danger:hover { background:#FECACA; }
+    .btn-ghost  { background:none; color:var(--muted); border:1px solid var(--border); }
+    .btn-ghost:hover  { background:var(--cream); }
+    .btn:disabled { opacity:.4; cursor:not-allowed; pointer-events:none; }
+    .btn-sm { padding:5px 10px; font-size:12px; }
+
+    /* STATUS */
+    .status-bar { padding:10px 14px; border-radius:8px; font-size:13px; display:flex; align-items:center; gap:8px; margin-top:10px; }
+    .s-load { background:#EFF6FF; color:#1D4ED8; border:1px solid #BFDBFE; }
+    .s-ok   { background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; }
+    .s-err  { background:#FEF2F2; color:#991B1B; border:1px solid #FECACA; }
+    .spinner { width:14px; height:14px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin .6s linear infinite; flex-shrink:0; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* RANGE */
+    .range-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .range-lbl { font-size:13px; font-weight:600; color:var(--navy); }
+    .range-inp { width:68px; padding:6px 8px; font-size:14px; font-family:'Noto Sans JP',sans-serif; border:1px solid var(--border); border-radius:6px; text-align:center; outline:none; }
+    .range-inp:focus { border-color:var(--sky); }
+
+    /* PROCESSING PANEL */
+    .proc-panel { background:#fff; border:1px solid var(--border); border-radius:12px; padding:22px; margin-bottom:14px; }
+    .proc-head  { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    .proc-title { font-size:15px; font-weight:700; color:var(--navy); display:flex; align-items:center; gap:8px; }
+    .proc-stats { display:flex; gap:28px; margin-bottom:6px; flex-wrap:wrap; }
+    .proc-stat  { text-align:center; }
+    /* ★ 処理数字フォント：Noto Sans JP 700 + tabular-nums */
+    .proc-num {
+      font-family:'Noto Sans JP', sans-serif;
+      font-size:30px; font-weight:700; color:var(--navy);
+      font-variant-numeric:tabular-nums; letter-spacing:-1px;
+    }
+    .proc-lbl  { font-size:11px; color:var(--muted); margin-top:2px; }
+    .proc-time { font-size:13px; color:var(--sky); font-weight:600; margin:8px 0 10px; }
+    .prog-wrap { height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+    .prog-bar  { height:100%; background:var(--sky); border-radius:3px; transition:width .5s; }
+    .prog-info { font-size:12px; color:var(--muted); margin-top:6px; }
+
+    /* THUMBS */
+    .thumb-grid { display:flex; gap:6px; flex-wrap:wrap; margin-top:14px; }
+    .thumb { width:76px; height:108px; border-radius:6px; border:2px solid var(--border); overflow:hidden; position:relative; background:#eee; flex-shrink:0; }
+    .thumb canvas { width:100%; height:100%; object-fit:cover; display:block; }
+    /* ★ オーバーレイ：中央に「解析中」「解析完了」を表示 */
+    .thumb-ov {
+      position:absolute; inset:0;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      font-family:'Noto Sans JP',sans-serif; font-size:9px; font-weight:700; color:#fff;
+      line-height:1.2;
+    }
+    .thumb-pg { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.55); color:#fff; font-size:9px; text-align:center; padding:2px 0; font-family:'Noto Sans JP',sans-serif; }
+
+    .thumb[data-st="waiting"]    .thumb-ov { background:rgba(107,114,128,.6); }
+    .thumb[data-st="processing"] { border-color:var(--sky); }
+    .thumb[data-st="processing"] .thumb-ov { background:rgba(58,123,213,.75); }
+    .thumb[data-st="done"]       { border-color:var(--green); }
+    .thumb[data-st="done"]       .thumb-ov { background:rgba(16,185,129,.75); }
+    .thumb[data-st="error"]      { border-color:var(--red); }
+    .thumb[data-st="error"]      .thumb-ov { background:rgba(239,68,68,.75); }
+
+    /* STATS */
+    .stats-row { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+    .stat-box { background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px 16px; flex:1; min-width:72px; text-align:center; }
+    .stat-num { font-family:'Noto Sans JP',sans-serif; font-size:24px; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; }
+    .stat-lbl { font-size:11px; color:var(--muted); margin-top:2px; }
+
+    /* TABLE */
+    .tbl-wrap { overflow-x:auto; border-radius:10px; border:1px solid var(--border); }
+    table { width:100%; border-collapse:collapse; }
+    thead { background:var(--cream); }
+    th { padding:8px 12px; text-align:left; font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
+    td { padding:10px 12px; font-size:13.5px; border-top:1px solid var(--border); vertical-align:middle; }
+    tbody tr:hover { background:#FAFAFA; }
+
+    /* BADGES */
+    .badge { display:inline-block; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:700; }
+    .b単語 { background:#DBEAFE; color:#1E40AF; }
+    .b文法 { background:#D1FAE5; color:#065F46; }
+    .b熟語 { background:#FEF3C7; color:#92400E; }
+
+    /* SEARCH */
+    .s-wrap { position:relative; margin-bottom:12px; }
+    .s-ico  { position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:15px; color:var(--muted); pointer-events:none; }
+    .s-input { width:100%; padding:12px 14px 12px 42px; font-size:15px; font-family:'Noto Sans JP',sans-serif; border:2px solid var(--border); border-radius:10px; background:#fff; outline:none; transition:border-color .2s; }
+    .s-input:focus { border-color:var(--sky); }
+
+    /* PILLS */
+    .pills { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+    .pill { padding:5px 13px; border-radius:20px; font-size:12px; font-weight:500; cursor:pointer; border:1px solid var(--border); background:#fff; color:var(--muted); transition:all .15s; user-select:none; }
+    .pill.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .pill.tag    { cursor:default; background:var(--cream); color:var(--text); }
+
+    /* UNIT PILLS */
+    .unit-pills { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+    .unit-pill { padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:#fff; color:var(--muted); transition:all .15s; }
+    .unit-pill.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+    .unit-pill:hover:not(.active) { border-color:var(--sky); color:var(--sky); }
+
+    /* MODAL (Edit) */
+    .modal-ov { position:fixed; inset:0; background:rgba(13,33,55,.65); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; }
+    .modal    { background:#fff; border-radius:14px; width:100%; max-width:480px; max-height:92vh; overflow-y:auto; }
+    .modal-head { padding:18px 22px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .modal-title { font-size:15px; font-weight:700; color:var(--navy); }
+    .modal-close { background:none; border:none; font-size:18px; cursor:pointer; color:var(--muted); padding:4px; }
+    .modal-body  { padding:18px 22px; }
+    .modal-foot  { padding:14px 22px 18px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end; }
+    .form-row  { margin-bottom:14px; }
+    .form-lbl  { display:block; font-size:12px; font-weight:700; color:var(--navy); margin-bottom:5px; }
+    .form-in, .form-sel {
+      width:100%; padding:8px 10px; font-family:'Noto Sans JP',sans-serif; font-size:13px;
+      border:1px solid var(--border); border-radius:7px; outline:none; transition:border-color .2s; background:var(--cream);
+    }
+    .form-in:focus, .form-sel:focus { border-color:var(--sky); background:#fff; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+    /* JSON MODAL */
+    .json-ov   { position:fixed; inset:0; background:rgba(13,33,55,.7); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; }
+    .json-panel { background:#fff; border-radius:14px; width:100%; max-width:640px; max-height:90vh; display:flex; flex-direction:column; }
+    .json-head  { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .json-body  { flex:1; overflow:hidden; display:flex; flex-direction:column; padding:16px 20px; gap:10px; }
+    .json-area  { flex:1; min-height:200px; max-height:400px; font-family:monospace; font-size:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:#1e1e2e; color:#cdd6f4; resize:none; outline:none; overflow-y:auto; }
+    .json-foot  { padding:12px 20px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end; }
+
+    /* TEST RESULT */
+    .result-hero { background:linear-gradient(135deg,#0D2137,#1B4F8A); color:#fff; border-radius:12px; padding:24px; margin-bottom:14px; }
+    .result-grade { font-size:12px; color:rgba(255,255,255,.55); margin-bottom:5px; }
+    .result-range { font-family:'Noto Sans JP',sans-serif; font-size:30px; font-weight:700; margin-bottom:6px; }
+    .result-range em { color:var(--amber); font-style:normal; }
+    .result-pages { font-size:13px; color:rgba(255,255,255,.65); }
+    .topic-row { padding:9px 12px; background:var(--cream); border-radius:7px; font-size:13px; margin-bottom:6px; border-left:3px solid var(--sky); }
+
+    /* MISC */
+    .divider { text-align:center; position:relative; margin:16px 0; color:var(--muted); font-size:12px; }
+    .divider::before { content:''; position:absolute; top:50%; left:0; right:0; height:1px; background:var(--border); }
+    .divider span { position:relative; background:var(--cream); padding:0 10px; }
+    .empty { text-align:center; padding:48px 24px; color:var(--muted); }
+    .empty-ico { font-size:40px; margin-bottom:12px; }
+    .empty-txt { font-size:14px; }
+    .warn { padding:12px 16px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:9px; font-size:13px; color:#92400E; margin-bottom:14px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    mark { background:#FEF3C7; border-radius:2px; }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">NH<span>Scope</span></div>
+  <div id="hBadge">教科書データ未読込</div>
+</header>
+
+<!-- TABS -->
+<nav class="tabs">
+  <div class="tab active" data-tab="setup"  onclick="switchTab('setup')">📚 教科書データ</div>
+  <div class="tab"        data-tab="edit"   onclick="switchTab('edit')">📋 データ編集</div>
+  <div class="tab"        data-tab="test"   onclick="switchTab('test')">📝 テスト分析</div>
+  <div class="tab"        data-tab="search" onclick="switchTab('search')">🔍 検索</div>
+</nav>
+
+<!-- BOOK SWITCHER BAR -->
+<div class="book-bar">
+  <label>教科書：</label>
+  <select class="book-select" id="bookSel" onchange="switchBook(this.value)"></select>
+  <button class="btn btn-secondary btn-sm" onclick="addBook()">＋ 追加</button>
+  <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
+</div>
+
+<!-- API KEY BANNER -->
+<div id="keyBanner" style="background:#FFF8E1;border-bottom:1px solid #FDE68A;padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+  <span style="font-size:13px;font-weight:600;color:#92400E">🔑 APIキー設定</span>
+  <input id="keyInputBanner" type="text" placeholder="APIキー（AIzaSy...）"
+    style="flex:2;min-width:180px;max-width:360px;padding:6px 10px;font-family:monospace;font-size:12px;border:1px solid #FDE68A;border-radius:6px;outline:none;background:#fff">
+  <input id="modelInputBanner" type="text" placeholder="モデル名（空欄でOK）"
+    style="flex:1;min-width:140px;max-width:220px;padding:6px 10px;font-family:monospace;font-size:12px;border:1px solid #FDE68A;border-radius:6px;outline:none;background:#fff">
+  <button onclick="saveApiKeyBanner()" class="btn btn-amber btn-sm">保存</button>
+  <span id="keyBannerStatus" style="font-size:12px"></span>
+</div>
+
+<!-- モデル手動設定バー -->
+<div style="background:#F0F9FF;border-bottom:1px solid #BAE6FD;padding:8px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <span style="font-size:13px;font-weight:600;color:#0369A1">🤖 使用モデル</span>
+  <input id="modelInput" type="text" placeholder="gemini-1.5-flash"
+    style="width:220px;padding:6px 10px;font-family:monospace;font-size:12px;border:1px solid #BAE6FD;border-radius:6px;outline:none;background:#fff">
+  <button onclick="saveModelManual()" class="btn btn-secondary btn-sm">変更</button>
+  <span id="modelStatus" style="font-size:12px;color:#0369A1"></span>
+  <span style="font-size:11px;color:#6B7280">自動検出が間違っている場合は「gemini-1.5-flash」と直接入力して変更</span>
+</div>
+
+<div class="main">
+
+  <!-- ══ TAB 1: 教科書データ ══════════════════════════════════════ -->
+  <div id="tab-setup" class="tab-content active">
+    <div class="card">
+      <div class="card-title">📖 教科書PDF（スキャン画像PDF対応）</div>
+      <div class="upload-zone" id="tbZone" onclick="document.getElementById('tbFile').click()">
+        <div class="uz-ico">📖</div>
+        <div class="uz-title" id="tbTitle">PDFをアップロード</div>
+        <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
+        <input type="file" id="tbFile" accept=".pdf" style="display:none">
+      </div>
+    </div>
+
+    <div class="card" id="setupCard" style="display:none">
+      <div class="card-title">⚙️ 解析設定</div>
+      <div id="pageInfo" style="font-size:13px;color:var(--muted);margin-bottom:10px"></div>
+      <div class="range-row">
+        <span class="range-lbl">解析範囲</span>
+        <input type="number" class="range-inp" id="startP" value="1" min="1">
+        <span style="color:var(--muted)">〜</span>
+        <input type="number" class="range-inp" id="endP"   value="1" min="1">
+        <span style="font-size:13px;color:var(--muted)">ページ</span>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">💡 WORD BOX・単語リストのページだけ指定すると高速・高精度</p>
+      <div class="row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="startProcessing()">🤖 解析開始</button>
+        <span id="estLabel" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- 処理中 -->
+    <div class="proc-panel" id="procPanel" style="display:none">
+      <div class="proc-head">
+        <div class="proc-title"><div class="spinner"></div>解析中（3並列処理）</div>
+        <button class="btn btn-danger btn-sm" onclick="stopProcessing()">⏹ 停止</button>
+      </div>
+      <div class="proc-stats">
+        <div class="proc-stat"><div class="proc-num" id="pPage">0</div><div class="proc-lbl">処理済ページ</div></div>
+        <div class="proc-stat"><div class="proc-num" id="pTotal">0</div><div class="proc-lbl">総ページ数</div></div>
+        <div class="proc-stat"><div class="proc-num" id="pItems">0</div><div class="proc-lbl">取得項目数</div></div>
+      </div>
+      <div class="proc-time" id="pTime">残り時間を計算中...</div>
+      <div class="prog-wrap"><div class="prog-bar" id="pBar" style="width:0%"></div></div>
+      <div class="prog-info" id="pInfo"></div>
+      <div class="thumb-grid" id="thumbGrid"></div>
+    </div>
+
+    <div id="tbPreview"></div>
+
+    <div class="divider"><span>または — 保存済みJSONを読み込む</span></div>
+    <div class="card">
+      <div class="card-title">💾 JSONを読み込む</div>
+      <div class="row">
+        <button class="btn btn-secondary" onclick="document.getElementById('jsonFile').click()">📂 ファイルを選択</button>
+        <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
+        <span id="jsonSt" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TAB 2: データ編集 ════════════════════════════════════════ -->
+  <div id="tab-edit" class="tab-content">
+    <div id="editWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
+    <div class="card">
+      <div class="card-title">
+        <span>📋 Unit別データ編集</span>
+        <button class="btn btn-green btn-sm" onclick="openEdit(-1)">＋ 項目を追加</button>
+      </div>
+      <div class="unit-pills" id="unitPills"></div>
+      <div id="unitTable"></div>
+    </div>
+  </div>
+
+  <!-- ══ TAB 3: テスト分析 ════════════════════════════════════════ -->
+  <div id="tab-test" class="tab-content">
+    <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
+    <div class="card">
+      <div class="card-title">📄 テストPDF（スキャン画像PDF対応）</div>
+      <div class="upload-zone" id="testZone" onclick="document.getElementById('testFile').click()">
+        <div class="uz-ico">📄</div>
+        <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
+        <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
+        <input type="file" id="testFile" accept=".pdf" style="display:none">
+      </div>
+      <div id="testStatus"></div>
+    </div>
+    <div id="testResult"></div>
+  </div>
+
+  <!-- ══ TAB 4: 検索 ═══════════════════════════════════════════════ -->
+  <div id="tab-search" class="tab-content">
+    <div id="searchWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
+
+    <!-- ページ番号 → Unit 逆引き -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:10px">📄 ページ番号 → Unit 逆引き</div>
+      <div class="row">
+        <input type="number" id="pageInp" class="range-inp" placeholder="例: 42" min="1"
+               style="width:90px" oninput="doPageLookup()">
+        <span style="font-size:13px;color:var(--muted)">ページ</span>
+        <div id="pageResult" style="font-size:14px;font-weight:600;color:var(--navy)"></div>
+      </div>
+    </div>
+
+    <div class="s-wrap">
+      <span class="s-ico">🔍</span>
+      <input class="s-input" id="sInput" type="text" placeholder="単語・文法・熟語を入力..." oninput="doSearch()">
+    </div>
+    <div class="pills" id="fPills">
+      <div class="pill active" onclick="setFilter('all',this)">すべて</div>
+      <div class="pill"        onclick="setFilter('単語',this)">単語</div>
+      <div class="pill"        onclick="setFilter('文法',this)">文法</div>
+      <div class="pill"        onclick="setFilter('熟語',this)">熟語</div>
+    </div>
+    <div id="sResults">
+      <div class="empty"><div class="empty-ico">🔍</div><div class="empty-txt">検索語を入力してください</div></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- API KEY MODAL -->
+<div class="modal-ov" id="keyModal" style="display:none" onclick="if(event.target===this)closeKeyModal()">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <div class="modal-title">🔑 Gemini APIキー設定</div>
+      <button class="modal-close" onclick="closeKeyModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.7">
+        Google AI StudioのAPIキーを入力してください。<br>
+        保存時に使用可能なモデルを自動で検出します。
+      </p>
+      <div class="form-row">
+        <label class="form-lbl">APIキー（AIza...から始まる文字列）</label>
+        <input class="form-in" id="keyInput" type="text" placeholder="AIzaSy..."
+               style="font-family:monospace;font-size:12px">
+      </div>
+      <div id="keyDetectStatus" style="font-size:12px;margin-top:10px;line-height:1.8;min-height:20px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeKeyModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" id="saveKeyBtn" onclick="saveApiKey()">保存 &amp; モデル検出</button>
+      <button class="btn btn-green btn-sm" id="confirmKeyBtn" onclick="updateKeyStatus();closeKeyModal()" style="display:none">✅ この設定で確定</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-ov" id="editModal" style="display:none" onclick="if(event.target===this)closeEdit()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="mTitle">項目を編集</div>
+      <button class="modal-close" onclick="closeEdit()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-row"><label class="form-lbl">Unit</label><input class="form-in" id="fUnit" type="text" placeholder="Unit 1"></div>
+        <div class="form-row"><label class="form-lbl">Lesson / Scene</label><input class="form-in" id="fLesson" type="text" placeholder="Scene 1"></div>
+        <div class="form-row"><label class="form-lbl">ページ番号</label><input class="form-in" id="fPage" type="number" placeholder="10"></div>
+        <div class="form-row"><label class="form-lbl">種類</label>
+          <select class="form-sel" id="fType">
+            <option value="単語">単語</option>
+            <option value="文法">文法</option>
+            <option value="熟語">熟語</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label class="form-lbl">内容（英語）</label><input class="form-in" id="fContent" type="text" placeholder="hello"></div>
+      <div class="form-row"><label class="form-lbl">訳・説明</label><input class="form-in" id="fTrans" type="text" placeholder="やあ、こんにちは"></div>
+      <div class="form-row"><label class="form-lbl">メモ・用法</label><input class="form-in" id="fNotes" type="text" placeholder="例文や補足など"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger btn-sm"    id="delBtn" onclick="deleteItem()">削除</button>
+      <button class="btn btn-ghost btn-sm"              onclick="closeEdit()">キャンセル</button>
+      <button class="btn btn-primary btn-sm"            onclick="saveEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- JSON MODAL -->
+<div class="json-ov" id="jsonOv" style="display:none" onclick="if(event.target===this)closeJSON()">
+  <div class="json-panel">
+    <div class="json-head">
+      <div class="modal-title">📋 JSONデータ — コピーして .json ファイルとして保存</div>
+      <button class="modal-close" onclick="closeJSON()">✕</button>
+    </div>
+    <div class="json-body">
+      <p style="font-size:12px;color:var(--muted)">全選択→コピー、またはボタンでクリップボードにコピーできます。</p>
+      <textarea class="json-area" id="jsonArea" readonly onclick="this.select()"></textarea>
+    </div>
+    <div class="json-foot">
+      <button class="btn btn-secondary btn-sm" onclick="closeJSON()">閉じる</button>
+      <button class="btn btn-amber" id="cpBtn" onclick="copyJSON()">📋 コピー</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // ── CONSTANTS ──────────────────────────────────────────────────────
+  const BATCH = 3;    // ページ/バッチ（少ないほど精度↑）
+  const PAR   = 3;    // 並列バッチ数
+  const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
+  const QUAL  = 0.88; // JPEG品質
+
+  // ── STATE ──────────────────────────────────────────────────────────
+  let library      = [];
+  let activeId     = '';
+  let currentPDF   = null;
+  let shouldStop   = false;
+  let editingIdx   = -1;
+  let activeFilter = 'all';
+  let activeUnit   = 'all';
+
+  // ── LIBRARY ────────────────────────────────────────────────────────
+  function mkBook(name) {
+    const id = 'b' + Date.now() + Math.random().toString(36).slice(2,6);
+    library.push({ id, name, items:[] });
+    return id;
+  }
+  function activeBook() { return library.find(b => b.id === activeId); }
+  function getItems()   { return activeBook()?.items || []; }
+  function setItems(a)  { if (activeBook()) activeBook().items = a; }
+
+  function switchBook(id) {
+    activeId = id;
+    renderBookSel();
+    renderPreview();
+    renderUnitView();
+    updateBadge();
+    doSearch();
+  }
+
+  function addBook() {
+    const name = prompt('教科書名を入力（例: NEW HORIZON 中2）');
+    if (!name?.trim()) return;
+    switchBook(mkBook(name.trim()));
+  }
+
+  function deleteBook() {
+    if (library.length <= 1) { alert('最後の1冊は削除できません。'); return; }
+    if (!confirm(`「${activeBook()?.name}」を削除しますか？`)) return;
+    library = library.filter(b => b.id !== activeId);
+    switchBook(library[0].id);
+  }
+
+  function renderBookSel() {
+    document.getElementById('bookSel').innerHTML =
+      library.map(b => `<option value="${b.id}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`).join('');
+    document.getElementById('delBookBtn').disabled = library.length <= 1;
+  }
+
+  // ── TABS ───────────────────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
+    const nd = !getItems().length;
+    if (name==='edit')   { renderUnitView(); document.getElementById('editWarn').style.display   = nd?'block':'none'; }
+    if (name==='test')   document.getElementById('testWarn').style.display   = nd?'block':'none';
+    if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
+  }
+
+  // ── PDF RENDERING ──────────────────────────────────────────────────
+  async function toBase64(pdfPage, scale=SCALE) {
+    const vp = pdfPage.getViewport({ scale });
+    const cv = document.createElement('canvas');
+    cv.width=vp.width; cv.height=vp.height;
+    await pdfPage.render({ canvasContext:cv.getContext('2d'), viewport:vp }).promise;
+    return cv.toDataURL('image/jpeg', QUAL).split(',')[1];
+  }
+
+  async function toThumb(pdfPage) {
+    const vp = pdfPage.getViewport({ scale:0.22 });
+    const cv = document.createElement('canvas');
+    cv.width=vp.width; cv.height=vp.height;
+    await pdfPage.render({ canvasContext:cv.getContext('2d'), viewport:vp }).promise;
+    return cv;
+  }
+
+  // ── THUMBNAILS ─────────────────────────────────────────────────────
+  const THUMB_LABELS = { waiting:'待機中', processing:'解析中', done:'解析完了', error:'エラー' };
+
+  function addThumb(pg, canvas, st) {
+    const d  = document.createElement('div');
+    d.className='thumb'; d.id='th'+pg; d.dataset.st=st;
+    if (canvas) d.appendChild(canvas);
+    const ov = document.createElement('div'); ov.className='thumb-ov'; ov.id='tov'+pg;
+    ov.textContent = THUMB_LABELS[st]||st;
+    d.appendChild(ov);
+    const lbl = document.createElement('div'); lbl.className='thumb-pg'; lbl.textContent='p.'+pg;
+    d.appendChild(lbl);
+    document.getElementById('thumbGrid').appendChild(d);
+  }
+
+  function setThumb(pg, st) {
+    const d=document.getElementById('th'+pg), ov=document.getElementById('tov'+pg);
+    if (d)  d.dataset.st=st;
+    if (ov) ov.textContent=THUMB_LABELS[st]||st;
+  }
+
+  // ── GEMINI API ─────────────────────────────────────────────────────
+  const KEY_STORE   = 'nhscope_apikey';
+  const MODEL_STORE = 'nhscope_model';
+
+  function getApiKey() { return localStorage.getItem(KEY_STORE)   || ''; }
+  function getModel()  { return localStorage.getItem(MODEL_STORE) || ''; }
+
+  function saveModelManual() {
+    const val = document.getElementById('modelInput').value.trim();
+    if (!val) return;
+    localStorage.setItem(MODEL_STORE, val);
+    document.getElementById('modelStatus').innerHTML =
+      `<span style="color:var(--green);font-weight:600">✅ ${val}</span>`;
+  }
+
+  function updateKeyBanner() {
+    const key   = getApiKey();
+    const model = getModel();
+    const inp   = document.getElementById('keyInputBanner');
+    const mInp  = document.getElementById('modelInputBanner');
+    const mInp2 = document.getElementById('modelInput');
+    const st    = document.getElementById('keyBannerStatus');
+    const mSt   = document.getElementById('modelStatus');
+    const banner= document.getElementById('keyBanner');
+    if (key) {
+      inp.value  = key;
+      if (mInp)  mInp.value  = model;
+      if (mInp2) mInp2.value = model;
+      st.innerHTML = `<span style="color:var(--green);font-weight:600">✅ 設定済</span>`;
+      banner.style.background = '#ECFDF5';
+      banner.style.borderBottomColor = '#A7F3D0';
+    } else {
+      st.innerHTML = '<span style="color:#92400E">← APIキーを入力して保存してください</span>';
+    }
+    if (model && mSt) {
+      mSt.innerHTML = `<span style="color:var(--green);font-weight:600">✅ ${model}</span>`;
+    }
+  }
+
+  async function saveApiKeyBanner() {
+    const key   = document.getElementById('keyInputBanner').value.trim();
+    const manualModel = document.getElementById('modelInputBanner').value.trim();
+    const stEl  = document.getElementById('keyBannerStatus');
+
+    if (!key) { stEl.innerHTML = '<span style="color:var(--red)">キーを入力してください</span>'; return; }
+
+    // モデルが手動指定されている場合はそのまま使う
+    if (manualModel) {
+      localStorage.setItem(KEY_STORE,   key);
+      localStorage.setItem(MODEL_STORE, manualModel);
+      stEl.innerHTML = `<span style="color:var(--green);font-weight:600">✅ 設定完了：${manualModel}</span>`;
+      document.getElementById('keyBanner').style.background = '#ECFDF5';
+      document.getElementById('keyBanner').style.borderBottomColor = '#A7F3D0';
+      return;
+    }
+
+    // 自動検出
+    stEl.innerHTML = '<span style="color:var(--sky)">🔍 モデルを自動検出中...</span>';
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+      if (!res.ok) {
+        const e = await res.json().catch(()=>({}));
+        throw new Error(e?.error?.message || 'APIキーが無効です');
+      }
+      const data = await res.json();
+      const models = (data.models || [])
+        .filter(m => m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini'))
+        .map(m => m.name.replace('models/', ''));
+
+      if (!models.length) throw new Error('モデルが見つかりません');
+
+      const priority = ['gemini-1.5-flash','gemini-1.5-flash-8b','gemini-1.5-pro','gemini-1.0-pro','gemini-pro'];
+      const selected =
+        priority.reduce((f, p) => f || models.find(m => m.startsWith(p)), null) ||
+        models.find(m => m.includes('flash')) ||
+        models[0];
+
+      localStorage.setItem(KEY_STORE,   key);
+      localStorage.setItem(MODEL_STORE, selected);
+      document.getElementById('modelInputBanner').value = selected;
+
+      stEl.innerHTML = `<span style="color:var(--green);font-weight:600">✅ 設定完了：${selected}</span>
+        <span style="color:var(--muted);font-size:11px"> | 検出モデル：${models.slice(0,5).join(', ')}</span>`;
+      document.getElementById('keyBanner').style.background = '#ECFDF5';
+      document.getElementById('keyBanner').style.borderBottomColor = '#A7F3D0';
+
+    } catch(e) {
+      stEl.innerHTML = `<span style="color:var(--red)">❌ ${e.message}</span>`;
+    }
+  }
+
+  // 旧関数（互換用・空実装）
+  function promptApiKey()  {}
+  function closeKeyModal() { document.getElementById('keyModal').style.display='none'; }
+  function saveApiKey()    {}
+  function updateKeyStatus() {}
+
+  async function callGemini(parts, systemText, maxTok=4000) {
+    const key   = getApiKey();
+    const model = getModel();
+    if (!key)   throw new Error('APIキーが設定されていません。「🔑 APIキー設定」から入力してください。');
+    if (!model) throw new Error('モデルが未検出です。「🔑 APIキー設定」から再設定してください。');
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemText }] },
+          contents: [{ parts }],
+          generationConfig: { maxOutputTokens: maxTok, temperature: 0.1 }
+        })
+      }
+    );
+    if (!res.ok) {
+      const e = await res.json().catch(()=>({}));
+      throw new Error(e?.error?.message || 'Gemini API Error ' + res.status);
+    }
+    const d = await res.json();
+    return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+
+  function parseJ(raw) {
+    return JSON.parse(raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
+  }
+
+  async function extractBatch(images, pageNums) {
+    const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
+    parts.push({ text:
+      `これらはNEW HORIZONの教科書ページ（p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}）の画像です。
+各ページから全ての学習項目（単語・文法・熟語）を一切漏れなく抽出し、以下のJSON形式のみで返してください。マークダウン不要。
+
+{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
+
+• typeは「単語」「文法」「熟語」のいずれか
+• pageは教科書本文に記載のページ番号（数字）
+• 文法はルール・構造・例をnotesに簡潔に
+• 本文の例文中に出てくる重要表現も含めること
+• 項目が見当たらないページは空配列でよい`
+    });
+
+    const raw = await callGemini(
+      parts,
+      `あなたはNEW HORIZON英語教科書の全項目データ抽出専門家です。
+画像を精密に読み取り、学習項目を一切漏らさずJSONで返します。
+単語リスト・WORD BOX・文法コーナー・本文の重要表現を全て網羅してください。
+JSONのみ返し、マークダウンや説明文は不要です。`
+    );
+
+    // デバッグ用：最初の生レスポンスを保存
+    if (!window._firstRawResponse) window._firstRawResponse = raw;
+
+    try {
+      return parseJ(raw).items || [];
+    } catch(e) {
+      throw new Error(`JSON解析失敗: ${e.message} | Geminiの返答（先頭200文字）: ${raw.substring(0,200)}`);
+    }
+  }
+
+  // ── PDF LOAD ───────────────────────────────────────────────────────
+  async function onPDFLoaded(file) {
+    document.getElementById('tbTitle').textContent = file.name;
+    document.getElementById('tbSub').textContent   = (file.size/1024/1024).toFixed(1)+' MB';
+    document.getElementById('tbZone').classList.add('has');
+    const buf = await file.arrayBuffer();
+    currentPDF = await pdfjsLib.getDocument({ data:buf }).promise;
+    const n = currentPDF.numPages;
+    document.getElementById('pageInfo').textContent = `${n} ページを読み込みました`;
+    document.getElementById('startP').value = 1;
+    document.getElementById('endP').value   = n;
+    document.getElementById('startP').max   = n;
+    document.getElementById('endP').max     = n;
+    updateEst();
+    document.getElementById('setupCard').style.display = 'block';
+    ['startP','endP'].forEach(id => document.getElementById(id).addEventListener('input', updateEst));
+  }
+
+  function updateEst() {
+    const s=+document.getElementById('startP').value||1, e=+document.getElementById('endP').value||1;
+    const pages=Math.max(0,e-s+1), rounds=Math.ceil(pages/(BATCH*PAR));
+    const minM=Math.ceil(rounds*8/60), maxM=Math.ceil(rounds*18/60);
+    document.getElementById('estLabel').textContent = `${pages}ページ / 約${minM}〜${maxM}分`;
+  }
+
+  // ── MAIN PROCESSING (3並列) ────────────────────────────────────────
+  async function startProcessing() {
+    if (!currentPDF) return;
+    shouldStop = false;
+    const startP=+document.getElementById('startP').value, endP=+document.getElementById('endP').value;
+    const total=endP-startP+1, startMs=Date.now();
+    let processed=0, lastError='';
+
+    document.getElementById('setupCard').style.display = 'none';
+    document.getElementById('procPanel').style.display = 'block';
+    document.getElementById('pTotal').textContent = total;
+    document.getElementById('thumbGrid').innerHTML = '';
+
+    for (let rs=startP; rs<=endP && !shouldStop; rs+=BATCH*PAR) {
+      const re = Math.min(rs+BATCH*PAR-1, endP);
+
+      // ① このラウンドのページを順次レンダリング（PDF.js 安定性のため）
+      const imgs = {};
+      for (let pg=rs; pg<=re && !shouldStop; pg++) {
+        document.getElementById('pInfo').textContent = `p.${pg} を画像化中...`;
+        const pp   = await currentPDF.getPage(pg);
+        imgs[pg]   = await toBase64(pp);
+        const thumb = await toThumb(pp);
+        addThumb(pg, thumb, 'waiting');
+      }
+      if (shouldStop) break;
+
+      // ② 3バッチを並列送信
+      const bps = [];
+      for (let b=0; b<PAR; b++) {
+        const bs=rs+b*BATCH, be=Math.min(bs+BATCH-1,endP);
+        if (bs>endP) break;
+        const bi=[], bn=[];
+        for (let pg=bs; pg<=be && imgs[pg]; pg++) { bi.push(imgs[pg]); bn.push(pg); }
+        if (!bi.length) break;
+        bn.forEach(pg=>setThumb(pg,'processing'));
+        bps.push(
+          extractBatch(bi, bn)
+            .then(items => { bn.forEach(pg=>setThumb(pg,'done')); return { items, cnt:bn.length }; })
+            .catch((e)  => { lastError=e.message; bn.forEach(pg=>setThumb(pg,'error')); return { items:[], cnt:bn.length }; })
+        );
+      }
+
+      document.getElementById('pInfo').textContent = `p.${rs}〜${re} をAIで解析中（3並列）...`;
+
+      // ③ 全並列完了 → リアルタイム追加
+      const results = await Promise.all(bps);
+      for (const { items, cnt } of results) {
+        getItems().push(...items);   // ← 検索にリアルタイム反映
+        processed += cnt;
+      }
+
+      // ④ UI更新・残り時間
+      const elapsed=Date.now()-startMs, rate=processed/elapsed, remMs=(total-processed)/rate;
+      const remMin=Math.ceil(remMs/60000);
+      document.getElementById('pPage').textContent  = processed;
+      document.getElementById('pItems').textContent = getItems().length;
+      document.getElementById('pBar').style.width   = (processed/total*100)+'%';
+      document.getElementById('pTime').textContent  =
+        processed>=total  ? '解析完了！' :
+        remMin<=1         ? '残り1分以内' :
+        `残り約${remMin}分`;
+
+      updateBadge();
+      renderPreview();
+      saveBackup();
+    }
+
+    document.getElementById('procPanel').style.display = 'none';
+    document.getElementById('setupCard').style.display = 'block';
+    document.getElementById('pInfo').textContent = '';
+
+    if (!getItems().length) {
+      const msg = lastError
+        ? `エラー内容：${lastError}`
+        : 'ページ範囲や画像品質を確認してください。';
+      document.getElementById('tbPreview').innerHTML = `
+        <div class="card">
+          <div style="padding:8px 0;color:var(--red);font-weight:600;margin-bottom:8px">❌ 項目が0件でした</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.8">${esc(msg)}</div>
+        </div>`;
+    }
+  }
+
+  function stopProcessing() {
+    shouldStop = true;
+    document.getElementById('pInfo').textContent = '停止しています...';
+    setTimeout(() => {
+      document.getElementById('procPanel').style.display = 'none';
+      document.getElementById('setupCard').style.display = 'block';
+    }, 800);
+  }
+
+  // ── PREVIEW ────────────────────────────────────────────────────────
+  function renderPreview() {
+    const items=getItems();
+    if (!items.length) { document.getElementById('tbPreview').innerHTML=''; return; }
+    const units=[...new Set(items.map(i=>i.unit))];
+    const wc=items.filter(i=>i.type==='単語').length, gc=items.filter(i=>i.type==='文法').length, pc=items.filter(i=>i.type==='熟語').length;
+    document.getElementById('tbPreview').innerHTML = `
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-num">${items.length}</div><div class="stat-lbl">総項目数</div></div>
+        <div class="stat-box"><div class="stat-num">${units.length}</div><div class="stat-lbl">Unit数</div></div>
+        <div class="stat-box"><div class="stat-num">${wc}</div><div class="stat-lbl">単語</div></div>
+        <div class="stat-box"><div class="stat-num">${gc}</div><div class="stat-lbl">文法</div></div>
+        <div class="stat-box"><div class="stat-num">${pc}</div><div class="stat-lbl">熟語</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">
+          <span>📋 データプレビュー（先頭30件）</span>
+          <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Unit</th><th>ページ</th><th>種類</th><th>内容</th><th>訳・説明</th></tr></thead>
+            <tbody>${items.slice(0,30).map(item=>`
+              <tr>
+                <td style="font-size:12px;color:var(--muted)">${esc(item.unit||'-')}</td>
+                <td style="font-weight:700;color:var(--blue)">p.${item.page||'-'}</td>
+                <td><span class="badge b${item.type}">${item.type}</span></td>
+                <td style="font-weight:500">${esc(item.content)}</td>
+                <td style="color:var(--muted);font-size:13px">${esc(item.translation)||'-'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        ${items.length>30?`<p style="margin-top:8px;font-size:12px;color:var(--muted)">…他 ${items.length-30} 件（「データ編集」タブで全件確認・編集）</p>`:''}
+      </div>`;
+  }
+
+  // ── JSON ───────────────────────────────────────────────────────────
+  function showJSON() {
+    document.getElementById('jsonArea').value = JSON.stringify({ name:activeBook()?.name, items:getItems() }, null, 2);
+    document.getElementById('jsonOv').style.display = 'flex';
+  }
+  function closeJSON() { document.getElementById('jsonOv').style.display='none'; }
+  async function copyJSON() {
+    const txt = document.getElementById('jsonArea').value;
+    try { await navigator.clipboard.writeText(txt); }
+    catch { document.getElementById('jsonArea').select(); document.execCommand('copy'); }
+    document.getElementById('cpBtn').textContent = '✅ コピー済！';
+    setTimeout(()=>document.getElementById('cpBtn').textContent='📋 コピー', 2200);
+  }
+
+  function loadJSON(e) {
+    const file=e.target.files[0]; if (!file) return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      try {
+        const d=JSON.parse(ev.target.result);
+        setItems(d.items||[]);
+        document.getElementById('jsonSt').textContent=`✅ ${getItems().length}件読込済`;
+        updateBadge(); renderPreview(); renderUnitView(); saveBackup();
+      } catch { document.getElementById('jsonSt').textContent='❌ 読込失敗'; }
+    };
+    r.readAsText(file);
+  }
+
+  // ── DATA EDIT ──────────────────────────────────────────────────────
+  function renderUnitView() {
+    const items=getItems(), nd=!items.length;
+    document.getElementById('editWarn').style.display = nd?'block':'none';
+    if (nd) { document.getElementById('unitPills').innerHTML=''; document.getElementById('unitTable').innerHTML=''; return; }
+
+    const units=['all',...new Set(items.map(i=>i.unit).filter(Boolean).sort())];
+    if (!units.includes(activeUnit)) activeUnit='all';
+
+    document.getElementById('unitPills').innerHTML = units.map(u=>`
+      <div class="unit-pill ${u===activeUnit?'active':''}" onclick="selectUnit(${JSON.stringify(u)})">
+        ${u==='all'?`すべて (${items.length})`:esc(u)}
+      </div>`).join('');
+
+    const list = activeUnit==='all' ? items : items.filter(i=>i.unit===activeUnit);
+    if (!list.length) {
+      document.getElementById('unitTable').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div class="empty-txt">このUnitに項目がありません</div></div>';
+      return;
+    }
+    document.getElementById('unitTable').innerHTML = `
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Unit</th><th>ページ</th><th>種類</th><th>内容</th><th>訳・説明</th><th>メモ</th><th></th></tr></thead>
+          <tbody>${list.map(item=>{
+            const idx=items.indexOf(item);
+            return `<tr>
+              <td style="font-size:12px;color:var(--muted)">${esc(item.unit||'-')}</td>
+              <td style="font-weight:700;color:var(--blue)">p.${item.page||'-'}</td>
+              <td><span class="badge b${item.type}">${item.type}</span></td>
+              <td style="font-weight:500">${esc(item.content)}</td>
+              <td style="color:var(--muted);font-size:13px">${esc(item.translation)||'-'}</td>
+              <td style="color:var(--muted);font-size:12px">${esc(item.notes)||''}</td>
+              <td><button class="btn btn-ghost btn-sm" onclick="openEdit(${idx})">✏️</button></td>
+            </tr>`;
+          }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function selectUnit(u) { activeUnit=u; renderUnitView(); }
+
+  function openEdit(idx) {
+    editingIdx=idx;
+    const isNew=idx===-1;
+    const it=isNew?{unit:'',lesson:'',page:'',type:'単語',content:'',translation:'',notes:''}:getItems()[idx];
+    document.getElementById('mTitle').textContent = isNew?'新しい項目を追加':'項目を編集';
+    document.getElementById('fUnit').value    = it.unit||'';
+    document.getElementById('fLesson').value  = it.lesson||'';
+    document.getElementById('fPage').value    = it.page||'';
+    document.getElementById('fType').value    = it.type||'単語';
+    document.getElementById('fContent').value = it.content||'';
+    document.getElementById('fTrans').value   = it.translation||'';
+    document.getElementById('fNotes').value   = it.notes||'';
+    document.getElementById('delBtn').style.display = isNew?'none':'';
+    document.getElementById('editModal').style.display='flex';
+  }
+  function closeEdit() { document.getElementById('editModal').style.display='none'; }
+
+  function saveEdit() {
+    const it={
+      unit:    document.getElementById('fUnit').value.trim(),
+      lesson:  document.getElementById('fLesson').value.trim(),
+      page:    +document.getElementById('fPage').value||0,
+      type:    document.getElementById('fType').value,
+      content: document.getElementById('fContent').value.trim(),
+      translation: document.getElementById('fTrans').value.trim(),
+      notes:   document.getElementById('fNotes').value.trim(),
+    };
+    if (!it.content) { alert('内容は必須です。'); return; }
+    const items=getItems();
+    if (editingIdx===-1) items.push(it); else items[editingIdx]=it;
+    setItems(items);
+    closeEdit(); renderPreview(); renderUnitView(); updateBadge(); saveBackup();
+  }
+
+  function deleteItem() {
+    if (editingIdx===-1||!confirm('この項目を削除しますか？')) return;
+    const items=getItems(); items.splice(editingIdx,1); setItems(items);
+    closeEdit(); renderPreview(); renderUnitView(); updateBadge(); saveBackup();
+  }
+
+  // ── TEST ANALYSIS ──────────────────────────────────────────────────
+  async function analyzeTest(file) {
+    const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
+    rsEl.innerHTML='';
+    try {
+      setSt(stEl,'load','テストPDFを画像化中...');
+      const buf=await file.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      const imgs=[];
+      for (let i=1;i<=Math.min(pdf.numPages,8);i++) imgs.push(await toBase64(await pdf.getPage(i), 1.6));
+      setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
+
+      const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
+      const ctx=getItems().length
+        ?'\n教科書データ参考：\n'+getItems().map(i=>`${i.unit} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,6000):'';
+      parts.push({text:
+        `このテストがNEW HORIZONのどの範囲（Unit・ページ数）に相当するか分析してください。${ctx}
+JSONのみで返してください：
+{"grade":"中学1年","from_unit":"Unit 1","to_unit":"Unit 3","from_page":10,"to_page":45,"summary":"説明","topics":["Unit 1: be動詞"],"key_items":["am","are"]}`
+      });
+
+      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',2000);
+      const r=parseJ(raw);
+      setSt(stEl,'ok','✅ 分析完了');
+      rsEl.innerHTML=`
+        <div class="result-hero">
+          <div class="result-grade">${esc(r.grade||'')}</div>
+          <div class="result-range"><em>${esc(r.from_unit)}</em> 〜 <em>${esc(r.to_unit)}</em></div>
+          <div class="result-pages">教科書 pp.${r.from_page} 〜 ${r.to_page}</div>
+        </div>
+        <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary)}</p></div>
+        ${(r.topics||[]).length?`<div class="card"><div class="card-title">📚 トピック</div>${r.topics.map(t=>`<div class="topic-row">${esc(t)}</div>`).join('')}</div>`:''}
+        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題項目</div><div class="pills">${r.key_items.map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
+    } catch(e) { setSt(stEl,'err','❌ '+e.message); }
+  }
+
+  // ── SEARCH ─────────────────────────────────────────────────────────
+  function setFilter(f,el) {
+    activeFilter=f;
+    document.querySelectorAll('#fPills .pill').forEach(p=>p.classList.remove('active'));
+    el.classList.add('active');
+    doSearch();
+  }
+
+  function doSearch() {
+    const q=document.getElementById('sInput').value.trim(), res=document.getElementById('sResults');
+    if (!q) { res.innerHTML=`<div class="empty"><div class="empty-ico">🔍</div><div class="empty-txt">検索語を入力してください</div></div>`; return; }
+    const items=getItems();
+    if (!items.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">先に教科書データを読み込んでください</div></div>`; return; }
+    const ql=q.toLowerCase();
+    const filtered=items.filter(it=>{
+      if (activeFilter!=='all'&&it.type!==activeFilter) return false;
+      return [it.content,it.translation,it.notes,it.unit].some(v=>(v||'').toLowerCase().includes(ql));
+    });
+    if (!filtered.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">「${esc(q)}」に一致する項目は見つかりません</div></div>`; return; }
+    const hi=s=>s?esc(s).replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<mark>$1</mark>'):'-';
+    res.innerHTML=`
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">${filtered.length}件見つかりました</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Unit</th><th>ページ</th><th>内容</th><th>訳・説明</th></tr></thead>
+        <tbody>${filtered.map(it=>`<tr>
+          <td style="font-size:12px;color:var(--muted)">${esc(it.unit||'-')}</td>
+          <td style="font-weight:700;color:var(--blue)">p.${it.page||'-'}</td>
+          <td style="font-weight:500">${hi(it.content)}</td>
+          <td style="color:var(--muted);font-size:13px">${hi(it.translation)}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table></div>`;
+  }
+
+  // ── PAGE LOOKUP ────────────────────────────────────────────────────
+  function doPageLookup() {
+    const pg  = parseInt(document.getElementById('pageInp').value);
+    const res = document.getElementById('pageResult');
+    if (!pg || pg < 1) { res.textContent = ''; return; }
+    const items = getItems();
+    if (!items.length) { res.innerHTML = '<span style="color:var(--muted);font-weight:400">教科書データを先に読み込んでください</span>'; return; }
+
+    // そのページを含む項目を集める
+    const hit = items.filter(it => it.page === pg);
+    if (hit.length) {
+      const units = [...new Set(hit.map(i=>i.unit).filter(Boolean))];
+      res.innerHTML = units.length
+        ? `<span style="color:var(--green)">✓</span> ${units.join(' / ')}`
+        : `<span style="color:var(--muted);font-weight:400">Unit情報なし（${hit.length}件）</span>`;
+      return;
+    }
+
+    // 完全一致がなければ近いページから推定
+    const sorted = [...items].filter(i=>i.page).sort((a,b)=>Math.abs(a.page-pg)-Math.abs(b.page-pg));
+    if (sorted.length) {
+      const near = sorted[0];
+      const diff = Math.abs(near.page - pg);
+      res.innerHTML = diff <= 3
+        ? `<span style="color:var(--amber)">〜</span> ${near.unit||'不明'} <span style="font-size:12px;color:var(--muted);font-weight:400">（p.${near.page}の項目より推定）</span>`
+        : `<span style="color:var(--muted);font-weight:400">該当なし（最近傍: p.${near.page} / ${near.unit||'不明'}）</span>`;
+    } else {
+      res.textContent = '該当なし';
+    }
+  }
+
+  // ── AUTO BACKUP (localStorage) ────────────────────────────────────
+  const BACKUP_KEY = 'nhscope_v1';
+
+  function saveBackup() {
+    try {
+      localStorage.setItem(BACKUP_KEY, JSON.stringify({ library, activeId }));
+    } catch {}
+  }
+
+  function loadBackup() {
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      if (d.library?.length) {
+        library  = d.library;
+        activeId = d.activeId || d.library[0].id;
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  // ── UTILS ──────────────────────────────────────────────────────────
+  function updateBadge() {
+    const n=getItems().length, el=document.getElementById('hBadge');
+    el.className=n?'on':'';
+    el.textContent=n?`✓ ${n}件読込済`:'教科書データ未読込';
+  }
+  function setSt(el,type,msg) {
+    const cls={load:'s-load',ok:'s-ok',err:'s-err'}[type]||'s-load';
+    el.innerHTML=`<div class="status-bar ${cls}">${type==='load'?'<div class="spinner"></div>':''}${msg}</div>`;
+  }
+  function esc(s) {
+    if (s==null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function setupDrop(zId,iId,cb) {
+    const z=document.getElementById(zId), inp=document.getElementById(iId);
+    z.addEventListener('dragover',  e=>{e.preventDefault();z.classList.add('over');});
+    z.addEventListener('dragleave', ()=>z.classList.remove('over'));
+    z.addEventListener('drop', e=>{e.preventDefault();z.classList.remove('over');const f=e.dataTransfer.files[0];if(f?.type==='application/pdf')cb(f);});
+    inp.addEventListener('change', e=>{if(e.target.files[0])cb(e.target.files[0]);});
+  }
+
+  // ── INIT ───────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const restored = loadBackup();
+    if (!restored) {
+      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+      activeId = library[0].id;
+    }
+    renderBookSel();
+    renderPreview();
+    renderUnitView();
+    updateBadge();
+    updateKeyBanner();
+    setupDrop('tbZone','tbFile',onPDFLoaded);
+    setupDrop('testZone','testFile',analyzeTest);
+  });
+</script>
+</body>
+</html>
