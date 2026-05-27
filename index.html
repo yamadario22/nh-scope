@@ -454,7 +454,7 @@
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   // ── CONSTANTS ──────────────────────────────────────────────────────
-  const BATCH = 3;    // ページ/バッチ（少ないほど精度↑）
+  const BATCH = 1;    // 1ページ/バッチ（JSON切れ防止）
   const PAR   = 3;    // 並列バッチ数
   const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
   const QUAL  = 0.88; // JPEG品質
@@ -665,7 +665,11 @@
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemText }] },
           contents: [{ parts }],
-          generationConfig: { maxOutputTokens: maxTok, temperature: 0.1 }
+          generationConfig: {
+            maxOutputTokens: maxTok,
+            temperature: 0.1,
+            responseMimeType: 'application/json'
+          }
         })
       }
     );
