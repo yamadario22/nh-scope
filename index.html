@@ -25,8 +25,18 @@
     #hBadge.on { color:var(--amber); }
 
     /* TABS */
-    .tabs { background:var(--navy); display:flex; padding:0 24px; border-bottom:1px solid rgba(255,255,255,.1); }
-    .tab { padding:11px 20px; color:rgba(255,255,255,.4); font-size:13px; font-weight:500; cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; white-space:nowrap; user-select:none; }
+    .tabs {
+      background:var(--navy); display:flex; padding:0 24px;
+      border-bottom:1px solid rgba(255,255,255,.1);
+      overflow-x:auto; -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;
+    }
+    .tabs::-webkit-scrollbar { display:none; }
+    .tab {
+      padding:11px 20px; color:rgba(255,255,255,.4); font-size:13px; font-weight:500;
+      cursor:pointer; border-bottom:2px solid transparent; transition:all .2s;
+      white-space:nowrap; user-select:none; flex-shrink:0;
+    }
     .tab:hover { color:rgba(255,255,255,.75); }
     .tab.active { color:#fff; border-bottom-color:var(--amber); }
 
@@ -652,13 +662,15 @@
   function saveApiKey()    {}
   function updateKeyStatus() {}
 
-  async function callGemini(parts, systemText, maxTok=16000, retry=2) {
+  async function callGemini(parts, systemText, maxTok=16000) {
     const key   = getApiKey();
     const model = getModel();
-    if (!key)   throw new Error('APIキーが設定されていません。「🔑 APIキー設定」から入力してください。');
-    if (!model) throw new Error('モデルが未検出です。「🔑 APIキー設定」から再設定してください。');
+    if (!key)   throw new Error('APIキーが設定されていません。');
+    if (!model) throw new Error('モデルが未設定です。青いバーでモデルを設定してください。');
 
-    for (let i = 0; i < retry; i++) {
+    const waitTimes = [15000, 30000, 60000, 120000, 240000]; // 指数バックオフ
+
+    for (let i = 0; i <= waitTimes.length; i++) {
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
@@ -672,33 +684,43 @@
             })
           }
         );
+
         if (!res.ok) {
           const e = await res.json().catch(()=>({}));
-          const msg = e?.error?.message || 'Gemini API Error ' + res.status;
+          const msg = e?.error?.message || 'API Error ' + res.status;
 
-          // quota超過はリトライしない（1日の上限に達している）
-          if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error('API利用上限に達しました。使用モデルを変更するか、明日また試してください。\n詳細：' + msg.substring(0, 200));
+          // quota超過（1日の上限）→ リトライ不要
+          if (msg.includes('quota') && msg.includes('limit: 0')) {
+            throw new Error('⚠️ API利用上限に達しました。モデルを変更するか明日また試してください。');
           }
-          // 混雑エラーのみ1回だけリトライ
-          if ((msg.includes('high demand') || msg.includes('overloaded') || res.status === 503) && i < retry - 1) {
-            await sleep(20000);
-            continue;
+
+          // 混雑・一時エラー → リトライ
+          if (msg.includes('high demand') || msg.includes('overloaded') || res.status === 503 || res.status === 429) {
+            if (i < waitTimes.length) {
+              document.getElementById('pInfo').textContent =
+                `混雑のため ${waitTimes[i]/1000}秒待機中... (${i+1}回目のリトライ)`;
+              await sleep(waitTimes[i]);
+              continue;
+            }
           }
-          throw new Error(msg);
+          throw new Error(msg.substring(0, 300));
         }
+
         const d = await res.json();
         return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
       } catch(e) {
         if (e.message.includes('利用上限')) throw e;
-        if (i < retry - 1 && (e.message.includes('high demand') || e.message.includes('fetch'))) {
-          await sleep(20000);
+        if (i < waitTimes.length && (e.message.includes('high demand') || e.message.includes('fetch') || e.message.includes('503'))) {
+          document.getElementById('pInfo').textContent =
+            `エラーのため ${waitTimes[i]/1000}秒待機中... (${i+1}回目のリトライ)`;
+          await sleep(waitTimes[i]);
           continue;
         }
         throw e;
       }
     }
-    throw new Error('リトライ上限に達しました。しばらく待ってから再試行してください。');
+    throw new Error('5回リトライしましたが失敗しました。しばらく待ってから再試行してください。');
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -735,22 +757,25 @@
   async function extractBatch(images, pageNums) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
     parts.push({ text:
-      `これらはNEW HORIZONの教科書ページ（p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}）の画像です。
-各ページから全ての学習項目（単語・文法・熟語）を抽出し、以下のJSON形式のみで返してください。マークダウン不要。
+      `これはNEW HORIZONの教科書ページ（p.${pageNums[0]}）の画像です。
+このページの単語リスト・WORD BOX・文法コーナーから学習項目を抽出してください。
 
-{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ","notes":""}]}
+必ず以下のJSON形式のみで返してください（マークダウン不要）：
+{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
 
+重要なルール：
+• translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
-• pageは教科書本文のページ番号（数字）
-• notesは空文字でよい（長い説明は不要）
-• 項目がないページは空配列でよい`
+• pageは画像内のページ番号（数字）
+• 本文の地の文は抽出しない。単語リスト・語彙表・文法説明に絞ること
+• 項目がないページは {"items":[]} を返す`
     });
 
     const raw = await callGemini(
       parts,
-      `あなたはNEW HORIZON英語教科書の全項目データ抽出専門家です。
-画像を精密に読み取り、学習項目を一切漏らさずJSONのみで返します。
-説明文・マークダウン不要。notesフィールドは空文字で構いません。`,
+      `あなたはNEW HORIZON英語教科書のデータ抽出専門家です。
+教科書の単語リストやWORD BOXから単語・文法・熟語を抽出し、必ず日本語訳を付けてJSONのみで返します。
+日本語訳が不明でも推測して必ず入れてください。マークダウン不要。`,
       16000
     );
 
@@ -916,7 +941,10 @@
       <div class="card">
         <div class="card-title">
           <span>📋 データプレビュー（先頭30件）</span>
-          <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
+          <div class="row" style="gap:6px">
+            <button class="btn btn-primary btn-sm" onclick="exportDataHTML()">📦 データ入りHTMLを書き出す</button>
+            <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
+          </div>
         </div>
         <div class="tbl-wrap">
           <table>
@@ -936,7 +964,43 @@
       </div>`;
   }
 
-  // ── JSON ───────────────────────────────────────────────────────────
+  // ── データ入りHTML書き出し ──────────────────────────────────────
+  async function exportDataHTML() {
+    if (!getItems().length) { alert('データがありません。先に解析を実行してください。'); return; }
+
+    try {
+      let html;
+
+      // https:// ならそのままfetch（GitHub Pages等）
+      try {
+        const res = await fetch(location.href);
+        html = await res.text();
+      } catch {
+        // file:// など → 現在のDOMから生成
+        html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      }
+
+      // 既存の埋め込みデータを除去
+      html = html.replace(/<script id="__nh_data__">[\s\S]*?<\/script>\n?/g, '');
+
+      // 新しいデータを埋め込む
+      const payload = JSON.stringify({ library, activeId });
+      const dataScript = `<script id="__nh_data__">window.__NH_DATA__=${payload};</script>\n`;
+      html = html.replace('</head>', dataScript + '</head>');
+
+      // ダウンロード
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(blob),
+        download: 'NHScope-データ入り.html'
+      });
+      a.click();
+      URL.revokeObjectURL(a.href);
+
+    } catch(e) {
+      alert('書き出しに失敗しました：' + e.message);
+    }
+  }
   function showJSON() {
     document.getElementById('jsonArea').value = JSON.stringify({ name:activeBook()?.name, items:getItems() }, null, 2);
     document.getElementById('jsonOv').style.display = 'flex';
@@ -1194,10 +1258,21 @@ JSONのみで返してください：
 
   // ── INIT ───────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', ()=>{
-    const restored = loadBackup();
-    if (!restored) {
-      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-      activeId = library[0].id;
+    // 埋め込みデータがあればそれを最優先で読み込む（配布ファイル用）
+    if (window.__NH_DATA__) {
+      library  = window.__NH_DATA__.library  || [];
+      activeId = window.__NH_DATA__.activeId || '';
+      if (!library.length) {
+        ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+        activeId = library[0].id;
+      }
+      if (!activeId && library.length) activeId = library[0].id;
+    } else {
+      const restored = loadBackup();
+      if (!restored) {
+        ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+        activeId = library[0].id;
+      }
     }
     renderBookSel();
     renderPreview();
