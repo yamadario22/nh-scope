@@ -239,8 +239,9 @@
 <div class="book-bar">
   <label>教科書：</label>
   <select class="book-select" id="bookSel" onchange="switchBook(this.value)"></select>
-  <button class="btn btn-secondary btn-sm" onclick="addBook()">＋ 追加</button>
+  <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
   <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
+  <button class="btn btn-ghost btn-sm" onclick="resetLibrary()" style="margin-left:auto;font-size:11px">↺ 初期化</button>
 </div>
 
 <!-- API KEY BANNER -->
@@ -414,6 +415,27 @@
   </div>
 </div>
 
+<!-- ADD BOOK MODAL -->
+<div class="modal-ov" id="addBookModal" style="display:none" onclick="if(event.target===this)closeAddBookModal()">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-head">
+      <div class="modal-title">＋ 教科書を追加</div>
+      <button class="modal-close" onclick="closeAddBookModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label class="form-lbl">教科書名</label>
+        <input class="form-in" id="newBookName" type="text" placeholder="例：NEW HORIZON 中2"
+          onkeydown="if(event.key==='Enter')confirmAddBook()">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeAddBookModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmAddBook()">追加</button>
+    </div>
+  </div>
+</div>
+
 <!-- EDIT MODAL -->
 <div class="modal-ov" id="editModal" style="display:none" onclick="if(event.target===this)closeEdit()">
   <div class="modal">
@@ -503,10 +525,32 @@
     doSearch();
   }
 
-  function addBook() {
-    const name = prompt('教科書名を入力（例: NEW HORIZON 中2）');
-    if (!name?.trim()) return;
-    switchBook(mkBook(name.trim()));
+  function openAddBookModal() {
+    document.getElementById('newBookName').value = '';
+    document.getElementById('addBookModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('newBookName').focus(), 50);
+  }
+  function closeAddBookModal() {
+    document.getElementById('addBookModal').style.display = 'none';
+  }
+  function confirmAddBook() {
+    const name = document.getElementById('newBookName').value.trim();
+    if (!name) { alert('教科書名を入力してください'); return; }
+    closeAddBookModal();
+    switchBook(mkBook(name));
+  }
+  function addBook() { openAddBookModal(); } // 後方互換
+
+  function resetLibrary() {
+    if (!confirm('教科書の一覧をデフォルト（中1・中2・中3）にリセットしますか？\n※データは削除されません')) return;
+    library = [];
+    ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+    activeId = library[0].id;
+    renderBookSel();
+    renderPreview();
+    renderUnitView();
+    updateBadge();
+    saveBackup();
   }
 
   function deleteBook() {
