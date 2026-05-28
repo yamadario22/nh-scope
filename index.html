@@ -278,7 +278,7 @@
         <div class="uz-ico">📖</div>
         <div class="uz-title" id="tbTitle">PDFをアップロード</div>
         <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="tbFile" accept=".pdf" style="display:none">
+        <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
       </div>
     </div>
 
@@ -358,7 +358,7 @@
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
         <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="testFile" accept=".pdf" style="display:none">
+        <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
       </div>
       <div id="testStatus"></div>
     </div>
