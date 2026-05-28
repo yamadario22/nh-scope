@@ -278,7 +278,7 @@
         <div class="uz-ico">📖</div>
         <div class="uz-title" id="tbTitle">PDFをアップロード</div>
         <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
+        <input type="file" id="tbFile" accept=".pdf" style="display:none">
       </div>
     </div>
 
@@ -358,7 +358,7 @@
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
         <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
+        <input type="file" id="testFile" accept=".pdf" style="display:none">
       </div>
       <div id="testStatus"></div>
     </div>
@@ -915,20 +915,33 @@
     startProcessing();
   }
   async function onPDFLoaded(file) {
-    document.getElementById('tbTitle').textContent = file.name;
-    document.getElementById('tbSub').textContent   = (file.size/1024/1024).toFixed(1)+' MB';
-    document.getElementById('tbZone').classList.add('has');
-    const buf = await file.arrayBuffer();
-    currentPDF = await pdfjsLib.getDocument({ data:buf }).promise;
-    const n = currentPDF.numPages;
-    document.getElementById('pageInfo').textContent = `${n} ページを読み込みました`;
-    document.getElementById('startP').value = 1;
-    document.getElementById('endP').value   = n;
-    document.getElementById('startP').max   = n;
-    document.getElementById('endP').max     = n;
-    updateEst();
-    document.getElementById('setupCard').style.display = 'block';
-    ['startP','endP'].forEach(id => document.getElementById(id).addEventListener('input', updateEst));
+    try {
+      document.getElementById('tbTitle').textContent = file.name;
+      document.getElementById('tbSub').textContent   = (file.size/1024/1024).toFixed(1)+' MB';
+      document.getElementById('tbZone').classList.add('has');
+
+      if (typeof pdfjsLib === 'undefined') {
+        throw new Error('PDF.jsの読み込みに失敗しました。ネットワーク接続を確認してください。');
+      }
+
+      const buf = await file.arrayBuffer();
+      currentPDF = await pdfjsLib.getDocument({ data:buf }).promise;
+      const n = currentPDF.numPages;
+      document.getElementById('pageInfo').textContent = `${n} ページを読み込みました`;
+      document.getElementById('startP').value = 1;
+      document.getElementById('endP').value   = n;
+      document.getElementById('startP').max   = n;
+      document.getElementById('endP').max     = n;
+      updateEst();
+      document.getElementById('setupCard').style.display = 'block';
+      ['startP','endP'].forEach(id => document.getElementById(id).addEventListener('input', updateEst));
+    } catch(e) {
+      document.getElementById('tbPreview').innerHTML = `
+        <div class="card" style="border-color:#FECACA">
+          <div style="color:var(--red);font-weight:600;margin-bottom:6px">❌ PDFの読み込みに失敗しました</div>
+          <div style="font-size:13px;color:var(--muted)">${esc(e.message)}</div>
+        </div>`;
+    }
   }
 
   function updateEst() {
