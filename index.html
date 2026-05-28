@@ -238,7 +238,11 @@
 <!-- BOOK SWITCHER BAR -->
 <div class="book-bar">
   <label>教科書：</label>
-  <select class="book-select" id="bookSel" onchange="switchBook(this.value)"></select>
+  <select class="book-select" id="bookSel" onchange="switchBook(this.value)">
+    <option value="default_c1">NEW HORIZON 中1</option>
+    <option value="default_c2">NEW HORIZON 中2</option>
+    <option value="default_c3">NEW HORIZON 中3</option>
+  </select>
   <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
   <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
 </div>
@@ -528,6 +532,13 @@
   let activeUnit   = 'all';
 
   // ── LIBRARY ────────────────────────────────────────────────────────
+  // デフォルト教科書（固定ID）
+  const DEFAULT_BOOKS = [
+    { id: 'default_c1', name: 'NEW HORIZON 中1', items: [] },
+    { id: 'default_c2', name: 'NEW HORIZON 中2', items: [] },
+    { id: 'default_c3', name: 'NEW HORIZON 中3', items: [] }
+  ];
+
   function mkBook(name) {
     const id = 'b' + Date.now() + Math.random().toString(36).slice(2,6);
     library.push({ id, name, items:[] });
@@ -1406,15 +1417,15 @@ JSONのみで返してください：
       }
     } catch {}
 
-    // 壊れたエントリを除去（id・nameのないものは無効）
+    // 壊れたエントリを除去
     if (Array.isArray(library)) {
       library = library.filter(b => b && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name);
     }
 
+    // 空またはデフォルト未含有の場合はデフォルトを使う
     if (!Array.isArray(library) || library.length === 0) {
-      library = [];
+      library = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
       try { localStorage.removeItem(BACKUP_KEY); } catch {}
-      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
     }
     if (!activeId || !library.find(b => b.id === activeId)) {
       activeId = library[0].id;
