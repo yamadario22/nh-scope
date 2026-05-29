@@ -497,7 +497,7 @@
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   // ── CONSTANTS ──────────────────────────────────────────────────────
-  const BATCH = 1;    // 1ページ/バッチ（JSON切れ防止）
+  const BATCH = 2;    // 2ページ/バッチ（速度2倍・API呼び出し半減）
   const PAR   = 2;    // 並列バッチ数（レート制限対応で2に削減）
   const ROUND_DELAY = 12000; // ラウンド間の待機時間(ms)：2req/12sec = 10RPM（上限15RPM以内）
   const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
@@ -777,13 +777,17 @@
           const e = await res.json().catch(()=>({}));
           const msg = e?.error?.message || 'API Error ' + res.status;
 
-          // quota超過（1日の上限）→ リトライ不要
-          if (msg.includes('quota') && msg.includes('limit: 0')) {
-            throw new Error('⚠️ API利用上限に達しました。モデルを変更するか明日また試してください。');
+          // quota超過（各種パターン）→ 即停止・リトライなし
+          const isQuota = msg.includes('quota') ||
+                          msg.includes('exceeded your current quota') ||
+                          msg.includes('RESOURCE_EXHAUSTED') ||
+                          res.status === 429;
+          if (isQuota) {
+            throw new Error('__QUOTA__');
           }
 
           // 混雑・一時エラー → リトライ
-          if (msg.includes('high demand') || msg.includes('overloaded') || res.status === 503 || res.status === 429) {
+          if (msg.includes('high demand') || msg.includes('overloaded') || res.status === 503) {
             if (i < waitTimes.length) {
               document.getElementById('pInfo').textContent =
                 `混雑のため ${waitTimes[i]/1000}秒待機中... (${i+1}回目のリトライ)`;
@@ -798,7 +802,7 @@
         return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
       } catch(e) {
-        if (e.message.includes('利用上限')) throw e;
+        if (e.message === '__QUOTA__') throw e;
         if (i < waitTimes.length && (e.message.includes('high demand') || e.message.includes('fetch') || e.message.includes('503'))) {
           document.getElementById('pInfo').textContent =
             `エラーのため ${waitTimes[i]/1000}秒待機中... (${i+1}回目のリトライ)`;
@@ -844,9 +848,11 @@
 
   async function extractBatch(images, pageNums) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
+    const pageLabel = pageNums.length === 1
+      ? `p.${pageNums[0]}`
+      : `p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}`;
     parts.push({ text:
-      `これはNEW HORIZONの教科書ページ（p.${pageNums[0]}）の画像です。
-このページの単語リスト・WORD BOX・文法コーナーから学習項目を抽出してください。
+      `これはNEW HORIZONの教科書ページ（${pageLabel}）の画像です。添付した全ページから学習項目を抽出してください。
 
 必ず以下のJSON形式のみで返してください（マークダウン不要）：
 {"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
@@ -854,7 +860,7 @@
 重要なルール：
 • translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
-• pageは画像内のページ番号（数字）
+• pageは各画像内のページ番号（数字）
 • 本文の地の文は抽出しない。単語リスト・語彙表・文法説明に絞ること
 • 項目がないページは {"items":[]} を返す`
     });
@@ -866,9 +872,6 @@
 日本語訳が不明でも推測して必ず入れてください。マークダウン不要。`,
       16000
     );
-
-    // デバッグ用：最初の生レスポンスを保存
-    if (!window._firstRawResponse) window._firstRawResponse = raw;
 
     const parsed = parseJ(raw);
     const items = parsed.items || [];
@@ -973,6 +976,11 @@
           extractBatch(bi, bn)
             .then(items => { bn.forEach(pg=>setThumb(pg,'done')); return { items, cnt:bn.length }; })
             .catch((e)  => {
+              if (e.message === '__QUOTA__') {
+                shouldStop = true;
+                document.getElementById('pInfo').textContent =
+                  '⛔ API利用上限に達しました。しばらく待ってから続きを再実行してください。';
+              }
               lastError = e.message;
               errorPages.push(...bn);
               if (!errorMessages.includes(e.message.substring(0,100))) errorMessages.push(e.message.substring(0,100));
