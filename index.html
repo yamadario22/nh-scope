@@ -888,6 +888,7 @@
     startProcessing();
   }
   async function onPDFLoaded(file) {
+    alert('onPDFLoaded呼び出し確認: ' + (file ? file.name : 'fileがnull'));
     const statusEl = document.getElementById('pdfStatus');
     const setStatus = msg => { if (statusEl) statusEl.textContent = msg; };
     try {
