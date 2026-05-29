@@ -277,11 +277,16 @@
       <div class="upload-zone" id="tbZone">
         <div class="uz-ico">📖</div>
         <div class="uz-title" id="tbTitle">PDFをアップロード</div>
-        <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK</div>
-        <input type="file" id="tbFile" accept=".pdf"
-          onchange="if(this.files[0])onPDFLoaded(this.files[0])"
-          style="margin-top:12px;cursor:pointer;font-size:13px;color:var(--navy)">
+        <div class="uz-sub"   id="tbSub">ドラッグ＆ドロップ または ↓ボタンから選択</div>
       </div>
+      <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
+      <button type="button" class="btn btn-secondary" style="margin-top:10px;width:100%" onclick="document.getElementById('tbFile').click()">📂 PDFファイルを選択する</button>
+      <div style="text-align:center;margin-top:6px">
+        <label style="font-size:11px;color:var(--muted)">上のボタンで開かない場合：
+          <input type="file" accept=".pdf" onchange="if(this.files[0])onPDFLoaded(this.files[0])" style="font-size:11px">
+        </label>
+      </div>
+      <div id="pdfStatus" style="font-size:13px;color:var(--muted);margin-top:8px"></div>
     </div>
 
     <div class="card" id="setupCard" style="display:none">
@@ -359,11 +364,10 @@
       <div class="upload-zone" id="testZone">
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
-        <div class="uz-sub"   id="testSub">スキャン画像PDFでもOK</div>
-        <input type="file" id="testFile" accept=".pdf"
-          onchange="if(this.files[0])analyzeTest(this.files[0])"
-          style="margin-top:12px;cursor:pointer;font-size:13px;color:var(--navy)">
+        <div class="uz-sub"   id="testSub">ドラッグ＆ドロップ または ↓ボタンから選択</div>
       </div>
+      <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
+      <button type="button" class="btn btn-secondary" style="margin-top:10px;width:100%" onclick="document.getElementById('testFile').click()">📂 テストPDFを選択する</button>
       <div id="testStatus"></div>
     </div>
     <div id="testResult"></div>
@@ -884,7 +888,10 @@
     startProcessing();
   }
   async function onPDFLoaded(file) {
+    const statusEl = document.getElementById('pdfStatus');
+    const setStatus = msg => { if (statusEl) statusEl.textContent = msg; };
     try {
+      setStatus('📂 ファイルを読み込み中...');
       document.getElementById('tbTitle').textContent = file.name;
       document.getElementById('tbSub').textContent   = (file.size/1024/1024).toFixed(1)+' MB';
       document.getElementById('tbZone').classList.add('has');
@@ -893,9 +900,12 @@
         throw new Error('PDF.jsの読み込みに失敗しました。ネットワーク接続を確認してください。');
       }
 
+      setStatus('📄 PDFを解析中...');
       const buf = await file.arrayBuffer();
       currentPDF = await pdfjsLib.getDocument({ data:buf }).promise;
       const n = currentPDF.numPages;
+
+      setStatus(`✅ ${n}ページを読み込みました`);
       document.getElementById('pageInfo').textContent = `${n} ページを読み込みました`;
       document.getElementById('startP').value = 1;
       document.getElementById('endP').value   = n;
@@ -905,6 +915,7 @@
       document.getElementById('setupCard').style.display = 'block';
       ['startP','endP'].forEach(id => document.getElementById(id).addEventListener('input', updateEst));
     } catch(e) {
+      setStatus('❌ エラー: ' + e.message);
       document.getElementById('tbPreview').innerHTML = `
         <div class="card" style="border-color:#FECACA">
           <div style="color:var(--red);font-weight:600;margin-bottom:6px">❌ PDFの読み込みに失敗しました</div>
