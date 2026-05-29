@@ -274,12 +274,14 @@
   <div id="tab-setup" class="tab-content active">
     <div class="card">
       <div class="card-title">📖 教科書PDF（スキャン画像PDF対応）</div>
-      <div class="upload-zone" id="tbZone" onclick="document.getElementById('tbFile').click()">
-        <div class="uz-ico">📖</div>
-        <div class="uz-title" id="tbTitle">PDFをアップロード</div>
-        <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
-      </div>
+      <label for="tbFile" style="display:block;cursor:pointer">
+        <div class="upload-zone" id="tbZone">
+          <div class="uz-ico">📖</div>
+          <div class="uz-title" id="tbTitle">PDFをアップロード</div>
+          <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
+        </div>
+      </label>
+      <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
     </div>
 
     <div class="card" id="setupCard" style="display:none">
@@ -354,12 +356,14 @@
     <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
     <div class="card">
       <div class="card-title">📄 テストPDF（スキャン画像PDF対応）</div>
-      <div class="upload-zone" id="testZone" onclick="document.getElementById('testFile').click()">
-        <div class="uz-ico">📄</div>
-        <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
-        <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
-      </div>
+      <label for="testFile" style="display:block;cursor:pointer">
+        <div class="upload-zone" id="testZone">
+          <div class="uz-ico">📄</div>
+          <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
+          <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
+        </div>
+      </label>
+      <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
       <div id="testStatus"></div>
     </div>
     <div id="testResult"></div>
