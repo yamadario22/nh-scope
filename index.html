@@ -1032,6 +1032,9 @@
 
     // エラーサマリーを常に表示（既存データがあっても）
     if (errorPages.length > 0) {
+      const friendlyMessages = errorMessages.map(m =>
+        m === '__QUOTA__' ? '⛔ API利用上限に達しました。数時間後または翌日に再実行してください。' : esc(m.substring(0,120))
+      );
       const errHtml = `
         <div class="card" style="border-color:#FECACA">
           <div style="color:var(--red);font-weight:600;margin-bottom:8px">
@@ -1041,7 +1044,7 @@
             失敗したページ：${errorPages.join(', ')}
           </div>
           <div style="font-size:12px;color:var(--muted);line-height:1.8">
-            原因：${errorMessages.map(m=>esc(m.substring(0,120))+'...').join('<br>')}
+            原因：${friendlyMessages.join('<br>')}
           </div>
           <div style="margin-top:10px;font-size:12px;color:var(--navy)">
             💡 上記のページ範囲を指定して再実行してください。成功済みのデータは残ります。
