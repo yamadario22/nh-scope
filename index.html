@@ -278,7 +278,7 @@
         <div class="uz-ico">📖</div>
         <div class="uz-title" id="tbTitle">PDFをアップロード</div>
         <div class="uz-sub"   id="tbSub">スキャン画像PDFでもOK — クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="tbFile" accept=".pdf" style="display:none">
+        <input type="file" id="tbFile" accept=".pdf" style="display:none" onchange="if(this.files[0])onPDFLoaded(this.files[0])">
       </div>
     </div>
 
@@ -358,7 +358,7 @@
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
         <div class="uz-sub"   id="testSub">クリックまたはドラッグ＆ドロップ</div>
-        <input type="file" id="testFile" accept=".pdf" style="display:none">
+        <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
       </div>
       <div id="testStatus"></div>
     </div>
@@ -396,33 +396,6 @@
   </div>
 
 </div><!-- /main -->
-
-<!-- API KEY MODAL -->
-<div class="modal-ov" id="keyModal" style="display:none" onclick="if(event.target===this)closeKeyModal()">
-  <div class="modal" style="max-width:440px">
-    <div class="modal-head">
-      <div class="modal-title">🔑 Gemini APIキー設定</div>
-      <button class="modal-close" onclick="closeKeyModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.7">
-        Google AI StudioのAPIキーを入力してください。<br>
-        保存時に使用可能なモデルを自動で検出します。
-      </p>
-      <div class="form-row">
-        <label class="form-lbl">APIキー（AIza...から始まる文字列）</label>
-        <input class="form-in" id="keyInput" type="text" placeholder="AIzaSy..."
-               style="font-family:monospace;font-size:12px">
-      </div>
-      <div id="keyDetectStatus" style="font-size:12px;margin-top:10px;line-height:1.8;min-height:20px"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost btn-sm" onclick="closeKeyModal()">キャンセル</button>
-      <button class="btn btn-primary btn-sm" id="saveKeyBtn" onclick="saveApiKey()">保存 &amp; モデル検出</button>
-      <button class="btn btn-green btn-sm" id="confirmKeyBtn" onclick="updateKeyStatus();closeKeyModal()" style="display:none">✅ この設定で確定</button>
-    </div>
-  </div>
-</div>
 
 <!-- CONFIRM MODAL -->
 <div class="modal-ov" id="confirmModal" style="display:none">
@@ -618,28 +591,26 @@
   }
 
   function renderBookSel() {
-    // 最終防衛：この関数が呼ばれた時点でもlibrary検証・修復
-    if (!Array.isArray(library) || library.length === 0 || !library.some(b => b?.id && b?.name)) {
-      library = [];
-      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-      if (!activeId) activeId = library[0].id;
-    }
+    // 描画のみ。library操作はしない。呼び出し元がlibraryを保証すること。
     const sel = document.getElementById('bookSel');
     if (!sel) return;
-    sel.innerHTML = library.filter(b=>b?.id&&b?.name)
-      .map(b => `<option value="${esc(b.id)}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`).join('');
+    sel.innerHTML = library
+      .map(b => `<option value="${esc(b.id)}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`)
+      .join('');
     const delBtn = document.getElementById('delBookBtn');
     if (delBtn) delBtn.disabled = library.length <= 1;
   }
 
   // ── TABS ───────────────────────────────────────────────────────────
   function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
-    const nd = !getItems().length;
-    if (name==='edit')   { renderUnitView(); document.getElementById('editWarn').style.display   = nd?'block':'none'; }
-    if (name==='test')   document.getElementById('testWarn').style.display   = nd?'block':'none';
-    if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
+    try {
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
+      const nd = !getItems().length;
+      if (name==='edit')   { try { renderUnitView(); } catch(e){} document.getElementById('editWarn').style.display   = nd?'block':'none'; }
+      if (name==='test')   document.getElementById('testWarn').style.display   = nd?'block':'none';
+      if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
+    } catch(e) { console.error('switchTab error:', e); }
   }
 
   // ── PDF RENDERING ──────────────────────────────────────────────────
@@ -770,12 +741,6 @@
       stEl.innerHTML = `<span style="color:var(--red)">❌ ${e.message}</span>`;
     }
   }
-
-  // 旧関数（互換用・空実装）
-  function promptApiKey()  {}
-  function closeKeyModal() { document.getElementById('keyModal').style.display='none'; }
-  function saveApiKey()    {}
-  function updateKeyStatus() {}
 
   async function callGemini(parts, systemText, maxTok=16000) {
     const key   = getApiKey();
@@ -1372,23 +1337,10 @@ JSONのみで返してください：
   const BACKUP_KEY = 'nhscope_v1';
 
   function saveBackup() {
+    if (!Array.isArray(library) || library.length === 0) return; // 空の状態を保存しない
     try {
       localStorage.setItem(BACKUP_KEY, JSON.stringify({ library, activeId }));
     } catch {}
-  }
-
-  function loadBackup() {
-    try {
-      const raw = localStorage.getItem(BACKUP_KEY);
-      if (!raw) return false;
-      const d = JSON.parse(raw);
-      if (d.library?.length) {
-        library  = d.library;
-        activeId = d.activeId || d.library[0].id;
-        return true;
-      }
-    } catch {}
-    return false;
   }
 
   // ── UTILS ──────────────────────────────────────────────────────────
@@ -1405,80 +1357,76 @@ JSONのみで返してください：
     if (s==null) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-  function setupDrop(zId,iId,cb) {
-    const z=document.getElementById(zId), inp=document.getElementById(iId);
-    z.addEventListener('dragover',  e=>{e.preventDefault();z.classList.add('over');});
-    z.addEventListener('dragleave', ()=>z.classList.remove('over'));
-    z.addEventListener('drop', e=>{e.preventDefault();z.classList.remove('over');const f=e.dataTransfer.files[0];if(f?.type==='application/pdf')cb(f);});
-    inp.addEventListener('change', e=>{if(e.target.files[0])cb(e.target.files[0]);});
+  function setupDrop(zId, cb) {
+    const z = document.getElementById(zId);
+    if (!z) return;
+    z.addEventListener('dragover',  e => { e.preventDefault(); z.classList.add('over'); });
+    z.addEventListener('dragleave', () => z.classList.remove('over'));
+    z.addEventListener('drop', e => {
+      e.preventDefault(); z.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f?.type === 'application/pdf') cb(f);
+    });
   }
 
-  // ── INIT（即時実行） ───────────────────────────────────────────────
-  function _init() {
-    try {
-      if (window.__NH_DATA__ && window.__NH_DATA__.library?.length) {
-        library  = window.__NH_DATA__.library;
-        activeId = window.__NH_DATA__.activeId || '';
-      } else {
-        try {
-          const raw = localStorage.getItem(BACKUP_KEY);
-          if (raw) {
-            const d = JSON.parse(raw);
-            if (d.library?.length) { library = d.library; activeId = d.activeId || ''; }
-          }
-        } catch { localStorage.removeItem(BACKUP_KEY); }
-      }
-    } catch {}
-
-    // 壊れたエントリを除去
-    if (Array.isArray(library)) {
-      library = library.filter(b => b && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name);
-    }
-
-    // 空またはデフォルト未含有の場合はデフォルトを使う
-    if (!Array.isArray(library) || library.length === 0) {
-      library = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
-      try { localStorage.removeItem(BACKUP_KEY); } catch {}
-    }
-    if (!activeId || !library.find(b => b.id === activeId)) {
-      activeId = library[0].id;
-    }
-  }
-  _init(); // ← スクリプト読み込み時点で即座に実行
-
-  // スクリプトはbody末尾にあるのでDOMはすでに構築済み → 直接実行
+  // ── INIT ───────────────────────────────────────────────────────────
+  // スクリプトはbody末尾にあるのでDOM構築済み。DOMContentLoaded不要。
   (function() {
-    // 壊れたエントリを除去
-    if (Array.isArray(library)) {
-      library = library.filter(b => b && typeof b.id === 'string' && b.id && typeof b.name === 'string' && b.name);
-    }
-    if (!Array.isArray(library) || library.length === 0) {
-      library = [];
-      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
-      activeId = library[0].id;
+    // 1. データ読み込み（優先順: localStorage > 埋め込みデータ > デフォルト）
+    let loaded = false;
+
+    // localStorage
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        const valid = (d.library || []).filter(b =>
+          b && typeof b.id === 'string' && b.id &&
+          typeof b.name === 'string' && b.name &&
+          Array.isArray(b.items)
+        );
+        if (valid.length > 0) {
+          library  = valid;
+          activeId = valid.find(b => b.id === d.activeId)?.id || valid[0].id;
+          loaded   = true;
+        }
+      }
+    } catch(e) {
       try { localStorage.removeItem(BACKUP_KEY); } catch {}
     }
-    if (!activeId || !library.find(b => b.id === activeId)) {
+
+    // 埋め込みデータ（データ入りHTMLを開いた場合）
+    if (!loaded && window.__NH_DATA__?.library?.length) {
+      try {
+        const valid = window.__NH_DATA__.library.filter(b =>
+          b && typeof b.id === 'string' && b.id &&
+          typeof b.name === 'string' && b.name &&
+          Array.isArray(b.items)
+        );
+        if (valid.length > 0) {
+          library  = valid;
+          activeId = valid.find(b => b.id === window.__NH_DATA__.activeId)?.id || valid[0].id;
+          loaded   = true;
+        }
+      } catch(e) {}
+    }
+
+    // デフォルト（どこにもデータがない場合）
+    if (!loaded) {
+      library  = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
       activeId = library[0].id;
     }
-    try { renderBookSel(); }   catch(e) { console.error('renderBookSel error:', e); }
-    try { renderPreview(); }   catch(e) { console.error('renderPreview error:', e); }
-    try { renderUnitView(); }  catch(e) { console.error('renderUnitView error:', e); }
-    try { updateBadge(); }     catch(e) { console.error('updateBadge error:', e); }
-    try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner error:', e); }
-    try { setupDrop('tbZone','tbFile',onPDFLoaded); }    catch(e) {}
-    try { setupDrop('testZone','testFile',analyzeTest); } catch(e) {}
+
+    // 2. UI描画（libraryは必ず1冊以上ある状態）
+    try { renderBookSel(); }   catch(e) { console.error('renderBookSel:', e); }
+    try { renderPreview(); }   catch(e) { console.error('renderPreview:', e); }
+    try { renderUnitView(); }  catch(e) { console.error('renderUnitView:', e); }
+    try { updateBadge(); }     catch(e) { console.error('updateBadge:', e); }
+    try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner:', e); }
+
+    // 3. ドラッグ&ドロップのみ設定（ファイル選択はHTMLのonchangeで処理）
+    setupDrop('tbZone',   onPDFLoaded);
+    setupDrop('testZone', analyzeTest);
   })();
-</script>
-</body>
-<div id="jsIndicator" style="position:fixed;bottom:12px;right:12px;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;background:#EF4444;color:#fff;font-family:sans-serif">
-  JS読込中...
-</div>
-<script>
-  document.getElementById('jsIndicator').style.background = '#10B981';
-  // bookSelのoption数を直接チェック（DOMはすでに構築済み）
-  var sel = document.getElementById('bookSel');
-  var count = sel ? sel.options.length : -1;
-  document.getElementById('jsIndicator').textContent = 'JS✓ ' + count + '冊';
 </script>
 </html>
