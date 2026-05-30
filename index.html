@@ -695,7 +695,7 @@
   const MODEL_STORE = 'nhscope_model';
 
   function getApiKey() { return localStorage.getItem(KEY_STORE)   || ''; }
-  function getModel()  { return localStorage.getItem(MODEL_STORE) || ''; }
+  function getModel()  { return localStorage.getItem(MODEL_STORE) || 'gemini-2.5-flash'; }
 
   function saveModelManual() {
     const val = document.getElementById('modelInput').value.trim();
@@ -761,11 +761,12 @@
 
       if (!models.length) throw new Error('モデルが見つかりません');
 
-      const priority = ['gemini-1.5-flash','gemini-1.5-flash-8b','gemini-1.5-pro','gemini-1.0-pro','gemini-pro'];
+      // gemini-2.5-flash または gemini-2.0-flash を優先。古いモデルは使わない。
+      const priority = ['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
       const selected =
         priority.reduce((f, p) => f || models.find(m => m.startsWith(p)), null) ||
-        models.find(m => m.includes('flash')) ||
-        models[0];
+        models.find(m => m.includes('flash') && !m.includes('pro-latest') && !m.includes('1.0')) ||
+        'gemini-2.5-flash'; // 見つからなければデフォルト
 
       localStorage.setItem(KEY_STORE,   key);
       localStorage.setItem(MODEL_STORE, selected);
