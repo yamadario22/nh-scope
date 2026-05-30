@@ -223,8 +223,11 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v3.0</span></div>
-  <div id="hBadge">教科書データ未読込</div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v3.1</span></div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <button class="btn btn-ghost btn-sm" onclick="openSetupGuide()" style="font-size:11px;opacity:0.7">❓ 使い方</button>
+    <div id="hBadge">教科書データ未読込</div>
+  </div>
 </header>
 
 <!-- TABS -->
@@ -300,9 +303,10 @@
         <span style="font-size:13px;color:var(--muted)">ページ</span>
       </div>
       <p style="font-size:12px;color:var(--muted);margin-top:8px">💡 WORD BOX・単語リストのページだけ指定すると高速・高精度</p>
-      <div class="row" style="margin-top:14px">
+      <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
         <button class="btn btn-primary" onclick="startProcessing()">🤖 解析開始</button>
-        <button class="btn btn-danger btn-sm" onclick="clearCurrentData()">🗑 現在のデータをクリアしてから解析</button>
+        <button class="btn btn-secondary" onclick="autoSplitAnalyze()">📄 全ページ自動分割（30Pずつ）</button>
+        <button class="btn btn-danger btn-sm" onclick="clearCurrentData()">🗑 クリアして解析</button>
         <span id="estLabel" style="font-size:12px;color:var(--muted)"></span>
       </div>
     </div>
@@ -404,6 +408,33 @@
   </div>
 
 </div><!-- /main -->
+
+<!-- SETUP GUIDE MODAL -->
+<div class="modal-ov" id="setupGuideModal" style="display:none" onclick="if(event.target===this)closeSetupGuide()">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <div class="modal-title">🚀 初回セットアップガイド</div>
+      <button class="modal-close" onclick="closeSetupGuide()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:14px;line-height:2;color:var(--text)">
+        <div style="margin-bottom:12px;font-weight:600;color:var(--navy)">APIキーの取得手順</div>
+        <div>① <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--navy)">https://aistudio.google.com/app/apikey</a> を開く</div>
+        <div>② 「APIキーを作成」をクリック</div>
+        <div>③「Default Gemini Project」を選択して作成</div>
+        <div>④ 「AIza」で始まるキーをコピー</div>
+        <div>⑤ このページの黄色いバーに貼り付けて「保存」</div>
+        <div>⑥ 青いバーに <strong>gemini-2.5-flash</strong> と入力して「変更」</div>
+        <div style="margin-top:16px;padding:10px;background:#FEF3C7;border-radius:8px;font-size:12px">
+          ⚠️ APIキーは他人に教えないでください。
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-primary btn-sm" onclick="closeSetupGuide()">設定に進む</button>
+    </div>
+  </div>
+</div>
 
 <!-- CONFIRM MODAL -->
 <div class="modal-ov" id="confirmModal" style="display:none">
@@ -783,6 +814,17 @@
                           msg.includes('RESOURCE_EXHAUSTED') ||
                           res.status === 429;
           if (isQuota) {
+            // 日次上限（daily quota）→ 即停止
+            if (msg.includes('exceeded your current quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+              throw new Error('__QUOTA__');
+            }
+            // レート制限（per-minute）→ 90秒待ってリトライ
+            if (i < waitTimes.length) {
+              document.getElementById('pInfo').textContent =
+                `API制限中。90秒後に自動リトライします... (${i+1}回目)`;
+              await sleep(90000);
+              continue;
+            }
             throw new Error('__QUOTA__');
           }
 
@@ -1086,8 +1128,11 @@
       <div class="card">
         <div class="card-title">
           <span>📋 データプレビュー（先頭30件）</span>
-          <div class="row" style="gap:6px">
+          <div class="row" style="gap:6px;flex-wrap:wrap">
             <button class="btn btn-primary btn-sm" onclick="exportDataHTML()">📦 データ入りHTMLを書き出す</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportCSV()">📊 CSV出力</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportUnitWordList()">📋 Unit別単語リスト</button>
+            <button class="btn btn-secondary btn-sm" onclick="deduplicateData()">🔁 重複削除</button>
             <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
           </div>
         </div>
@@ -1270,26 +1315,64 @@
       setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
 
       const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
-      const ctx=getItems().length
-        ?'\n教科書データ参考：\n'+getItems().map(i=>`${i.unit} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,6000):'';
+      const libCtx = getItems().length
+        ? '\n\n教科書データ（Unit・ページ特定に使用）:\n'
+          + getItems().map(i=>`${i.unit} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,5000)
+        : '';
       parts.push({text:
-        `このテストがNEW HORIZONのどの範囲（Unit・ページ数）に相当するか分析してください。${ctx}
-JSONのみで返してください：
-{"grade":"中学1年","from_unit":"Unit 1","to_unit":"Unit 3","from_page":10,"to_page":45,"summary":"説明","topics":["Unit 1: be動詞"],"key_items":["am","are"]}`
+        `このテストPDFを分析してください。${libCtx}
+
+必ずJSONのみで返してください（マークダウン不要）：
+{
+  "grade": "中学1年",
+  "from_unit": "Unit 1",
+  "to_unit": "Unit 3",
+  "from_page": 10,
+  "to_page": 45,
+  "summary": "テストの概要説明",
+  "question_types": [
+    {"type": "穴埋め", "count": 5},
+    {"type": "整序", "count": 3},
+    {"type": "英作文", "count": 2},
+    {"type": "長文読解", "count": 1},
+    {"type": "単語の書き", "count": 8},
+    {"type": "語形変化", "count": 4}
+  ],
+  "topics": ["Unit 1: be動詞", "Unit 2: 一般動詞"],
+  "key_items": ["am", "are", "is"]
+}
+
+問題形式は実際にテストに存在するものだけ挙げること。教科書データがある場合はそれを参考にUnit・ページ範囲を特定すること。`
       });
 
-      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',2000);
+      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',4000);
       const r=parseJ(raw);
       setSt(stEl,'ok','✅ 分析完了');
+
+      const qtHtml = (r.question_types||[]).length
+        ? `<div class="card">
+            <div class="card-title">📝 問題形式</div>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>問題形式</th><th>問題数</th></tr></thead>
+              <tbody>${(r.question_types||[]).map(qt=>`
+                <tr>
+                  <td style="font-weight:500">${esc(qt.type||'')}</td>
+                  <td style="color:var(--navy);font-weight:700">${qt.count||'-'}問</td>
+                </tr>`).join('')}
+              </tbody>
+            </table></div>
+          </div>` : '';
+
       rsEl.innerHTML=`
         <div class="result-hero">
           <div class="result-grade">${esc(r.grade||'')}</div>
-          <div class="result-range"><em>${esc(r.from_unit)}</em> 〜 <em>${esc(r.to_unit)}</em></div>
-          <div class="result-pages">教科書 pp.${r.from_page} 〜 ${r.to_page}</div>
+          <div class="result-range"><em>${esc(r.from_unit||'')}</em> 〜 <em>${esc(r.to_unit||'')}</em></div>
+          <div class="result-pages">教科書 pp.${r.from_page||'?'} 〜 ${r.to_page||'?'}</div>
         </div>
-        <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary)}</p></div>
-        ${(r.topics||[]).length?`<div class="card"><div class="card-title">📚 トピック</div>${r.topics.map(t=>`<div class="topic-row">${esc(t)}</div>`).join('')}</div>`:''}
-        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題項目</div><div class="pills">${r.key_items.map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
+        <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
+        ${qtHtml}
+        ${(r.topics||[]).length?`<div class="card"><div class="card-title">📚 学習トピック</div>${(r.topics||[]).map(t=>`<div class="topic-row">${esc(t)}</div>`).join('')}</div>`:''}
+        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
     } catch(e) { setSt(stEl,'err','❌ '+e.message); }
   }
 
@@ -1367,6 +1450,97 @@ JSONのみで返してください：
       localStorage.setItem(BACKUP_KEY, JSON.stringify({ library, activeId }));
     } catch {}
   }
+
+  // ── 自動分割実行 ─────────────────────────────────────────────────
+  async function autoSplitAnalyze() {
+    if (!currentPDF) { alert('先にPDFを読み込んでください。'); return; }
+    const total = currentPDF.numPages;
+    const chunk = 30;
+    const chunks = [];
+    for (let s = 1; s <= total; s += chunk) chunks.push([s, Math.min(s+chunk-1, total)]);
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const [s, e] = chunks[ci];
+      document.getElementById('startP').value = s;
+      document.getElementById('endP').value   = e;
+      updateEst();
+      setSt('pdfStatus', `自動分割: ${ci+1}/${chunks.length}回目（p.${s}〜p.${e}）実行中...`, 'info');
+      await startProcessing();
+      if (ci < chunks.length - 1) {
+        for (let w = 20; w > 0; w--) {
+          document.getElementById('pInfo').textContent =
+            `次のチャンク（p.${chunks[ci+1][0]}〜）まで ${w}秒待機中...`;
+          await sleep(1000);
+        }
+      }
+    }
+    setSt('pdfStatus', `✅ 全${chunks.length}回の自動分割実行が完了しました`, 'ok');
+  }
+
+  // ── 重複削除 ─────────────────────────────────────────────────────
+  function deduplicateData() {
+    const items = getItems();
+    if (!items.length) { alert('データがありません。'); return; }
+    const seen = new Set();
+    const deduped = items.filter(it => {
+      const key = `${(it.content||'').trim().toLowerCase()}|${it.page}|${it.type}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const removed = items.length - deduped.length;
+    setItems(deduped);
+    renderPreview();
+    updateBadge();
+    saveBackup();
+    alert(removed > 0 ? `${removed}件の重複を削除しました。` : '重複はありませんでした。');
+  }
+
+  // ── CSV出力 ──────────────────────────────────────────────────────
+  function exportCSV() {
+    const items = getItems();
+    if (!items.length) { alert('データがありません。'); return; }
+    const headers = ['Unit','Lesson','ページ','種類','内容','訳・説明','ノート'];
+    const rows = items.map(it =>
+      [it.unit||'', it.lesson||'', it.page||'', it.type||'', it.content||'', it.translation||'', it.notes||'']
+      .map(v => `"${String(v).replace(/"/g,'""')}"`)
+      .join(',')
+    );
+    const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: `${activeBook()?.name||'NHScope'}.csv`
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ── Unit別単語リスト ──────────────────────────────────────────────
+  function exportUnitWordList() {
+    const items = getItems();
+    if (!items.length) { alert('データがありません。'); return; }
+    const units = [...new Set(items.map(it => it.unit||'不明'))].sort();
+    let text = `【${activeBook()?.name} 単語リスト】\n\n`;
+    units.forEach(unit => {
+      const unitItems = items.filter(it => (it.unit||'不明') === unit);
+      text += `■ ${unit}\n`;
+      unitItems.forEach(it => {
+        text += `  ${it.type}  ${it.content}  ${it.translation||''}  (p.${it.page})\n`;
+      });
+      text += '\n';
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: `${activeBook()?.name||'NHScope'}_単語リスト.txt`
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ── セットアップガイド ─────────────────────────────────────────────
+  function openSetupGuide() { document.getElementById('setupGuideModal').style.display='flex'; }
+  function closeSetupGuide() { document.getElementById('setupGuideModal').style.display='none'; }
 
   // ── UTILS ──────────────────────────────────────────────────────────
   function updateBadge() {
@@ -1448,6 +1622,9 @@ JSONのみで返してください：
     try { renderUnitView(); }  catch(e) { console.error('renderUnitView:', e); }
     try { updateBadge(); }     catch(e) { console.error('updateBadge:', e); }
     try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner:', e); }
+
+    // APIキー未設定ならセットアップガイドを表示
+    if (!getApiKey()) openSetupGuide();
 
     // 3. ドラッグ&ドロップのみ設定（ファイル選択はHTMLのonchangeで処理）
     setupDrop('tbZone',   onPDFLoaded);
