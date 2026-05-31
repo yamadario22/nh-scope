@@ -815,18 +815,15 @@
                           msg.includes('RESOURCE_EXHAUSTED') ||
                           res.status === 429;
           if (isQuota) {
-            // 日次上限（daily quota）→ 即停止
-            if (msg.includes('exceeded your current quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+            // 3回リトライしても解消しない場合のみ日次上限と判断
+            if (i >= 2) {
               throw new Error('__QUOTA__');
             }
-            // レート制限（per-minute）→ 90秒待ってリトライ
-            if (i < waitTimes.length) {
-              document.getElementById('pInfo').textContent =
-                `API制限中。90秒後に自動リトライします... (${i+1}回目)`;
-              await sleep(90000);
-              continue;
-            }
-            throw new Error('__QUOTA__');
+            // レート制限の可能性 → 90秒待ってリトライ
+            document.getElementById('pInfo').textContent =
+              `API制限中。90秒後に自動リトライします... (${i+1}/2回目)`;
+            await sleep(90000);
+            continue;
           }
 
           // 混雑・一時エラー → リトライ
