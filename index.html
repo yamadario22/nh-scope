@@ -529,7 +529,7 @@
 
   // ── CONSTANTS ──────────────────────────────────────────────────────
   const BATCH = 2;    // 2ページ/バッチ（速度2倍・API呼び出し半減）
-  const PAR   = 2;    // 並列バッチ数（レート制限対応で2に削減）
+  const PAR   = 1;    // 並列バッチ数（レート制限対応で1に削減）
   const ROUND_DELAY = 12000; // ラウンド間の待機時間(ms)：2req/12sec = 10RPM（上限15RPM以内）
   const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
   const QUAL  = 0.88; // JPEG品質
@@ -817,7 +817,7 @@
           if (isQuota) {
             // 3回リトライしても解消しない場合のみ日次上限と判断
             if (i >= 2) {
-              throw new Error('__QUOTA__');
+              throw new Error('__QUOTA__:' + msg.substring(0, 200));
             }
             // レート制限の可能性 → 90秒待ってリトライ
             document.getElementById('pInfo').textContent =
@@ -842,7 +842,7 @@
         return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
       } catch(e) {
-        if (e.message === '__QUOTA__') throw e;
+        if (e.message.startsWith('__QUOTA__')) throw e;
         if (i < waitTimes.length && (e.message.includes('high demand') || e.message.includes('fetch') || e.message.includes('503'))) {
           document.getElementById('pInfo').textContent =
             `エラーのため ${waitTimes[i]/1000}秒待機中... (${i+1}回目のリトライ)`;
@@ -1016,7 +1016,7 @@
           extractBatch(bi, bn)
             .then(items => { bn.forEach(pg=>setThumb(pg,'done')); return { items, cnt:bn.length }; })
             .catch((e)  => {
-              if (e.message === '__QUOTA__') {
+              if (e.message.startsWith('__QUOTA__')) {
                 shouldStop = true;
                 document.getElementById('pInfo').textContent =
                   '⛔ API利用上限に達しました。しばらく待ってから続きを再実行してください。';
@@ -1072,9 +1072,13 @@
 
     // エラーサマリーを常に表示（既存データがあっても）
     if (errorPages.length > 0) {
-      const friendlyMessages = errorMessages.map(m =>
-        m === '__QUOTA__' ? '⛔ API利用上限に達しました。数時間後または翌日に再実行してください。' : esc(m.substring(0,120))
-      );
+      const friendlyMessages = errorMessages.map(m => {
+        if (m.startsWith('__QUOTA__:')) {
+          return '⛔ API利用上限エラー。Googleの実際のメッセージ：' + esc(m.substring(10));
+        }
+        if (m === '__QUOTA__') return '⛔ API利用上限に達しました。';
+        return esc(m.substring(0, 200));
+      });
       const errHtml = `
         <div class="card" style="border-color:#FECACA">
           <div style="color:var(--red);font-weight:600;margin-bottom:8px">
