@@ -530,7 +530,7 @@
   // ── CONSTANTS ──────────────────────────────────────────────────────
   const BATCH = 2;    // 2ページ/バッチ（速度2倍・API呼び出し半減）
   const PAR   = 1;    // 並列バッチ数（レート制限対応で1に削減）
-  const ROUND_DELAY = 12000; // ラウンド間の待機時間(ms)：2req/12sec = 10RPM（上限15RPM以内）
+  const ROUND_DELAY = 3000;  // ラウンド間の待機時間(ms)：有料Tier1では3秒で十分
   const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
   const QUAL  = 0.88; // JPEG品質
 
