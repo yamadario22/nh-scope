@@ -330,6 +330,21 @@
 
     <div id="tbPreview"></div>
 
+    <div class="divider"><span>または — 画像ファイル（PNG/JPEG）を直接投入（iLovePDF不要）</span></div>
+    <div class="card">
+      <div class="card-title">🖼️ 画像ファイルから直接解析</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Snipping Toolで保存したPNG/JPEGを直接投入できます。PDF変換不要です。</p>
+      <input type="file" id="imgFiles" accept=".png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="onImagesLoaded(this.files)">
+      <button type="button" class="btn btn-secondary" style="width:100%" onclick="document.getElementById('imgFiles').click()">🖼️ 画像ファイルを選択（複数可）</button>
+      <div id="imgStatus" style="font-size:13px;color:var(--muted);margin-top:8px"></div>
+      <div id="imgSetupCard" style="display:none;margin-top:12px">
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="startImageProcessing()">🤖 画像から解析開始</button>
+          <button class="btn btn-danger btn-sm" onclick="clearImageFiles()">✕ クリア</button>
+        </div>
+      </div>
+    </div>
+
     <div class="divider"><span>または — 保存済みJSONを読み込む</span></div>
     <div class="card">
       <div class="card-title">💾 JSONを読み込む</div>
@@ -893,6 +908,18 @@
     return { items: [] };
   }
 
+  // 汎用JSONパーサー（テスト分析など items以外の構造に使用）
+  function parseAnyJ(raw) {
+    const clean = raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+    try { return JSON.parse(clean); } catch {}
+    // JSON部分を抽出して試みる
+    try {
+      const m = clean.match(/\{[\s\S]*\}/);
+      if (m) return JSON.parse(m[0]);
+    } catch {}
+    return {};
+  }
+
   async function extractBatch(images, pageNums) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
     const pageLabel = pageNums.length === 1
@@ -1145,6 +1172,7 @@
             <button class="btn btn-secondary btn-sm" onclick="exportCSV()">📊 CSV出力</button>
             <button class="btn btn-secondary btn-sm" onclick="exportUnitWordList()">📋 Unit別単語リスト</button>
             <button class="btn btn-secondary btn-sm" onclick="deduplicateData()">🔁 重複削除</button>
+            <button class="btn btn-secondary btn-sm" onclick="fillEmptyTranslations()">🔤 空の訳を一括補完</button>
             <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
           </div>
         </div>
@@ -1364,8 +1392,8 @@
 • 教科書データがある場合はそれを参考にUnit・ページ範囲を特定`
       });
 
-      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',4000);
-      const r=parseJ(raw);
+      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',6000);
+      const r=parseAnyJ(raw);
       setSt(stEl,'ok','✅ 分析完了');
 
       // 範囲テキストを組み立て
@@ -1642,6 +1670,120 @@
   // ── セットアップガイド ─────────────────────────────────────────────
   function openSetupGuide() { document.getElementById('setupGuideModal').style.display='flex'; }
   function closeSetupGuide() { document.getElementById('setupGuideModal').style.display='none'; }
+
+  // ── 画像直接投入 ─────────────────────────────────────────────────
+  let currentImageFiles = [];
+
+  async function onImagesLoaded(files) {
+    currentImageFiles = Array.from(files);
+    const statusEl = document.getElementById('imgStatus');
+    statusEl.textContent = `${currentImageFiles.length}枚の画像を選択しました`;
+    document.getElementById('imgSetupCard').style.display = 'block';
+  }
+
+  function clearImageFiles() {
+    currentImageFiles = [];
+    document.getElementById('imgFiles').value = '';
+    document.getElementById('imgStatus').textContent = '';
+    document.getElementById('imgSetupCard').style.display = 'none';
+  }
+
+  async function startImageProcessing() {
+    if (!currentImageFiles.length) { alert('画像ファイルを先に選択してください。'); return; }
+    if (!getApiKey())  { alert('APIキーを設定してください。'); return; }
+    if (!getModel())   { alert('モデルを設定してください。'); return; }
+
+    const statusEl = document.getElementById('imgStatus');
+    shouldStop = false;
+    let totalItems = 0, errorCount = 0;
+
+    // BATCH枚ずつ処理
+    for (let i = 0; i < currentImageFiles.length; i += BATCH) {
+      if (shouldStop) break;
+      const batch = currentImageFiles.slice(i, i + BATCH);
+      const pageNums = batch.map((_, idx) => i + idx + 1);
+      statusEl.textContent = `処理中 ${i+1}〜${Math.min(i+BATCH, currentImageFiles.length)} / ${currentImageFiles.length}枚...`;
+
+      try {
+        // 画像をbase64に変換
+        const images = await Promise.all(batch.map(file => new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = e => res(e.target.result.split(',')[1]);
+          reader.onerror = rej;
+          reader.readAsDataURL(file);
+        })));
+
+        const items = await extractBatch(images, pageNums);
+        if (items.length > 0) {
+          setItems([...getItems(), ...items]);
+          totalItems += items.length;
+          saveBackup();
+        }
+      } catch(e) {
+        errorCount++;
+        console.error('画像処理エラー:', e);
+      }
+
+      if (i + BATCH < currentImageFiles.length) await sleep(ROUND_DELAY);
+    }
+
+    renderPreview();
+    updateBadge();
+    statusEl.textContent = `✅ 完了：${totalItems}件を追加しました${errorCount ? `（${errorCount}枚エラー）` : ''}`;
+  }
+
+  // ── 訳の空欄一括補完 ──────────────────────────────────────────────
+  async function fillEmptyTranslations() {
+    const items = getItems();
+    const empty = items.filter(it => !it.translation || it.translation.trim() === '');
+    if (!empty.length) { alert('訳が空の項目はありません。'); return; }
+
+    const ok = await showConfirm(`訳が空の${empty.length}件をGeminiで一括補完しますか？`, '補完する');
+    if (!ok) return;
+
+    const btn = document.querySelector('[onclick="fillEmptyTranslations()"]');
+    if (btn) btn.textContent = '⏳ 補完中...';
+
+    let done = 0;
+    const TRANS_BATCH = 15;
+
+    try {
+      for (let i = 0; i < empty.length; i += TRANS_BATCH) {
+        const batch = empty.slice(i, i + TRANS_BATCH);
+        const prompt = `以下の英語の単語・熟語・文法に日本語訳を付けてください。JSONのみで返してください。
+[${batch.map(it => `{"content":"${it.content}","type":"${it.type}"}`).join(',')}]
+→ [{"content":"...","translation":"日本語訳"},...] の形式で返してください。`;
+
+        const raw = await callGemini(
+          [{ text: prompt }],
+          'あなたは英語の翻訳専門家です。JSONのみ返してください。',
+          2000
+        );
+
+        try {
+          const results = JSON.parse(raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
+          if (Array.isArray(results)) {
+            results.forEach(r => {
+              const orig = items.find(it => it.content === r.content && !it.translation?.trim());
+              if (orig && r.translation) orig.translation = r.translation;
+            });
+            done += batch.length;
+          }
+        } catch {}
+
+        if (i + TRANS_BATCH < empty.length) await sleep(2000);
+      }
+
+      setItems(items);
+      saveBackup();
+      renderPreview();
+      if (btn) btn.textContent = `✅ ${done}件を補完しました`;
+      setTimeout(() => { if (btn) btn.textContent = '🔤 空の訳を一括補完'; }, 3000);
+    } catch(e) {
+      if (btn) btn.textContent = '🔤 空の訳を一括補完';
+      alert('補完中にエラーが発生しました: ' + e.message);
+    }
+  }
 
   // ── UTILS ──────────────────────────────────────────────────────────
   function updateBadge() {
