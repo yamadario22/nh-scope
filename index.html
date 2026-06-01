@@ -375,11 +375,17 @@
       <div id="testStatus"></div>
     </div>
     <div id="testResult"></div>
+    <div id="testHistory"></div>
   </div>
 
   <!-- ══ TAB 4: 検索 ═══════════════════════════════════════════════ -->
   <div id="tab-search" class="tab-content">
     <div id="searchWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
+
+    <!-- 学年フィルター -->
+    <div class="pills" id="gradePills" style="margin-bottom:12px">
+      <div class="pill active" onclick="setGradeFilter(null,this)">全学年</div>
+    </div>
 
     <!-- ページ番号 → Unit 逆引き -->
     <div class="card" style="margin-bottom:14px">
@@ -542,6 +548,7 @@
   let editingIdx   = -1;
   let activeFilter = 'all';
   let activeUnit   = 'all';
+  let searchGradeId = null; // null=全学年
 
   // ── LIBRARY ────────────────────────────────────────────────────────
   // デフォルト教科書（固定ID）
@@ -898,6 +905,8 @@
 {"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
 
 重要なルール：
+• unitは必ず「Unit 1」〜「Unit 10」の形式のみ。Grammar for Communication・Real Life English・Read and Think・Stagesなどはunitではなくlessonフィールドに書くこと
+• lessonの例：「Scene 1」「Read and Think 1」「Grammar for Communication 1」「Real Life English」「Stage Activity 1」
 • translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
 • pageは各画像内のページ番号（数字）
@@ -915,8 +924,9 @@
 
     const parsed = parseJ(raw);
     const items = parsed.items || [];
-    if (items.length === 0 && raw.length < 50) {
-      throw new Error('Geminiからの返答が空でした');
+    if (items.length === 0 && raw.length < 30) {
+      // 単語リストがないページは正常（エラーではなくスキップ）
+      return [];
     }
     return items;
   }
@@ -1319,7 +1329,7 @@
       const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
       const libCtx = getItems().length
         ? '\n\n教科書データ（Unit・ページ特定に使用）:\n'
-          + getItems().map(i=>`${i.unit} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,5000)
+          + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,5000)
         : '';
       parts.push({text:
         `このテストPDFを分析してください。${libCtx}
@@ -1328,10 +1338,12 @@
 {
   "grade": "中学1年",
   "from_unit": "Unit 1",
-  "to_unit": "Unit 3",
+  "from_lesson": "Scene 1",
+  "to_unit": "Unit 2",
+  "to_lesson": "Read and Think 1",
   "from_page": 10,
   "to_page": 45,
-  "summary": "テストの概要説明",
+  "summary": "テストの概要",
   "question_types": [
     {"type": "穴埋め", "count": 5},
     {"type": "整序", "count": 3},
@@ -1340,16 +1352,41 @@
     {"type": "単語の書き", "count": 8},
     {"type": "語形変化", "count": 4}
   ],
-  "topics": ["Unit 1: be動詞", "Unit 2: 一般動詞"],
+  "topics": ["Unit 1 Scene 1: be動詞"],
   "key_items": ["am", "are", "is"]
 }
 
-問題形式は実際にテストに存在するものだけ挙げること。教科書データがある場合はそれを参考にUnit・ページ範囲を特定すること。`
+重要：
+• unitは「Unit 1」〜「Unit 10」形式のみ
+• lessonはSceneやRead and Think・Grammar for Communication・Real Life Englishなどの名前を正確に記載
+• from_lessonとto_lessonで範囲の始まりと終わりを正確に表す
+• 問題形式は実際にテストに存在するものだけ
+• 教科書データがある場合はそれを参考にUnit・ページ範囲を特定`
       });
 
       const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',4000);
       const r=parseJ(raw);
       setSt(stEl,'ok','✅ 分析完了');
+
+      // 範囲テキストを組み立て
+      const rangeFrom = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
+      const rangeTo   = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
+      const rangeStr  = rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`;
+      const pageStr   = `pp.${r.from_page||'?'}〜${r.to_page||'?'}`;
+
+      // 履歴に保存
+      try {
+        const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+        hist.unshift({
+          name: file.name,
+          grade: r.grade||'',
+          range: rangeStr,
+          pages: pageStr,
+          question_types: r.question_types||[],
+          date: new Date().toLocaleDateString('ja-JP')
+        });
+        localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,50)));
+      } catch {}
 
       const qtHtml = (r.question_types||[]).length
         ? `<div class="card">
@@ -1368,14 +1405,50 @@
       rsEl.innerHTML=`
         <div class="result-hero">
           <div class="result-grade">${esc(r.grade||'')}</div>
-          <div class="result-range"><em>${esc(r.from_unit||'')}</em> 〜 <em>${esc(r.to_unit||'')}</em></div>
-          <div class="result-pages">教科書 pp.${r.from_page||'?'} 〜 ${r.to_page||'?'}</div>
+          <div class="result-range">${esc(rangeStr)}</div>
+          <div class="result-pages">教科書 ${esc(pageStr)}</div>
         </div>
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
         ${qtHtml}
         ${(r.topics||[]).length?`<div class="card"><div class="card-title">📚 学習トピック</div>${(r.topics||[]).map(t=>`<div class="topic-row">${esc(t)}</div>`).join('')}</div>`:''}
         ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
+
+      renderTestHistory();
     } catch(e) { setSt(stEl,'err','❌ '+e.message); }
+  }
+
+  function renderTestHistory() {
+    const el = document.getElementById('testHistory');
+    if (!el) return;
+    try {
+      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      if (!hist.length) { el.innerHTML=''; return; }
+      el.innerHTML = `
+        <div class="card" style="margin-top:16px">
+          <div class="card-title">
+            <span>📋 テスト分析履歴</span>
+            <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">履歴を削除</button>
+          </div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>ページ</th><th>主な問題形式</th><th>日付</th></tr></thead>
+            <tbody>${hist.map(h=>`
+              <tr>
+                <td style="font-size:12px">${esc(h.name||'')}</td>
+                <td>${esc(h.grade||'')}</td>
+                <td style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</td>
+                <td style="font-size:12px">${esc(h.pages||'')}</td>
+                <td style="font-size:12px">${(h.question_types||[]).slice(0,3).map(q=>esc(q.type)).join('・')}</td>
+                <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>
+        </div>`;
+    } catch {}
+  }
+
+  function clearTestHistory() {
+    localStorage.removeItem(TEST_HIST_KEY);
+    renderTestHistory();
   }
 
   // ── SEARCH ─────────────────────────────────────────────────────────
@@ -1386,10 +1459,33 @@
     doSearch();
   }
 
+  function setGradeFilter(bookId, el) {
+    searchGradeId = bookId;
+    document.querySelectorAll('#gradePills .pill').forEach(p => p.classList.remove('active'));
+    if (el) el.classList.add('active');
+    doSearch();
+  }
+
+  function updateGradePills() {
+    const pills = document.getElementById('gradePills');
+    if (!pills) return;
+    pills.innerHTML = `<div class="pill ${searchGradeId===null?'active':''}" onclick="setGradeFilter(null,this)">全学年</div>` +
+      library.map(b => `<div class="pill ${searchGradeId===b.id?'active':''}" onclick="setGradeFilter('${b.id}',this)">${esc(b.name)}</div>`).join('');
+  }
+
+  function getSearchItems() {
+    if (searchGradeId) {
+      const book = library.find(b => b.id === searchGradeId);
+      return book?.items || [];
+    }
+    // 全学年：全bookのitemsをマージ
+    return library.flatMap(b => (b.items||[]).map(it => ({...it, _bookName: b.name})));
+  }
+
   function doSearch() {
     const q=document.getElementById('sInput').value.trim(), res=document.getElementById('sResults');
     if (!q) { res.innerHTML=`<div class="empty"><div class="empty-ico">🔍</div><div class="empty-txt">検索語を入力してください</div></div>`; return; }
-    const items=getItems();
+    const items=getSearchItems();
     if (!items.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">先に教科書データを読み込んでください</div></div>`; return; }
     const ql=q.toLowerCase();
     const filtered=items.filter(it=>{
@@ -1398,11 +1494,13 @@
     });
     if (!filtered.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">「${esc(q)}」に一致する項目は見つかりません</div></div>`; return; }
     const hi=s=>s?esc(s).replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<mark>$1</mark>'):'-';
+    const showBook = searchGradeId === null && library.length > 1;
     res.innerHTML=`
       <p style="font-size:12px;color:var(--muted);margin-bottom:10px">${filtered.length}件見つかりました</p>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Unit</th><th>ページ</th><th>内容</th><th>訳・説明</th></tr></thead>
+        <thead><tr>${showBook?'<th>教科書</th>':''}<th>Unit</th><th>ページ</th><th>内容</th><th>訳・説明</th></tr></thead>
         <tbody>${filtered.map(it=>`<tr>
+          ${showBook?`<td style="font-size:11px;color:var(--muted)">${esc(it._bookName||'')}</td>`:''}
           <td style="font-size:12px;color:var(--muted)">${esc(it.unit||'-')}</td>
           <td style="font-weight:700;color:var(--blue)">p.${it.page||'-'}</td>
           <td style="font-weight:500">${hi(it.content)}</td>
@@ -1444,7 +1542,8 @@
   }
 
   // ── AUTO BACKUP (localStorage) ────────────────────────────────────
-  const BACKUP_KEY = 'nhscope_v1';
+  const BACKUP_KEY    = 'nhscope_v1';
+  const TEST_HIST_KEY = 'nhscope_tests';
 
   function saveBackup() {
     if (!Array.isArray(library) || library.length === 0) return; // 空の状態を保存しない
@@ -1624,6 +1723,8 @@
     try { renderUnitView(); }  catch(e) { console.error('renderUnitView:', e); }
     try { updateBadge(); }     catch(e) { console.error('updateBadge:', e); }
     try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner:', e); }
+    try { updateGradePills(); } catch(e) {}
+    try { renderTestHistory(); } catch(e) {}
 
     // APIキー未設定ならセットアップガイドを表示
     if (!getApiKey()) openSetupGuide();
