@@ -1531,28 +1531,37 @@
 全ての大問を漏れなく確認し、出題された文法・語句・熟語を正確に特定してください。
 絶対にサンプルや架空のデータを返さないこと。${libCtx}
 
-【Unit範囲の割り出し方（重要）】
-- テスト全体に出てくる全ての文法構造・語彙・熟語を列挙する
-- それぞれがNEW HORIZONのどのUnitの学習内容に対応するか判断する
-- 最も早いUnitの内容がfrom_unit、最も遅いUnitの内容がto_unit
-- 「Unit1から出題されている」ではなく「このテストで出題されている文法はUnit○で習う」という逆引きの発想で特定する
-- 教科書データがある場合は照合して正確に判定する
+【Unit範囲の正確な割り出し（重要）】
+・テスト全体に登場する文法・語彙・熟語を全て洗い出す
+・それぞれがNEW HORIZONのどのUnitのどのセクションで初出するかを判断する
+・from_unit/from_lesson = 最も早く出てくる内容のUnit・セクション
+・to_unit/to_lesson = 最も遅く出てくる内容のUnit・セクション
+・from_lessonとto_lessonには以下のような正確な名称を記載すること：
+  Part 1 / Part 2 / Read and Think 1 / Read and Think 2 / Grammar for Communication 1 /
+  Real Life English / Stage Activity / Let's Read / Let's Talk /
+  A Mother's Lullaby / Over the Horizon などの特殊読解タイトルもそのまま記載
+・教科書データがある場合は単語・ページ対応から逆算して必ず活用する
 
 【確認手順】
-1. 各ページを順番に見て、大問番号を全て特定する
-2. 各大問の問題形式・問題数・出題された文法/語句/熟語を正確に記録する
-3. リスニング・長文読解は必ずsub_questionsに内訳を記載する
+1. 各ページの大問番号を全て特定する
+2. 各大問の問題形式・問題数・出題内容を正確に記録する
+3. リスニング・長文読解はsub_questionsに内訳を記載する
 4. 全大問をリストアップして漏れがないか確認してから出力する
 
-【ルール】
-- 全大問を漏れなく列挙すること（最重要）
-- section：テストに書かれている大問番号をそのまま記載
-- type：日本語で記載（英語タイトルは翻訳する）
-- grammar：その大問で出題された文法事項を列挙（例：「現在完了（経験）・make O C・不定詞」）
-- phrases：その大問で出題された熟語・語句を列挙（例：「It is said that・take advantage of・be into」）。熟語がなければ空文字
-- 長文・対話文は「教科書内」「教科書外」を区別
-- リスニングはsub_questionsで種類を分類する
-- count：問題数を正確に数える`
+【文法表記のルール】
+・SVOC構文（make + 目的語 + 形容詞/名詞）は「SVOC構文」と記載。「make O C」「使役動詞」は使わない
+・let + 人 + 動詞原形は「let使役」、help + 人 + 動詞原形は「help使役」と記載
+・関係代名詞はwho・which・thatのみ（「whatの関係代名詞」は中学では習わない）
+・grammar：その大問で出題された文法事項を列挙（例：「現在完了（経験）・SVOC構文・不定詞」）
+・phrases：その大問で出題された熟語・語句を列挙（例：「It is said that・take advantage of」）。なければ空文字
+・key_items：このテストのPDF画像から実際に読み取れた文法・語句のみ。他のテストの内容は含めない
+
+【その他ルール】
+・全大問を漏れなく列挙すること（最重要）
+・section：テストに書かれている大問番号をそのまま記載
+・type：日本語で記載（英語タイトルは翻訳する）
+・長文・対話文は「教科書内」「教科書外」を区別
+・count：問題数を正確に数える`
       });
 
       const r = await callGeminiJSON(
@@ -1713,9 +1722,14 @@
               const qtSummary = (h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・');
               const qtDetail = (h.question_types||[]).length
                 ? `<div id="qt-d-${idx}" style="display:none;margin-top:6px;font-size:11px;border-top:1px solid #eee;padding-top:4px">
-                    ${(h.question_types||[]).map(qt=>`<div style="padding:2px 0">
-                      <b>${esc(qt.section||'')} ${esc(qt.type||'')}</b> ${qt.count||''}問
-                      ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:10px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問</div>`).join('')}
+                    ${(h.question_types||[]).map(qt=>`<div style="padding:3px 0;border-bottom:1px solid #f0f0f0">
+                      <div><b>${esc(qt.section||'')} ${esc(qt.type||'')}</b> ${qt.count||''}問${qt.details?` <span style="color:#94a3b8">（${esc(qt.details)}）</span>`:''}</div>
+                      ${qt.grammar?`<div style="padding-left:8px;color:var(--navy)">📐 ${esc(qt.grammar)}</div>`:''}
+                      ${qt.phrases?`<div style="padding-left:8px;color:#7c3aed">🔗 ${esc(qt.phrases)}</div>`:''}
+                      ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:12px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問
+                        ${sq.grammar?`<span style="color:var(--navy)"> 📐${esc(sq.grammar)}</span>`:''}
+                        ${sq.phrases?`<span style="color:#7c3aed"> 🔗${esc(sq.phrases)}</span>`:''}
+                      </div>`).join('')}
                     </div>`).join('')}
                    </div>
                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
@@ -1853,6 +1867,7 @@
     document.getElementById('testTitle').textContent = file.name;
     document.getElementById('testSub').textContent = `${(file.size/1024).toFixed(0)}KB`;
     document.getElementById('testResult').innerHTML = '';
+    try { localStorage.removeItem('nhscope_test_result'); } catch {}
     setSt(stEl,'load','PDFを読み込み中...');
     try {
       const buf = await file.arrayBuffer();
@@ -1894,7 +1909,9 @@
 
   function runTestSearch() {
     const fromUnit = document.getElementById('tsFromUnit').value;
+    const fromPart = document.getElementById('tsFromPart').value;
     const toUnit   = document.getElementById('tsToUnit').value;
+    const toPart   = document.getElementById('tsToPart').value;
     const qtype    = document.getElementById('tsQType').value;
     const rsEl     = document.getElementById('tsResults');
 
@@ -1910,13 +1927,15 @@
     const toN   = toUnit   ? unitNum(toUnit)   : 99;
 
     const results = hist.filter(h => {
-      const hFrom = unitNum(h.range?.split('〜')[0]);
-      const hTo   = unitNum(h.range?.split('〜').pop());
-      const unitOk = !fromUnit && !toUnit
-        ? true
-        : hFrom <= toN && hTo >= fromN;
+      const rangeStr = h.range || '';
+      const hFrom = unitNum(rangeStr.split('〜')[0]);
+      const hTo   = unitNum(rangeStr.split('〜').pop());
+      const unitOk = !fromUnit && !toUnit ? true : hFrom <= toN && hTo >= fromN;
+      // Part指定がある場合は範囲文字列に含まれるか確認
+      const fromPartOk = !fromPart || rangeStr.includes(fromPart) || !fromUnit;
+      const toPartOk   = !toPart   || rangeStr.includes(toPart)   || !toUnit;
       const qtOk = !qtype || containsQType(h.question_types, qtype);
-      return unitOk && qtOk;
+      return unitOk && fromPartOk && toPartOk && qtOk;
     });
 
     if (!results.length) {
@@ -2242,7 +2261,6 @@
     try { renderUnitView(); }  catch(e) { console.error('renderUnitView:', e); }
     try { updateBadge(); }     catch(e) { console.error('updateBadge:', e); }
     try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner:', e); }
-    try { updateGradePills(); } catch(e) {}
     try { renderTestHistory(); } catch(e) {}
 
     // APIキー未設定ならセットアップガイドを表示
