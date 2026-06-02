@@ -391,15 +391,16 @@
     </div>
     <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
     <div class="card">
-      <div class="card-title">📄 テストPDF（スキャン画像PDF対応）</div>
+      <div class="card-title">📄 テストPDF（複数ファイル対応）</div>
       <div class="upload-zone" id="testZone">
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
-        <div class="uz-sub"   id="testSub">ドラッグ＆ドロップ または ↓ボタンから選択</div>
+        <div class="uz-sub" id="testSub">複数PDF可 — ドラッグ＆ドロップ または ↓ボタンから選択</div>
       </div>
-      <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="onTestFileSelected(this.files[0])">
+      <div id="testFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      <input type="file" id="testFile" accept=".pdf" multiple style="display:none" onchange="onTestFilesSelected(this.files)">
       <div class="row" style="margin-top:10px;gap:8px">
-        <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('testFile').click()">📂 PDFを選択</button>
+        <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('testFile').click()">📂 PDFを選択（複数可）</button>
         <button type="button" class="btn btn-primary" id="testStartBtn" style="flex:1" disabled onclick="runTestAnalysis()">🔍 分析開始</button>
       </div>
       <div id="testStatus"></div>
@@ -1544,6 +1545,7 @@ Read and Think 1 / Read and Think 2 / Part 1 / Part 2
 【重要な制約】
 ・grammar：問題として問われている文法構造のみ（現在完了進行形・SVOC構文・関係代名詞など）
 ・phrases：問題として問われている熟語・イディオムのみ。本文に出てくるだけの語句は絶対に含めない
+  ただし、already・yet・just・ever・never・since・for などの文法に絡む副詞・前置詞は除外。純粋な熟語・イディオムのみ
 ・SVOC構文（make＋人＋形容詞）は「SVOC構文」と記載。「make O C」は使わない
 ・関係代名詞はwho・which・thatのみ（whatの関係代名詞は中学で習わない）
 ・key_items：このテストPDFのみの内容
@@ -1637,7 +1639,19 @@ phrases フィールド：問題として問われた熟語・イディオムの
         localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,50)));
       } catch {}
 
-      const qtHtml = (r.question_types||[]).length
+      // 大問を番号順にソート
+      const sectionOrder = s => {
+        const m = (s||'').match(/(\d+)/);
+        if (m) return parseInt(m[1]);
+        const l = (s||'').match(/\[([A-Z])\]/);
+        if (l) return l[1].charCodeAt(0) + 100;
+        return 999;
+      };
+      const sortedQTypes = [...(r.question_types||[])].sort((a,b) => sectionOrder(a.section) - sectionOrder(b.section));
+
+      const isReadingType = t => /長文読解|対話文読解/.test(t||'');
+
+      const qtHtml = sortedQTypes.length
         ? `<div class="card">
             <div class="card-title" style="justify-content:space-between">
               <span>📝 問題形式</span>
@@ -1646,7 +1660,8 @@ phrases フィールド：問題として問われた熟語・イディオムの
             <div class="qt-body" style="display:none">
             <div class="tbl-wrap"><table>
               <thead><tr><th style="width:80px">大問</th><th>問題形式</th><th style="width:60px;text-align:right">問題数</th></tr></thead>
-              <tbody>${(r.question_types||[]).map(qt=>{
+              <tbody>${sortedQTypes.map(qt=>{
+                const isReading = isReadingType(qt.type);
                 const subHtml = (qt.sub_questions||[]).length
                   ? (qt.sub_questions||[]).map(sq=>`
                       <tr style="background:#f9fafb">
@@ -1654,7 +1669,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
                         <td style="padding-left:20px;font-size:12px;color:var(--muted)">
                           <div>└ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}</div>
                           ${sq.grammar?`<div style="padding-left:8px;font-size:11px;color:var(--navy)">📐 文法：${esc(sq.grammar)}</div>`:''}
-                          ${sq.phrases?`<div style="padding-left:8px;font-size:11px;color:#7c3aed">🔗 熟語：${esc(sq.phrases)}</div>`:''}
+                          ${sq.phrases?`<div style="padding-left:8px;font-size:11px;color:#dc2626;font-weight:600">🔗 熟語：${esc(sq.phrases)}</div>`:''}
                         </td>
                         <td style="font-size:12px;color:var(--navy);text-align:right">${sq.count||'-'}問</td>
                       </tr>`).join('')
@@ -1662,9 +1677,9 @@ phrases フィールド：問題として問われた熟語・イディオムの
                 return `<tr style="border-top:1px solid var(--border)">
                   <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(qt.section||'')}</td>
                   <td>
-                    <div style="font-weight:600">${esc(qt.type||'')}${qt.details?`<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">※${esc(qt.details)}</span>`:''}</div>
+                    <div style="font-weight:600">${esc(qt.type||'')}${qt.details?`<span style="font-size:11px;font-weight:${isReading?'600':'400'};color:${isReading?'#dc2626':'var(--muted)'};margin-left:6px">※${esc(qt.details)}</span>`:''}</div>
                     ${qt.grammar?`<div style="font-size:11px;color:var(--navy);margin-top:2px">📐 文法：${esc(qt.grammar)}</div>`:''}
-                    ${qt.phrases?`<div style="font-size:11px;color:#7c3aed;margin-top:1px">🔗 熟語：${esc(qt.phrases)}</div>`:''}
+                    ${qt.phrases?`<div style="font-size:11px;color:#dc2626;font-weight:600;margin-top:1px">🔗 熟語：${esc(qt.phrases)}</div>`:''}
                   </td>
                   <td style="color:var(--navy);font-weight:700;text-align:right">${qt.count||'-'}問</td>
                 </tr>${subHtml}`;
@@ -1852,27 +1867,54 @@ phrases フィールド：問題として問われた熟語・イディオムの
   // ── テスト分析 手動開始 ──────────────────────────────────────────
   let pendingTestImages = null;
 
-  async function onTestFileSelected(file) {
-    if (!file) return;
+  async function onTestFilesSelected(files) {
+    if (!files || !files.length) return;
+    const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
+    if (!fileArr.length) return;
+
     const stEl = document.getElementById('testStatus');
     const btn  = document.getElementById('testStartBtn');
     btn.disabled = true;
-    document.getElementById('testTitle').textContent = file.name;
-    document.getElementById('testSub').textContent = `${(file.size/1024).toFixed(0)}KB`;
+    pendingTestImages = null;
+
+    // ファイル一覧を表示
+    const listEl = document.getElementById('testFileList');
+    listEl.innerHTML = fileArr.map((f,i) => `📄 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)`).join('<br>');
+    document.getElementById('testTitle').textContent = fileArr.length === 1
+      ? fileArr[0].name
+      : `${fileArr.length}ファイル選択済み`;
+    document.getElementById('testSub').textContent = `合計 ${(fileArr.reduce((s,f)=>s+f.size,0)/1024).toFixed(0)}KB`;
     document.getElementById('testResult').innerHTML = '';
     try { localStorage.removeItem('nhscope_test_result'); } catch {}
-    setSt(stEl,'load','PDFを読み込み中...');
+
+    setSt(stEl,'load',`${fileArr.length}ファイルを読み込み中...`);
     try {
-      const buf = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({data:buf}).promise;
-      const imgs = [];
-      for (let i=1; i<=Math.min(pdf.numPages,14); i++) imgs.push(await toBase64(await pdf.getPage(i), 1.1));
-      pendingTestImages = { imgs, name: file.name };
-      setSt(stEl,'ok',`✅ ${imgs.length}ページ読み込み完了 — 分析開始を押してください`);
+      const allImgs = [];
+      const MAX_TOTAL = 20; // 全ファイル合計の最大ページ数
+
+      for (let fi = 0; fi < fileArr.length; fi++) {
+        if (allImgs.length >= MAX_TOTAL) break;
+        const buf = await fileArr[fi].arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+        const remain = MAX_TOTAL - allImgs.length;
+        for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
+          allImgs.push(await toBase64(await pdf.getPage(i), 1.1));
+        }
+        setSt(stEl,'load',`${fi+1}/${fileArr.length}ファイル処理済み（${allImgs.length}ページ）...`);
+      }
+
+      const names = fileArr.map(f=>f.name).join('・');
+      pendingTestImages = { imgs: allImgs, name: names };
+      setSt(stEl,'ok',`✅ ${allImgs.length}ページ読み込み完了 — 分析開始を押してください`);
       btn.disabled = false;
     } catch(e) {
       setSt(stEl,'err','❌ PDF読み込みエラー: '+e.message);
     }
+  }
+
+  // ドラッグ&ドロップ対応（複数ファイル）
+  function onTestFileSelected(file) {
+    onTestFilesSelected(file ? [file] : []);
   }
 
   async function runTestAnalysis() {
@@ -2261,7 +2303,17 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
     // 3. ドラッグ&ドロップのみ設定（ファイル選択はHTMLのonchangeで処理）
     setupDrop('tbZone',   onPDFLoaded);
-    setupDrop('testZone', onTestFileSelected);
+    // testZoneは複数PDF対応
+    const tz = document.getElementById('testZone');
+    if (tz) {
+      tz.addEventListener('dragover',  e => { e.preventDefault(); tz.classList.add('over'); });
+      tz.addEventListener('dragleave', () => tz.classList.remove('over'));
+      tz.addEventListener('drop', e => {
+        e.preventDefault(); tz.classList.remove('over');
+        const pdfs = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
+        if (pdfs.length) onTestFilesSelected(pdfs);
+      });
+    }
   })();
 </script>
 </html>
