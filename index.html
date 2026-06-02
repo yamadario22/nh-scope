@@ -973,6 +973,55 @@
     throw new Error('5回リトライしましたが失敗しました。しばらく待ってから再試行してください。');
   }
 
+  // JSON強制出力版（テスト分析専用）
+  async function callGeminiJSON(parts, systemText, schema, maxTok=12000) {
+    const key   = getApiKey();
+    const model = getModel();
+    if (!key)   throw new Error('APIキーが設定されていません。');
+    if (!model) throw new Error('モデルが未設定です。');
+
+    const waitTimes = [15000, 30000, 60000];
+    for (let i = 0; i <= waitTimes.length; i++) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemText }] },
+              contents: [{ parts }],
+              generationConfig: {
+                maxOutputTokens: maxTok,
+                temperature: 0.1,
+                response_mime_type: 'application/json',
+                response_schema: schema
+              }
+            })
+          }
+        );
+        if (!res.ok) {
+          const e = await res.json().catch(()=>({}));
+          const msg = e?.error?.message || 'API Error ' + res.status;
+          const isQuota = msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED') || res.status === 429;
+          if (isQuota && i >= 2) throw new Error('__QUOTA__:' + msg.substring(0,200));
+          if (isQuota || res.status === 503) {
+            if (i < waitTimes.length) { await sleep(waitTimes[i]); continue; }
+          }
+          throw new Error(msg.substring(0,300));
+        }
+        const d = await res.json();
+        const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+        try { return JSON.parse(text); } catch { return parseAnyJ(text); }
+      } catch(e) {
+        if (e.message.startsWith('__QUOTA__')) throw e;
+        if (i < waitTimes.length) { await sleep(waitTimes[i]); continue; }
+        throw e;
+      }
+    }
+    throw new Error('リトライ失敗');
+  }
+
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // 途中で切れたJSONでも取得済み部分を救済するパーサー
@@ -1519,8 +1568,47 @@
 - count：その大問の総問題数（正確に数える）`
       });
 
-      const raw=await callGemini(parts,'テスト分析の専門家です。添付画像を詳細に読み取り、実際の内容のみをJSONで返してください。',10000);
-      const r=parseAnyJ(raw);
+      const r = await callGeminiJSON(
+        parts,
+        'テスト分析の専門家です。添付した全ページのテスト画像を詳細に読み取り、全大問を漏れなく分析してください。',
+        {
+          type: 'OBJECT',
+          properties: {
+            grade:             { type: 'STRING' },
+            from_unit:         { type: 'STRING' },
+            from_lesson:       { type: 'STRING' },
+            to_unit:           { type: 'STRING' },
+            to_lesson:         { type: 'STRING' },
+            cross_grade_notes: { type: 'STRING' },
+            summary:           { type: 'STRING' },
+            question_types: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  section: { type: 'STRING' },
+                  type:    { type: 'STRING' },
+                  count:   { type: 'INTEGER' },
+                  details: { type: 'STRING' },
+                  sub_questions: {
+                    type: 'ARRAY',
+                    items: {
+                      type: 'OBJECT',
+                      properties: {
+                        type:    { type: 'STRING' },
+                        count:   { type: 'INTEGER' },
+                        details: { type: 'STRING' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            key_items: { type: 'ARRAY', items: { type: 'STRING' } }
+          }
+        },
+        12000
+      );
       setSt(stEl,'ok','✅ 分析完了');
 
 
