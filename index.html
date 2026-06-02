@@ -235,10 +235,11 @@
 
 <!-- TABS -->
 <nav class="tabs">
-  <div class="tab active" data-tab="setup"  onclick="switchTab('setup')">📚 教科書データ</div>
-  <div class="tab"        data-tab="edit"   onclick="switchTab('edit')">📋 データ編集</div>
-  <div class="tab"        data-tab="test"   onclick="switchTab('test')">📝 テスト分析</div>
-  <div class="tab"        data-tab="search" onclick="switchTab('search')">🔍 検索</div>
+  <div class="tab active" data-tab="setup"       onclick="switchTab('setup')">📚 教科書データ解析</div>
+  <div class="tab"        data-tab="edit"        onclick="switchTab('edit')">📋 教科書データ編集</div>
+  <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 単語・文法検索</div>
+  <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
+  <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
@@ -396,8 +397,11 @@
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
         <div class="uz-sub"   id="testSub">ドラッグ＆ドロップ または ↓ボタンから選択</div>
       </div>
-      <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="if(this.files[0])analyzeTest(this.files[0])">
-      <button type="button" class="btn btn-secondary" style="margin-top:10px;width:100%" onclick="document.getElementById('testFile').click()">📂 テストPDFを選択する</button>
+      <input type="file" id="testFile" accept=".pdf" style="display:none" onchange="onTestFileSelected(this.files[0])">
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('testFile').click()">📂 PDFを選択</button>
+        <button type="button" class="btn btn-primary" id="testStartBtn" style="flex:1" disabled onclick="runTestAnalysis()">🔍 分析開始</button>
+      </div>
       <div id="testStatus"></div>
     </div>
     <div id="testResult"></div>
@@ -436,6 +440,64 @@
     <div id="sResults">
       <div class="empty"><div class="empty-ico">🔍</div><div class="empty-txt">検索語を入力してください</div></div>
     </div>
+  </div>
+
+  <!-- ══ TAB 5: テスト検索 ══════════════════════════════════════════ -->
+  <div id="tab-test-search" class="tab-content">
+    <div class="card">
+      <div class="card-title">🗂 テスト検索</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">テスト分析済みのデータから条件に合うテストを検索します。</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Unit範囲（開始）</label>
+          <select id="tsFromUnit" class="book-select" style="width:100%">
+            <option value="">指定なし</option>
+            <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
+            <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
+            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option>
+            <option>Unit 10</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Unit範囲（終わり）</label>
+          <select id="tsToUnit" class="book-select" style="width:100%">
+            <option value="">指定なし</option>
+            <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
+            <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
+            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option>
+            <option>Unit 10</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">問題形式（任意）</label>
+        <select id="tsQType" class="book-select" style="width:100%">
+          <option value="">指定なし（Unit範囲のみで検索）</option>
+          <optgroup label="語彙・語形">
+            <option>単語の書き（日→英）</option><option>単語の意味（英→日）</option><option>語形変化</option>
+          </optgroup>
+          <optgroup label="文法・構文">
+            <option>適語選択</option><option>穴埋め</option><option>文法穴埋め</option>
+            <option>熟語穴埋め</option><option>整序（並べ替え）</option><option>書き換え（同意文）</option>
+            <option>同意表現</option><option>誤文訂正</option>
+          </optgroup>
+          <optgroup label="英作文・和訳">
+            <option>英作文</option><option>和文英訳</option><option>英文和訳</option><option>条件英作文</option>
+          </optgroup>
+          <optgroup label="読解">
+            <option>長文読解（教科書内）</option><option>長文読解（教科書外）</option>
+            <option>対話文読解（教科書外）</option><option>内容一致</option>
+            <option>適文選択</option><option>内容理解</option><option>グラフ選択</option>
+          </optgroup>
+          <optgroup label="リスニング">
+            <option>リスニング</option><option>図の選択問題</option>
+            <option>穴埋め問題</option><option>正誤問題</option><option>正しい答えを選ぶ問題</option>
+          </optgroup>
+        </select>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="runTestSearch()">🔍 検索する</button>
+    </div>
+    <div id="tsResults"></div>
   </div>
 
 </div><!-- /main -->
@@ -1532,7 +1594,11 @@ ${libCtx}`
 
       const qtHtml = (r.question_types||[]).length
         ? `<div class="card">
-            <div class="card-title">📝 問題形式</div>
+            <div class="card-title" style="justify-content:space-between">
+              <span>📝 問題形式</span>
+              <button class="btn btn-secondary btn-sm" onclick="toggleQTypes(this)">問題形式を見る ▼</button>
+            </div>
+            <div class="qt-body" style="display:none">
             <div class="tbl-wrap"><table>
               <thead><tr><th style="width:80px">大問</th><th>問題形式</th><th style="width:60px;text-align:right">問題数</th></tr></thead>
               <tbody>${(r.question_types||[]).map(qt=>{
@@ -1557,6 +1623,7 @@ ${libCtx}`
               }).join('')}
               </tbody>
             </table></div>
+            </div>
           </div>` : '';
 
       const crossNote = r.cross_grade_notes
@@ -1715,7 +1782,98 @@ ${libCtx}`
     }
   }
 
-  // ── AUTO BACKUP (localStorage) ────────────────────────────────────
+  // ── テスト分析 手動開始 ──────────────────────────────────────────
+  let pendingTestFile = null;
+
+  function onTestFileSelected(file) {
+    if (!file) return;
+    pendingTestFile = file;
+    document.getElementById('testTitle').textContent = file.name;
+    document.getElementById('testSub').textContent = `${(file.size/1024).toFixed(0)}KB`;
+    document.getElementById('testStartBtn').disabled = false;
+    document.getElementById('testStatus').innerHTML = '';
+    document.getElementById('testResult').innerHTML = '';
+  }
+
+  function runTestAnalysis() {
+    if (!pendingTestFile) return;
+    document.getElementById('testStartBtn').disabled = true;
+    analyzeTest(pendingTestFile);
+  }
+
+  // ── テスト検索 ────────────────────────────────────────────────────
+  function unitNum(str) {
+    const m = (str||'').match(/(\d+)/);
+    return m ? parseInt(m[1]) : 0;
+  }
+
+  function containsQType(qtypes, target) {
+    if (!target) return true;
+    const tl = target.toLowerCase();
+    for (const qt of (qtypes||[])) {
+      if ((qt.type||'').toLowerCase().includes(tl)) return true;
+      for (const sq of (qt.sub_questions||[])) {
+        if ((sq.type||'').toLowerCase().includes(tl)) return true;
+      }
+    }
+    return false;
+  }
+
+  function runTestSearch() {
+    const fromUnit = document.getElementById('tsFromUnit').value;
+    const toUnit   = document.getElementById('tsToUnit').value;
+    const qtype    = document.getElementById('tsQType').value;
+    const rsEl     = document.getElementById('tsResults');
+
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+
+    if (!hist.length) {
+      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">📋</div><div class="empty-txt">テスト分析履歴がありません。先にテスト分析を行ってください。</div></div>`;
+      return;
+    }
+
+    const fromN = fromUnit ? unitNum(fromUnit) : 0;
+    const toN   = toUnit   ? unitNum(toUnit)   : 99;
+
+    const results = hist.filter(h => {
+      const hFrom = unitNum(h.range?.split('〜')[0]);
+      const hTo   = unitNum(h.range?.split('〜').pop());
+      const unitOk = !fromUnit && !toUnit
+        ? true
+        : hFrom <= toN && hTo >= fromN;
+      const qtOk = !qtype || containsQType(h.question_types, qtype);
+      return unitOk && qtOk;
+    });
+
+    if (!results.length) {
+      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">条件に一致するテストが見つかりませんでした。</div></div>`;
+      return;
+    }
+
+    rsEl.innerHTML = `
+      <p style="font-size:12px;color:var(--muted);margin:12px 0 8px">${results.length}件見つかりました</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>主な問題形式</th><th>日付</th></tr></thead>
+        <tbody>${results.map(h=>`<tr>
+          <td style="font-size:12px">${esc(h.name||'')}</td>
+          <td>${esc(h.grade||'')}</td>
+          <td style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</td>
+          <td style="font-size:12px">${(h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・')}</td>
+          <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table></div>`;
+  }
+
+  // ── 問題形式トグル ────────────────────────────────────────────────
+  function toggleQTypes(btn) {
+    const tbl = btn.closest('.card').querySelector('.qt-body');
+    if (!tbl) return;
+    const open = tbl.style.display !== 'none';
+    tbl.style.display = open ? 'none' : '';
+    btn.textContent = open ? '問題形式を見る ▼' : '問題形式を閉じる ▲';
+  }
   const BACKUP_KEY    = 'nhscope_v1';
   const TEST_HIST_KEY = 'nhscope_tests';
 
