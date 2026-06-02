@@ -447,25 +447,39 @@
     <div class="card">
       <div class="card-title">🗂 テスト検索</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:14px">テスト分析済みのデータから条件に合うテストを検索します。</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
         <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Unit範囲（開始）</label>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">開始Unit</label>
           <select id="tsFromUnit" class="book-select" style="width:100%">
             <option value="">指定なし</option>
             <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
             <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
-            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option>
-            <option>Unit 10</option>
+            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option><option>Unit 10</option>
           </select>
         </div>
         <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Unit範囲（終わり）</label>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">開始パート</label>
+          <select id="tsFromPart" class="book-select" style="width:100%">
+            <option value="">指定なし</option>
+            <option>Part 1</option><option>Part 2</option>
+            <option>Read and Think 1</option><option>Read and Think 2</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">終わりUnit</label>
           <select id="tsToUnit" class="book-select" style="width:100%">
             <option value="">指定なし</option>
             <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
             <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
-            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option>
-            <option>Unit 10</option>
+            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option><option>Unit 10</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">終わりパート</label>
+          <select id="tsToPart" class="book-select" style="width:100%">
+            <option value="">指定なし</option>
+            <option>Part 1</option><option>Part 2</option>
+            <option>Read and Think 1</option><option>Read and Think 2</option>
           </select>
         </div>
       </div>
@@ -745,7 +759,13 @@
       document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
       const nd = !getItems().length;
       if (name==='edit')   { try { renderUnitView(); } catch(e){} document.getElementById('editWarn').style.display   = nd?'block':'none'; }
-      if (name==='test')   document.getElementById('testWarn').style.display   = nd?'block':'none';
+      if (name==='test') {
+        document.getElementById('testWarn').style.display = nd?'block':'none';
+        // タブに戻ったとき保存済み結果を復元
+        const saved = localStorage.getItem('nhscope_test_result');
+        const rsEl = document.getElementById('testResult');
+        if (saved && rsEl && !rsEl.innerHTML) rsEl.innerHTML = saved;
+      }
       if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
     } catch(e) { console.error('switchTab error:', e); }
   }
@@ -1425,140 +1445,61 @@
   }
 
   // ── TEST ANALYSIS ──────────────────────────────────────────────────
-  async function analyzeTest(file) {
+  async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
+    localStorage.removeItem('nhscope_test_result');
     try {
-      setSt(stEl,'load','テストPDFを画像化中...');
-      const buf=await file.arrayBuffer();
-      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-      const imgs=[];
-      for (let i=1;i<=Math.min(pdf.numPages,8);i++) imgs.push(await toBase64(await pdf.getPage(i), 1.6));
       setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
 
       const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
       const libCtx = getItems().length
-        ? '\n\n教科書データ（Unit・ページ特定に使用）:\n'
-          + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,5000)
+        ? '\n\n【教科書データ（Unit・ページ特定の参考）】\n'
+          + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,4000)
         : '';
-      parts.push({text:
-        `このテストPDFを分析して、以下のJSON形式のみで返してください。余分な説明は不要です。
 
+      parts.push({text:
+`【指示】添付した画像はテストの実物です。画像を1ページずつ丁寧に読み取り、実際の内容を分析してください。
+絶対にサンプルや架空のデータを返さないこと。画像から読み取れた事実のみを返すこと。${libCtx}
+
+【出力形式】以下の構造のJSONのみ返してください（マークダウン・コードブロック不要）：
 {
-  "grade": "中学3年",
-  "from_unit": "Unit 1",
-  "from_lesson": "Scene 1",
-  "to_unit": "Unit 1",
-  "to_lesson": "Read and Think 1",
-  "cross_grade_notes": "中2Unit7（受動態）の内容も含まれています",
-  "summary": "Unit1の内容が主に出題されています。make 人 形容詞・現在完了（経験）・人 thatが中心。",
+  "grade": "中学○年",
+  "from_unit": "Unit X",
+  "from_lesson": "Part 1",
+  "to_unit": "Unit X",
+  "to_lesson": "Read and Think 2",
+  "cross_grade_notes": "他学年の内容がある場合のみ記載。なければ空文字",
+  "summary": "Unit○の〜が主に出題されています。（100字以内）",
   "question_types": [
     {
-      "section": "大問１・２",
-      "type": "リスニング",
-      "count": 13,
-      "sub_questions": [
-        {"type": "図の選択問題", "count": 10},
-        {"type": "正しい答えを選ぶ問題", "count": 3}
-      ]
-    },
-    {
-      "section": "大問３",
-      "type": "適語選択",
-      "count": 11,
-      "details": "語形変化を含む",
-      "sub_questions": []
-    },
-    {
-      "section": "大問５",
-      "type": "単語",
-      "count": 11,
-      "sub_questions": [
-        {"type": "日→英", "count": 8},
-        {"type": "英→日", "count": 3}
-      ]
-    },
-    {
-      "section": "大問６",
-      "type": "同意表現",
-      "count": 4,
-      "sub_questions": [
-        {"type": "make 人 形容詞", "count": 2},
-        {"type": "人 that", "count": 2}
-      ]
-    },
-    {
-      "section": "大問７",
-      "type": "整序（並べ替え）",
-      "count": 5,
-      "sub_questions": [
-        {"type": "現在完了（経験）", "count": 1},
-        {"type": "make 人 形容詞", "count": 1},
-        {"type": "人 that", "count": 3}
-      ]
-    },
-    {
-      "section": "大問８",
-      "type": "穴埋め",
-      "count": 6,
-      "sub_questions": [
-        {"type": "文法穴埋め", "count": 2, "details": "現在完了（経験）・make 人 形容詞"},
-        {"type": "熟語穴埋め", "count": 4, "details": "It is said that・In addition・be into・take advantage of"}
-      ]
-    },
-    {
-      "section": "大問９",
-      "type": "英作文",
-      "count": 5,
-      "sub_questions": [
-        {"type": "make 人 形容詞", "count": 2},
-        {"type": "現在完了（経験）", "count": 1},
-        {"type": "人 that", "count": 2}
-      ]
-    },
-    {
-      "section": "大問１０",
-      "type": "長文読解（教科書外）",
-      "count": 9,
-      "sub_questions": [
-        {"type": "内容一致", "count": 3},
-        {"type": "適文選択", "count": 2},
-        {"type": "適語選択", "count": 1},
-        {"type": "内容理解", "count": 3}
-      ]
-    },
-    {
-      "section": "大問１１",
-      "type": "対話文読解（教科書外）",
-      "count": 4,
-      "sub_questions": [
-        {"type": "適語選択（組み合わせ）", "count": 1},
-        {"type": "グラフ選択", "count": 1},
-        {"type": "内容一致", "count": 2}
-      ]
+      "section": "大問X",
+      "type": "問題形式名",
+      "count": 問題数,
+      "details": "補足があれば",
+      "sub_questions": [{"type": "サブ形式名", "count": 問題数, "details": "補足"}]
     }
   ],
-  "key_items": ["現在完了（経験）", "make 人 形容詞", "人 that", "It is said that"]
+  "key_items": ["主な文法・語句"]
 }
 
-ルール：
-- grade：中学1〜3年（必須）
-- from_unit/to_unit：テストの文法・語彙からUnit番号を必ず特定。学年をまたぐ場合はfrom_unit側を当該学年の範囲に限定し、他学年の内容はcross_grade_notesに記載
-- from_lesson/to_lesson：Scene・Read and Think等（わかる範囲で）
-- cross_grade_notes：他学年の内容が含まれる場合のみ記載。なければ空文字
-- summary：「Unit○の内容が主に出題されています」程度のシンプルな説明。学校名・教科書名は含めない
-- section：大問番号（大問１、大問３・４など）を必ず記載
-- question_typesは実際に存在するものだけ列挙
-- 長文読解・対話文読解は「教科書内」「教科書外」を区別
-- リスニングは「図の選択問題」「穴埋め問題」「正誤問題」「正しい答えを選ぶ問題」で分類
-- sub_questionsは必ず具体的な文法事項・問題の内容を含める
-- 空のsub_questionsは省略可
-${libCtx}`
+【分析ルール】
+- grade：テストの文法・語彙の難易度から中学1〜3年を判断
+- from_unit/to_unit：必ずUnit番号を特定（「Unit 1」〜「Unit 10」形式）
+- from_lesson/to_lesson：Part 1・Part 2・Read and Think 1・Read and Think 2・Grammar for Communication等
+- 他学年の範囲が含まれる場合はcross_grade_notesに記載し、from/to_unitは当該学年の範囲のみ
+- summary：「〜が主に出題されています」形式のシンプルな説明
+- section：テストの大問番号を正確に記載
+- question_typesは実際にテストに存在するものだけを列挙
+- 長文・対話文は「教科書内」「教科書外」を区別
+- リスニングの種類：図の選択問題／穴埋め問題／正誤問題／正しい答えを選ぶ問題
+- sub_questionsには具体的な文法事項を含める`
       });
 
-      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。マークダウン不要。',6000);
+      const raw=await callGemini(parts,'テスト分析の専門家です。添付画像を詳細に読み取り、実際の内容のみをJSONで返してください。',10000);
       const r=parseAnyJ(raw);
       setSt(stEl,'ok','✅ 分析完了');
+
 
       // 範囲テキストを組み立て
       const rangeFrom = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
@@ -1582,7 +1523,7 @@ ${libCtx}`
       try {
         const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
         hist.unshift({
-          name: file.name,
+          name: name,
           grade: r.grade||'',
           range: rangeStr,
           pages: '',
@@ -1642,6 +1583,9 @@ ${libCtx}`
         ${qtHtml}
         ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題文法・語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
 
+      // 結果をlocalStorageに保存（タブを離れても復元できるように）
+      try { localStorage.setItem('nhscope_test_result', rsEl.innerHTML); } catch {}
+
       renderTestHistory();
     } catch(e) { setSt(stEl,'err','❌ '+e.message); }
   }
@@ -1659,17 +1603,28 @@ ${libCtx}`
             <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">履歴を削除</button>
           </div>
           <div class="tbl-wrap"><table>
-            <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>ページ</th><th>主な問題形式</th><th>日付</th><th></th></tr></thead>
-            <tbody>${hist.map((h,idx)=>`
-              <tr>
-                <td style="font-size:12px">${esc(h.name||'')}</td>
-                <td>${esc(h.grade||'')}</td>
-                <td style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</td>
-                <td style="font-size:12px">${esc(h.pages||'')}</td>
-                <td style="font-size:12px">${(h.question_types||[]).slice(0,3).map(q=>esc(q.type)).join('・')}</td>
+            <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
+            <tbody>${hist.map((h,idx)=>{
+              const qtSummary = (h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・');
+              const qtDetail = (h.question_types||[]).length
+                ? `<div id="qt-d-${idx}" style="display:none;margin-top:6px;font-size:11px;border-top:1px solid #eee;padding-top:4px">
+                    ${(h.question_types||[]).map(qt=>`<div style="padding:2px 0">
+                      <b>${esc(qt.section||'')} ${esc(qt.type||'')}</b> ${qt.count||''}問
+                      ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:10px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問</div>`).join('')}
+                    </div>`).join('')}
+                   </div>
+                   <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
+                     onclick="var d=document.getElementById('qt-d-${idx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
+                : '';
+              return `<tr>
+                <td style="font-size:11px">${esc(h.name||'')}</td>
+                <td style="font-size:12px">${esc(h.grade||'')}</td>
+                <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}</td>
+                <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
                 <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${idx})" style="padding:2px 8px;font-size:11px">✕</button></td>
-              </tr>`).join('')}
+              </tr>`;
+            }).join('')}
             </tbody>
           </table></div>
         </div>`;
@@ -1783,22 +1738,35 @@ ${libCtx}`
   }
 
   // ── テスト分析 手動開始 ──────────────────────────────────────────
-  let pendingTestFile = null;
+  let pendingTestImages = null;
 
-  function onTestFileSelected(file) {
+  async function onTestFileSelected(file) {
     if (!file) return;
-    pendingTestFile = file;
+    const stEl = document.getElementById('testStatus');
+    const btn  = document.getElementById('testStartBtn');
+    btn.disabled = true;
     document.getElementById('testTitle').textContent = file.name;
     document.getElementById('testSub').textContent = `${(file.size/1024).toFixed(0)}KB`;
-    document.getElementById('testStartBtn').disabled = false;
-    document.getElementById('testStatus').innerHTML = '';
     document.getElementById('testResult').innerHTML = '';
+    setSt(stEl,'load','PDFを読み込み中...');
+    try {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+      const imgs = [];
+      for (let i=1; i<=Math.min(pdf.numPages,8); i++) imgs.push(await toBase64(await pdf.getPage(i), 1.6));
+      pendingTestImages = { imgs, name: file.name };
+      setSt(stEl,'ok',`✅ ${imgs.length}ページ読み込み完了 — 分析開始を押してください`);
+      btn.disabled = false;
+    } catch(e) {
+      setSt(stEl,'err','❌ PDF読み込みエラー: '+e.message);
+    }
   }
 
-  function runTestAnalysis() {
-    if (!pendingTestFile) return;
+  async function runTestAnalysis() {
+    if (!pendingTestImages) return;
     document.getElementById('testStartBtn').disabled = true;
-    analyzeTest(pendingTestFile);
+    await analyzeTest(pendingTestImages);
+    document.getElementById('testStartBtn').disabled = false;
   }
 
   // ── テスト検索 ────────────────────────────────────────────────────
