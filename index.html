@@ -1527,46 +1527,39 @@
 
       parts.push({text:
 `【最重要指示】
-添付した${imgs.length}枚の画像はテストの全ページです。
-全ての大問を漏れなく確認し、出題された文法・語句・熟語を正確に特定してください。
+添付した${imgs.length}枚は定期テストの全ページです。
+1枚目から最後まで全ての大問を特定してください。大問が5個以下の結果は不完全です。
 絶対にサンプルや架空のデータを返さないこと。${libCtx}
 
-【Unit範囲の正確な割り出し（重要）】
-・テスト全体に登場する文法・語彙・熟語を全て洗い出す
-・それぞれがNEW HORIZONのどのUnitのどのセクションで初出するかを判断する
-・from_unit/from_lesson = 最も早く出てくる内容のUnit・セクション
-・to_unit/to_lesson = 最も遅く出てくる内容のUnit・セクション
-・from_lessonとto_lessonには以下のような正確な名称を記載すること：
-  Part 1 / Part 2 / Read and Think 1 / Read and Think 2 / Grammar for Communication 1 /
-  Real Life English / Stage Activity / Let's Read / Let's Talk /
-  A Mother's Lullaby / Over the Horizon などの特殊読解タイトルもそのまま記載
-・教科書データがある場合は単語・ページ対応から逆算して必ず活用する
+【NEW HORIZON 実在するセクション名（教科書に存在する）】
+A Mother's Lullaby（中3教科書の読み物）/ Over the Horizon / Let's Read / Let's Talk /
+Stage Activity / Grammar for Communication / Real Life English /
+Read and Think 1 / Read and Think 2 / Part 1 / Part 2
 
-【確認手順】
-1. 各ページの大問番号を全て特定する
-2. 各大問の問題形式・問題数・出題内容を正確に記録する
-3. リスニング・長文読解はsub_questionsに内訳を記載する
-4. 全大問をリストアップして漏れがないか確認してから出力する
+【Unit範囲の割り出し】
+・テストに登場する全文法・語彙がどのUnitのどのセクションで習うかを特定する
+・from_lesson/to_lessonには上記セクション名を正確に記載する
+・教科書データがある場合は単語とページ番号から逆算する
 
-【文法表記のルール】
-・SVOC構文（make + 目的語 + 形容詞/名詞）は「SVOC構文」と記載。「make O C」「使役動詞」は使わない
-・let + 人 + 動詞原形は「let使役」、help + 人 + 動詞原形は「help使役」と記載
-・関係代名詞はwho・which・thatのみ（「whatの関係代名詞」は中学では習わない）
-・grammar：その大問で出題された文法事項を列挙（例：「現在完了（経験）・SVOC構文・不定詞」）
-・phrases：その大問で出題された熟語・語句を列挙（例：「It is said that・take advantage of」）。なければ空文字
-・key_items：このテストのPDF画像から実際に読み取れた文法・語句のみ。他のテストの内容は含めない
-
-【その他ルール】
+【重要な制約】
+・grammar：問題として問われている文法構造のみ（現在完了進行形・SVOC構文・関係代名詞など）
+・phrases：問題として問われている熟語・イディオムのみ。本文に出てくるだけの語句は絶対に含めない
+・SVOC構文（make＋人＋形容詞）は「SVOC構文」と記載。「make O C」は使わない
+・関係代名詞はwho・which・thatのみ（whatの関係代名詞は中学で習わない）
+・key_items：このテストPDFのみの内容
 ・全大問を漏れなく列挙すること（最重要）
-・section：テストに書かれている大問番号をそのまま記載
-・type：日本語で記載（英語タイトルは翻訳する）
+・section：テストの大問番号をそのまま記載
+・type：日本語で記載（英語タイトルは翻訳）
 ・長文・対話文は「教科書内」「教科書外」を区別
 ・count：問題数を正確に数える`
       });
 
       const r = await callGeminiJSON(
         parts,
-        'テスト分析の専門家です。添付した全ページのテスト画像を詳細に読み取り、全大問を漏れなく分析してください。',
+        `テスト分析の専門家です。
+全てのページを精査し、全大問を漏れなく列挙してください。
+question_typesには必ず全大問を含めること。1〜2個では絶対に不十分です。
+phrases フィールド：問題として問われた熟語・イディオムのみ記載。本文テキストを全部列挙しない。`,
         {
           type: 'OBJECT',
           properties: {
@@ -1607,7 +1600,7 @@
             key_items: { type: 'ARRAY', items: { type: 'STRING' } }
           }
         },
-        12000
+        20000
       );
       setSt(stEl,'ok','✅ 分析完了');
 
@@ -1873,7 +1866,7 @@
       const buf = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({data:buf}).promise;
       const imgs = [];
-      for (let i=1; i<=Math.min(pdf.numPages,14); i++) imgs.push(await toBase64(await pdf.getPage(i), 1.6));
+      for (let i=1; i<=Math.min(pdf.numPages,14); i++) imgs.push(await toBase64(await pdf.getPage(i), 1.1));
       pendingTestImages = { imgs, name: file.name };
       setSt(stEl,'ok',`✅ ${imgs.length}ページ読み込み完了 — 分析開始を押してください`);
       btn.disabled = false;
