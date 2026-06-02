@@ -1383,62 +1383,114 @@
         `このテストPDFを分析して、以下のJSON形式のみで返してください。余分な説明は不要です。
 
 {
-  "grade": "中学1年",
+  "grade": "中学3年",
   "from_unit": "Unit 1",
   "from_lesson": "Scene 1",
-  "to_unit": "Unit 2",
+  "to_unit": "Unit 1",
   "to_lesson": "Read and Think 1",
-  "summary": "テストの特徴を200字以内で説明",
+  "cross_grade_notes": "中2Unit7（受動態）の内容も含まれています",
+  "summary": "Unit1の内容が主に出題されています。make 人 形容詞・現在完了（経験）・人 thatが中心。",
   "question_types": [
-    {"type": "単語の書き（日→英）", "count": 5},
-    {"type": "単語の意味（英→日）", "count": 3},
-    {"type": "語形変化", "count": 4, "details": "三単現・過去形など"},
-    {"type": "穴埋め（適語選択）", "count": 5},
-    {"type": "整序（並べ替え）", "count": 3},
-    {"type": "書き換え（同意文）", "count": 2},
-    {"type": "和文英訳", "count": 2},
-    {"type": "自由英作文", "count": 1},
-    {"type": "英文和訳", "count": 3},
-    {"type": "日本語で答える", "count": 2},
     {
-      "type": "長文読解（教科書内）",
-      "count": 1,
-      "sub_questions": [
-        {"type": "内容一致選択", "count": 3},
-        {"type": "英問英答", "count": 2},
-        {"type": "語形変化", "count": 1}
-      ]
-    },
-    {
-      "type": "長文読解（教科書外）",
-      "count": 1,
-      "sub_questions": [
-        {"type": "内容一致選択", "count": 4},
-        {"type": "日本語で答える", "count": 2}
-      ]
-    },
-    {
+      "section": "大問１・２",
       "type": "リスニング",
-      "count": 1,
+      "count": 13,
       "sub_questions": [
-        {"type": "図の選択問題", "count": 3},
-        {"type": "穴埋め問題", "count": 4},
-        {"type": "正誤問題", "count": 5}
+        {"type": "図の選択問題", "count": 10},
+        {"type": "正しい答えを選ぶ問題", "count": 3}
+      ]
+    },
+    {
+      "section": "大問３",
+      "type": "適語選択",
+      "count": 11,
+      "details": "語形変化を含む",
+      "sub_questions": []
+    },
+    {
+      "section": "大問５",
+      "type": "単語",
+      "count": 11,
+      "sub_questions": [
+        {"type": "日→英", "count": 8},
+        {"type": "英→日", "count": 3}
+      ]
+    },
+    {
+      "section": "大問６",
+      "type": "同意表現",
+      "count": 4,
+      "sub_questions": [
+        {"type": "make 人 形容詞", "count": 2},
+        {"type": "人 that", "count": 2}
+      ]
+    },
+    {
+      "section": "大問７",
+      "type": "整序（並べ替え）",
+      "count": 5,
+      "sub_questions": [
+        {"type": "現在完了（経験）", "count": 1},
+        {"type": "make 人 形容詞", "count": 1},
+        {"type": "人 that", "count": 3}
+      ]
+    },
+    {
+      "section": "大問８",
+      "type": "穴埋め",
+      "count": 6,
+      "sub_questions": [
+        {"type": "文法穴埋め", "count": 2, "details": "現在完了（経験）・make 人 形容詞"},
+        {"type": "熟語穴埋め", "count": 4, "details": "It is said that・In addition・be into・take advantage of"}
+      ]
+    },
+    {
+      "section": "大問９",
+      "type": "英作文",
+      "count": 5,
+      "sub_questions": [
+        {"type": "make 人 形容詞", "count": 2},
+        {"type": "現在完了（経験）", "count": 1},
+        {"type": "人 that", "count": 2}
+      ]
+    },
+    {
+      "section": "大問１０",
+      "type": "長文読解（教科書外）",
+      "count": 9,
+      "sub_questions": [
+        {"type": "内容一致", "count": 3},
+        {"type": "適文選択", "count": 2},
+        {"type": "適語選択", "count": 1},
+        {"type": "内容理解", "count": 3}
+      ]
+    },
+    {
+      "section": "大問１１",
+      "type": "対話文読解（教科書外）",
+      "count": 4,
+      "sub_questions": [
+        {"type": "適語選択（組み合わせ）", "count": 1},
+        {"type": "グラフ選択", "count": 1},
+        {"type": "内容一致", "count": 2}
       ]
     }
   ],
-  "key_items": ["am", "are", "is"]
+  "key_items": ["現在完了（経験）", "make 人 形容詞", "人 that", "It is said that"]
 }
 
 ルール：
-- grade：テストの内容から中学1〜3年を判断（必須）
-- from_unit/to_unit：テストの文法・語彙からUnit番号を必ず特定（例：「Unit 1」「Unit 3」）
-- from_lesson/to_lesson：Scene・Read and Thinkなど（わかる範囲で）
-- question_typesは実際にテストに存在するものだけ列挙（上記は例）
-- 長文読解は「教科書内」「教科書外」を必ず区別
-- 長文読解・リスニングにはsub_questionsを必ず含める
-- リスニングの種類は「図の選択問題」「穴埋め問題」「正誤問題」で分類
-- テストにリスニング・長文がない場合はsub_questionsなしでOK
+- grade：中学1〜3年（必須）
+- from_unit/to_unit：テストの文法・語彙からUnit番号を必ず特定。学年をまたぐ場合はfrom_unit側を当該学年の範囲に限定し、他学年の内容はcross_grade_notesに記載
+- from_lesson/to_lesson：Scene・Read and Think等（わかる範囲で）
+- cross_grade_notes：他学年の内容が含まれる場合のみ記載。なければ空文字
+- summary：「Unit○の内容が主に出題されています」程度のシンプルな説明。学校名・教科書名は含めない
+- section：大問番号（大問１、大問３・４など）を必ず記載
+- question_typesは実際に存在するものだけ列挙
+- 長文読解・対話文読解は「教科書内」「教科書外」を区別
+- リスニングは「図の選択問題」「穴埋め問題」「正誤問題」「正しい答えを選ぶ問題」で分類
+- sub_questionsは必ず具体的な文法事項・問題の内容を含める
+- 空のsub_questionsは省略可
 ${libCtx}`
       });
 
@@ -1482,24 +1534,35 @@ ${libCtx}`
         ? `<div class="card">
             <div class="card-title">📝 問題形式</div>
             <div class="tbl-wrap"><table>
-              <thead><tr><th>問題形式</th><th>問題数</th><th>詳細</th></tr></thead>
+              <thead><tr><th style="width:80px">大問</th><th>問題形式</th><th style="width:60px;text-align:right">問題数</th></tr></thead>
               <tbody>${(r.question_types||[]).map(qt=>{
                 const subHtml = (qt.sub_questions||[]).length
-                  ? (qt.sub_questions||[]).map(sq=>
-                      `<tr style="background:#f9fafb">
-                        <td style="padding-left:24px;font-size:12px;color:var(--muted)">└ ${esc(sq.type||'')}</td>
-                        <td style="font-size:12px;color:var(--navy)">${sq.count||'-'}問</td>
+                  ? (qt.sub_questions||[]).map(sq=>`
+                      <tr style="background:#f9fafb">
                         <td></td>
+                        <td style="padding-left:20px;font-size:12px;color:var(--muted)">
+                          └ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}
+                        </td>
+                        <td style="font-size:12px;color:var(--navy);text-align:right">${sq.count||'-'}問</td>
                       </tr>`).join('')
                   : '';
-                return `<tr>
-                  <td style="font-weight:600">${esc(qt.type||'')}</td>
-                  <td style="color:var(--navy);font-weight:700">${qt.count||'-'}問</td>
-                  <td style="font-size:12px;color:var(--muted)">${esc(qt.details||'')}</td>
+                return `<tr style="border-top:1px solid var(--border)">
+                  <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(qt.section||'')}</td>
+                  <td style="font-weight:600">
+                    ${esc(qt.type||'')}
+                    ${qt.details?`<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">※${esc(qt.details)}</span>`:''}
+                  </td>
+                  <td style="color:var(--navy);font-weight:700;text-align:right">${qt.count||'-'}問</td>
                 </tr>${subHtml}`;
               }).join('')}
               </tbody>
             </table></div>
+          </div>` : '';
+
+      const crossNote = r.cross_grade_notes
+        ? `<div class="card" style="border-left:3px solid var(--amber)">
+            <div class="card-title">📌 他学年範囲の出題</div>
+            <p style="font-size:13px;line-height:1.7">${esc(r.cross_grade_notes)}</p>
           </div>` : '';
 
       rsEl.innerHTML=`
@@ -1508,9 +1571,9 @@ ${libCtx}`
           <div class="result-range">${esc(rangeStr)}</div>
         </div>
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
+        ${crossNote}
         ${qtHtml}
-        ${(r.topics||[]).length?`<div class="card"><div class="card-title">📚 学習トピック</div>${(r.topics||[]).map(t=>`<div class="topic-row">${esc(t)}</div>`).join('')}</div>`:''}
-        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
+        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題文法・語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
 
       renderTestHistory();
     } catch(e) { setSt(stEl,'err','❌ '+e.message); }
