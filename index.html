@@ -1388,17 +1388,57 @@
   "from_lesson": "Scene 1",
   "to_unit": "Unit 2",
   "to_lesson": "Read and Think 1",
-  "summary": "Unit1〜Unit2の内容。be動詞・一般動詞が中心。",
-  "question_types": [{"type": "穴埋め", "count": 5}, {"type": "整序", "count": 3}],
+  "summary": "テストの特徴を200字以内で説明",
+  "question_types": [
+    {"type": "単語の書き（日→英）", "count": 5},
+    {"type": "単語の意味（英→日）", "count": 3},
+    {"type": "語形変化", "count": 4, "details": "三単現・過去形など"},
+    {"type": "穴埋め（適語選択）", "count": 5},
+    {"type": "整序（並べ替え）", "count": 3},
+    {"type": "書き換え（同意文）", "count": 2},
+    {"type": "和文英訳", "count": 2},
+    {"type": "自由英作文", "count": 1},
+    {"type": "英文和訳", "count": 3},
+    {"type": "日本語で答える", "count": 2},
+    {
+      "type": "長文読解（教科書内）",
+      "count": 1,
+      "sub_questions": [
+        {"type": "内容一致選択", "count": 3},
+        {"type": "英問英答", "count": 2},
+        {"type": "語形変化", "count": 1}
+      ]
+    },
+    {
+      "type": "長文読解（教科書外）",
+      "count": 1,
+      "sub_questions": [
+        {"type": "内容一致選択", "count": 4},
+        {"type": "日本語で答える", "count": 2}
+      ]
+    },
+    {
+      "type": "リスニング",
+      "count": 1,
+      "sub_questions": [
+        {"type": "図の選択問題", "count": 3},
+        {"type": "穴埋め問題", "count": 4},
+        {"type": "正誤問題", "count": 5}
+      ]
+    }
+  ],
   "key_items": ["am", "are", "is"]
 }
 
 ルール：
-- grade：テストの難易度・内容から中学1〜3年を判断
-- from_unit/to_unit：テストの文法・語彙からUnit番号を特定（必須）
-- from_lesson/to_lesson：SceneやRead and Think等（わかる範囲で）
-- question_types：実際にテストに存在する問題形式と問題数
-- summary：200字以内でテストの特徴を日本語で説明
+- grade：テストの内容から中学1〜3年を判断（必須）
+- from_unit/to_unit：テストの文法・語彙からUnit番号を必ず特定（例：「Unit 1」「Unit 3」）
+- from_lesson/to_lesson：Scene・Read and Thinkなど（わかる範囲で）
+- question_typesは実際にテストに存在するものだけ列挙（上記は例）
+- 長文読解は「教科書内」「教科書外」を必ず区別
+- 長文読解・リスニングにはsub_questionsを必ず含める
+- リスニングの種類は「図の選択問題」「穴埋め問題」「正誤問題」で分類
+- テストにリスニング・長文がない場合はsub_questionsなしでOK
 ${libCtx}`
       });
 
@@ -1442,12 +1482,22 @@ ${libCtx}`
         ? `<div class="card">
             <div class="card-title">📝 問題形式</div>
             <div class="tbl-wrap"><table>
-              <thead><tr><th>問題形式</th><th>問題数</th></tr></thead>
-              <tbody>${(r.question_types||[]).map(qt=>`
-                <tr>
-                  <td style="font-weight:500">${esc(qt.type||'')}</td>
+              <thead><tr><th>問題形式</th><th>問題数</th><th>詳細</th></tr></thead>
+              <tbody>${(r.question_types||[]).map(qt=>{
+                const subHtml = (qt.sub_questions||[]).length
+                  ? (qt.sub_questions||[]).map(sq=>
+                      `<tr style="background:#f9fafb">
+                        <td style="padding-left:24px;font-size:12px;color:var(--muted)">└ ${esc(sq.type||'')}</td>
+                        <td style="font-size:12px;color:var(--navy)">${sq.count||'-'}問</td>
+                        <td></td>
+                      </tr>`).join('')
+                  : '';
+                return `<tr>
+                  <td style="font-weight:600">${esc(qt.type||'')}</td>
                   <td style="color:var(--navy);font-weight:700">${qt.count||'-'}問</td>
-                </tr>`).join('')}
+                  <td style="font-size:12px;color:var(--muted)">${esc(qt.details||'')}</td>
+                </tr>${subHtml}`;
+              }).join('')}
               </tbody>
             </table></div>
           </div>` : '';
@@ -1574,9 +1624,16 @@ ${libCtx}`
     // そのページを含む項目を集める
     const hit = items.filter(it => it.page === pg);
     if (hit.length) {
-      const units = [...new Set(hit.map(i=>i.unit).filter(Boolean))];
-      res.innerHTML = units.length
-        ? `<span style="color:var(--green)">✓</span> ${units.join(' / ')}`
+      // unit + lesson の組み合わせを重複排除して表示
+      const seen = new Set();
+      const sections = hit
+        .map(i => {
+          const label = [i.unit, i.lesson].filter(Boolean).join(' ');
+          return label || null;
+        })
+        .filter(l => l && !seen.has(l) && seen.add(l));
+      res.innerHTML = sections.length
+        ? `<span style="color:var(--green)">✓</span> ${sections.join('　／　')}`
         : `<span style="color:var(--muted);font-weight:400">Unit情報なし（${hit.length}件）</span>`;
       return;
     }
@@ -1586,9 +1643,10 @@ ${libCtx}`
     if (sorted.length) {
       const near = sorted[0];
       const diff = Math.abs(near.page - pg);
+      const nearLabel = [near.unit, near.lesson].filter(Boolean).join(' ');
       res.innerHTML = diff <= 3
-        ? `<span style="color:var(--amber)">〜</span> ${near.unit||'不明'} <span style="font-size:12px;color:var(--muted);font-weight:400">（p.${near.page}の項目より推定）</span>`
-        : `<span style="color:var(--muted);font-weight:400">該当なし（最近傍: p.${near.page} / ${near.unit||'不明'}）</span>`;
+        ? `<span style="color:var(--amber)">〜</span> ${nearLabel||'不明'} <span style="font-size:12px;color:var(--muted);font-weight:400">（p.${near.page}の項目より推定）</span>`
+        : `<span style="color:var(--muted);font-weight:400">該当なし（最近傍: p.${near.page} / ${nearLabel||'不明'}）</span>`;
     } else {
       res.textContent = '該当なし';
     }
