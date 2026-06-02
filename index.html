@@ -1548,7 +1548,8 @@
 - 全大問を漏れなく列挙すること（最重要）
 - section：テストに書かれている大問番号をそのまま記載
 - type：日本語で記載（英語タイトルは翻訳する）
-- grammar_points：その大問で出題された文法・語句・熟語を必ず具体的に列挙（例：「現在完了（経験）・make O C・It is said that」）
+- grammar：その大問で出題された文法事項を列挙（例：「現在完了（経験）・make O C・不定詞」）
+- phrases：その大問で出題された熟語・語句を列挙（例：「It is said that・take advantage of・be into」）。熟語がなければ空文字
 - 長文・対話文は「教科書内」「教科書外」を区別
 - リスニングはsub_questionsで種類を分類する
 - count：問題数を正確に数える`
@@ -1572,20 +1573,22 @@
               items: {
                 type: 'OBJECT',
                 properties: {
-                  section:        { type: 'STRING' },
-                  type:           { type: 'STRING' },
-                  count:          { type: 'INTEGER' },
-                  details:        { type: 'STRING' },
-                  grammar_points: { type: 'STRING' },
+                  section:  { type: 'STRING' },
+                  type:     { type: 'STRING' },
+                  count:    { type: 'INTEGER' },
+                  details:  { type: 'STRING' },
+                  grammar:  { type: 'STRING' },
+                  phrases:  { type: 'STRING' },
                   sub_questions: {
                     type: 'ARRAY',
                     items: {
                       type: 'OBJECT',
                       properties: {
-                        type:           { type: 'STRING' },
-                        count:          { type: 'INTEGER' },
-                        details:        { type: 'STRING' },
-                        grammar_points: { type: 'STRING' }
+                        type:    { type: 'STRING' },
+                        count:   { type: 'INTEGER' },
+                        details: { type: 'STRING' },
+                        grammar: { type: 'STRING' },
+                        phrases: { type: 'STRING' }
                       }
                     }
                   }
@@ -1648,7 +1651,8 @@
                         <td></td>
                         <td style="padding-left:20px;font-size:12px;color:var(--muted)">
                           <div>└ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}</div>
-                          ${sq.grammar_points?`<div style="padding-left:8px;font-size:11px;color:var(--navy)">📌 ${esc(sq.grammar_points)}</div>`:''}
+                          ${sq.grammar?`<div style="padding-left:8px;font-size:11px;color:var(--navy)">📐 文法：${esc(sq.grammar)}</div>`:''}
+                          ${sq.phrases?`<div style="padding-left:8px;font-size:11px;color:#7c3aed">🔗 熟語：${esc(sq.phrases)}</div>`:''}
                         </td>
                         <td style="font-size:12px;color:var(--navy);text-align:right">${sq.count||'-'}問</td>
                       </tr>`).join('')
@@ -1657,7 +1661,8 @@
                   <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(qt.section||'')}</td>
                   <td>
                     <div style="font-weight:600">${esc(qt.type||'')}${qt.details?`<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">※${esc(qt.details)}</span>`:''}</div>
-                    ${qt.grammar_points?`<div style="font-size:11px;color:var(--navy);margin-top:2px">📌 ${esc(qt.grammar_points)}</div>`:''}
+                    ${qt.grammar?`<div style="font-size:11px;color:var(--navy);margin-top:2px">📐 文法：${esc(qt.grammar)}</div>`:''}
+                    ${qt.phrases?`<div style="font-size:11px;color:#7c3aed;margin-top:1px">🔗 熟語：${esc(qt.phrases)}</div>`:''}
                   </td>
                   <td style="color:var(--navy);font-weight:700;text-align:right">${qt.count||'-'}問</td>
                 </tr>${subHtml}`;
