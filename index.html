@@ -1004,20 +1004,38 @@
     return { items: [] };
   }
 
+  // 途中切れJSONを補修（未閉じの括弧・ブラケットを閉じる）
+  function repairJSON(s) {
+    let t = s.replace(/,\s*$/, '').replace(/,\s*([\]}])/g, '$1');
+    let inStr = false, escape = false;
+    const stack = [];
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (escape) { escape = false; continue; }
+      if (c === '\\' && inStr) { escape = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === '{') stack.push('}');
+      else if (c === '[') stack.push(']');
+      else if ((c === '}' || c === ']') && stack.length && stack[stack.length-1] === c) stack.pop();
+    }
+    if (inStr) t += '"';
+    t += stack.reverse().join('');
+    return t;
+  }
+
   // 汎用JSONパーサー（テスト分析など items以外の構造に使用）
   function parseAnyJ(raw) {
     if (!raw) return {};
-    // コードブロック・改行を除去
     let clean = raw.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
-    // 直接パース
+    // 1. 正常パース
     try { return JSON.parse(clean); } catch {}
-    // 最初の { から最後の } を抽出してパース
+    // 2. 途中切れを補修してパース
+    try { return JSON.parse(repairJSON(clean)); } catch {}
+    // 3. {から始まる部分を抽出して補修パース
     try {
       const start = clean.indexOf('{');
-      const end   = clean.lastIndexOf('}');
-      if (start !== -1 && end !== -1 && end > start) {
-        return JSON.parse(clean.substring(start, end + 1));
-      }
+      if (start !== -1) return JSON.parse(repairJSON(clean.substring(start)));
     } catch {}
     return {};
   }
