@@ -24,6 +24,9 @@
     #hBadge { font-size:12px; color:rgba(255,255,255,.4); }
     #hBadge.on { color:var(--amber); }
 
+    /* タブ内学年セレクター */
+    .tab-book-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0 14px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+    .tab-book-bar label { font-size:12px; color:var(--muted); font-weight:600; white-space:nowrap; }
     /* TABS */
     .tabs {
       background:var(--navy); display:flex; padding:0 24px;
@@ -239,17 +242,6 @@
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
-<div class="book-bar">
-  <label>教科書：</label>
-  <select class="book-select" id="bookSel" onchange="switchBook(this.value)">
-    <option value="default_c1">NEW HORIZON 中1</option>
-    <option value="default_c2">NEW HORIZON 中2</option>
-    <option value="default_c3">NEW HORIZON 中3</option>
-  </select>
-  <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
-  <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
-</div>
-
 <!-- API KEY BANNER -->
 <div id="keyBanner" style="background:#FFF8E1;border-bottom:1px solid #FDE68A;padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <span style="font-size:13px;font-weight:600;color:#92400E">🔑 APIキー設定</span>
@@ -275,6 +267,16 @@
 
   <!-- ══ TAB 1: 教科書データ ══════════════════════════════════════ -->
   <div id="tab-setup" class="tab-content active">
+    <div class="tab-book-bar">
+      <label>教科書：</label>
+      <select class="book-select" id="bookSel" onchange="switchBook(this.value)">
+        <option value="default_c1">NEW HORIZON 中1</option>
+        <option value="default_c2">NEW HORIZON 中2</option>
+        <option value="default_c3">NEW HORIZON 中3</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
+      <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
+    </div>
     <div class="card">
       <div class="card-title">📖 教科書PDF（スキャン画像PDF対応）</div>
       <div class="upload-zone" id="tbZone">
@@ -364,6 +366,10 @@
 
   <!-- ══ TAB 2: データ編集 ════════════════════════════════════════ -->
   <div id="tab-edit" class="tab-content">
+    <div class="tab-book-bar">
+      <label>教科書：</label>
+      <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
+    </div>
     <div id="editWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
     <div class="card">
       <div class="card-title">
@@ -377,6 +383,11 @@
 
   <!-- ══ TAB 3: テスト分析 ════════════════════════════════════════ -->
   <div id="tab-test" class="tab-content">
+    <div class="tab-book-bar">
+      <label>教科書：</label>
+      <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
+      <span style="font-size:12px;color:var(--muted)">（テスト範囲の特定に使用）</span>
+    </div>
     <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
     <div class="card">
       <div class="card-title">📄 テストPDF（スキャン画像PDF対応）</div>
@@ -395,12 +406,11 @@
 
   <!-- ══ TAB 4: 検索 ═══════════════════════════════════════════════ -->
   <div id="tab-search" class="tab-content">
-    <div id="searchWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
-
-    <!-- 学年フィルター -->
-    <div class="pills" id="gradePills" style="margin-bottom:12px">
-      <div class="pill active" onclick="setGradeFilter(null,this)">全学年</div>
+    <div class="tab-book-bar">
+      <label>教科書：</label>
+      <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
     </div>
+    <div id="searchWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
 
     <!-- ページ番号 → Unit 逆引き -->
     <div class="card" style="margin-bottom:14px">
@@ -653,11 +663,15 @@
 
   function renderBookSel() {
     // 描画のみ。library操作はしない。呼び出し元がlibraryを保証すること。
-    const sel = document.getElementById('bookSel');
-    if (!sel) return;
-    sel.innerHTML = library
+    const optHtml = library
       .map(b => `<option value="${esc(b.id)}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`)
       .join('');
+    // メインセレクター
+    const sel = document.getElementById('bookSel');
+    if (sel) sel.innerHTML = optHtml;
+    // 同期セレクター（各タブ内）
+    document.querySelectorAll('.book-sel-sync').forEach(s => { s.innerHTML = optHtml; });
+    // 削除ボタン
     const delBtn = document.getElementById('delBookBtn');
     if (delBtn) delBtn.disabled = library.length <= 1;
   }
@@ -1458,8 +1472,8 @@
             <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">履歴を削除</button>
           </div>
           <div class="tbl-wrap"><table>
-            <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>ページ</th><th>主な問題形式</th><th>日付</th></tr></thead>
-            <tbody>${hist.map(h=>`
+            <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>ページ</th><th>主な問題形式</th><th>日付</th><th></th></tr></thead>
+            <tbody>${hist.map((h,idx)=>`
               <tr>
                 <td style="font-size:12px">${esc(h.name||'')}</td>
                 <td>${esc(h.grade||'')}</td>
@@ -1467,6 +1481,7 @@
                 <td style="font-size:12px">${esc(h.pages||'')}</td>
                 <td style="font-size:12px">${(h.question_types||[]).slice(0,3).map(q=>esc(q.type)).join('・')}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
+                <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${idx})" style="padding:2px 8px;font-size:11px">✕</button></td>
               </tr>`).join('')}
             </tbody>
           </table></div>
@@ -1477,6 +1492,15 @@
   function clearTestHistory() {
     localStorage.removeItem(TEST_HIST_KEY);
     renderTestHistory();
+  }
+
+  function deleteTestHistoryItem(index) {
+    try {
+      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      hist.splice(index, 1);
+      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist));
+      renderTestHistory();
+    } catch {}
   }
 
   // ── SEARCH ─────────────────────────────────────────────────────────
@@ -1502,12 +1526,8 @@
   }
 
   function getSearchItems() {
-    if (searchGradeId) {
-      const book = library.find(b => b.id === searchGradeId);
-      return book?.items || [];
-    }
-    // 全学年：全bookのitemsをマージ
-    return library.flatMap(b => (b.items||[]).map(it => ({...it, _bookName: b.name})));
+    // 現在選択中の教科書のアイテムを返す
+    return getItems();
   }
 
   function doSearch() {
@@ -1522,13 +1542,11 @@
     });
     if (!filtered.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">「${esc(q)}」に一致する項目は見つかりません</div></div>`; return; }
     const hi=s=>s?esc(s).replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<mark>$1</mark>'):'-';
-    const showBook = searchGradeId === null && library.length > 1;
     res.innerHTML=`
       <p style="font-size:12px;color:var(--muted);margin-bottom:10px">${filtered.length}件見つかりました</p>
       <div class="tbl-wrap"><table>
-        <thead><tr>${showBook?'<th>教科書</th>':''}<th>Unit</th><th>ページ</th><th>内容</th><th>訳・説明</th></tr></thead>
+        <thead><tr><th>Unit</th><th>ページ</th><th>内容</th><th>訳・説明</th></tr></thead>
         <tbody>${filtered.map(it=>`<tr>
-          ${showBook?`<td style="font-size:11px;color:var(--muted)">${esc(it._bookName||'')}</td>`:''}
           <td style="font-size:12px;color:var(--muted)">${esc(it.unit||'-')}</td>
           <td style="font-weight:700;color:var(--blue)">p.${it.page||'-'}</td>
           <td style="font-weight:500">${hi(it.content)}</td>
