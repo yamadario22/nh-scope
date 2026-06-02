@@ -1528,44 +1528,30 @@
       parts.push({text:
 `【最重要指示】
 添付した${imgs.length}枚の画像はテストの全ページです。
-1ページ目から最終ページまで、全ての大問を빠짐없く(漏れなく)確認してください。
-問題形式が不完全な場合は不合格です。必ず全大問を列挙してください。
+全ての大問を漏れなく確認し、出題された文法・語句・熟語を正確に特定してください。
 絶対にサンプルや架空のデータを返さないこと。${libCtx}
 
-【確認手順】
-1. 各ページを順番に見て、大問番号（大問1、大問2、[A]、[B]など）を全て特定する
-2. 各大問の問題形式・問題数を正確に数える
-3. リスニング・長文読解は必ずsub_questionsに内訳を記載する
-4. 最後に全大問をリストアップして漏れがないか確認してから出力する
+【Unit範囲の割り出し方（重要）】
+- テスト全体に出てくる全ての文法構造・語彙・熟語を列挙する
+- それぞれがNEW HORIZONのどのUnitの学習内容に対応するか判断する
+- 最も早いUnitの内容がfrom_unit、最も遅いUnitの内容がto_unit
+- 「Unit1から出題されている」ではなく「このテストで出題されている文法はUnit○で習う」という逆引きの発想で特定する
+- 教科書データがある場合は照合して正確に判定する
 
-【出力形式】以下のJSONのみ返してください（マークダウン・コードブロック不要）：
-{
-  "grade": "中学○年",
-  "from_unit": "Unit X",
-  "from_lesson": "Part 1",
-  "to_unit": "Unit X",
-  "to_lesson": "Read and Think 2",
-  "cross_grade_notes": "他学年の内容がある場合のみ記載",
-  "summary": "Unit○〜Unit○の〜が主に出題（100字以内）",
-  "question_types": [
-    {
-      "section": "大問X",
-      "type": "問題形式名（日本語）",
-      "count": 問題数,
-      "details": "問題の具体的な内容・補足",
-      "sub_questions": [{"type": "サブ形式名", "count": 問題数, "details": "補足"}]
-    }
-  ],
-  "key_items": ["主な文法・語句"]
-}
+【確認手順】
+1. 各ページを順番に見て、大問番号を全て特定する
+2. 各大問の問題形式・問題数・出題された文法/語句/熟語を正確に記録する
+3. リスニング・長文読解は必ずsub_questionsに内訳を記載する
+4. 全大問をリストアップして漏れがないか確認してから出力する
 
 【ルール】
 - 全大問を漏れなく列挙すること（最重要）
 - section：テストに書かれている大問番号をそのまま記載
-- type：日本語で記載。英語のタイトルがあっても日本語に翻訳して記載
-- 長文読解・対話文読解は「教科書内」「教科書外」を区別
-- リスニングは図の選択問題／穴埋め問題／正誤問題／選択問題等に分類してsub_questionsに記載
-- count：その大問の総問題数（正確に数える）`
+- type：日本語で記載（英語タイトルは翻訳する）
+- grammar_points：その大問で出題された文法・語句・熟語を必ず具体的に列挙（例：「現在完了（経験）・make O C・It is said that」）
+- 長文・対話文は「教科書内」「教科書外」を区別
+- リスニングはsub_questionsで種類を分類する
+- count：問題数を正確に数える`
       });
 
       const r = await callGeminiJSON(
@@ -1586,18 +1572,20 @@
               items: {
                 type: 'OBJECT',
                 properties: {
-                  section: { type: 'STRING' },
-                  type:    { type: 'STRING' },
-                  count:   { type: 'INTEGER' },
-                  details: { type: 'STRING' },
+                  section:        { type: 'STRING' },
+                  type:           { type: 'STRING' },
+                  count:          { type: 'INTEGER' },
+                  details:        { type: 'STRING' },
+                  grammar_points: { type: 'STRING' },
                   sub_questions: {
                     type: 'ARRAY',
                     items: {
                       type: 'OBJECT',
                       properties: {
-                        type:    { type: 'STRING' },
-                        count:   { type: 'INTEGER' },
-                        details: { type: 'STRING' }
+                        type:           { type: 'STRING' },
+                        count:          { type: 'INTEGER' },
+                        details:        { type: 'STRING' },
+                        grammar_points: { type: 'STRING' }
                       }
                     }
                   }
@@ -1659,16 +1647,17 @@
                       <tr style="background:#f9fafb">
                         <td></td>
                         <td style="padding-left:20px;font-size:12px;color:var(--muted)">
-                          └ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}
+                          <div>└ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}</div>
+                          ${sq.grammar_points?`<div style="padding-left:8px;font-size:11px;color:var(--navy)">📌 ${esc(sq.grammar_points)}</div>`:''}
                         </td>
                         <td style="font-size:12px;color:var(--navy);text-align:right">${sq.count||'-'}問</td>
                       </tr>`).join('')
                   : '';
                 return `<tr style="border-top:1px solid var(--border)">
                   <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(qt.section||'')}</td>
-                  <td style="font-weight:600">
-                    ${esc(qt.type||'')}
-                    ${qt.details?`<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">※${esc(qt.details)}</span>`:''}
+                  <td>
+                    <div style="font-weight:600">${esc(qt.type||'')}${qt.details?`<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">※${esc(qt.details)}</span>`:''}</div>
+                    ${qt.grammar_points?`<div style="font-size:11px;color:var(--navy);margin-top:2px">📌 ${esc(qt.grammar_points)}</div>`:''}
                   </td>
                   <td style="color:var(--navy);font-weight:700;text-align:right">${qt.count||'-'}問</td>
                 </tr>${subHtml}`;
