@@ -924,12 +924,18 @@
 
   // 汎用JSONパーサー（テスト分析など items以外の構造に使用）
   function parseAnyJ(raw) {
-    const clean = raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+    if (!raw) return {};
+    // コードブロック・改行を除去
+    let clean = raw.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
+    // 直接パース
     try { return JSON.parse(clean); } catch {}
-    // JSON部分を抽出して試みる
+    // 最初の { から最後の } を抽出してパース
     try {
-      const m = clean.match(/\{[\s\S]*\}/);
-      if (m) return JSON.parse(m[0]);
+      const start = clean.indexOf('{');
+      const end   = clean.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        return JSON.parse(clean.substring(start, end + 1));
+      }
     } catch {}
     return {};
   }
@@ -1374,47 +1380,49 @@
           + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} [${i.type}] ${i.content}`).join('\n').substring(0,5000)
         : '';
       parts.push({text:
-        `このテストPDFを分析してください。${libCtx}
+        `このテストPDFを分析して、以下のJSON形式のみで返してください。余分な説明は不要です。
 
-必ずJSONのみで返してください（マークダウン不要）：
 {
   "grade": "中学1年",
   "from_unit": "Unit 1",
   "from_lesson": "Scene 1",
   "to_unit": "Unit 2",
   "to_lesson": "Read and Think 1",
-  "from_page": 10,
-  "to_page": 45,
-  "summary": "テストの概要",
-  "question_types": [
-    {"type": "穴埋め", "count": 5},
-    {"type": "整序", "count": 3},
-    {"type": "英作文", "count": 2},
-    {"type": "長文読解", "count": 1},
-    {"type": "単語の書き", "count": 8},
-    {"type": "語形変化", "count": 4}
-  ],
-  "topics": ["Unit 1 Scene 1: be動詞"],
+  "summary": "Unit1〜Unit2の内容。be動詞・一般動詞が中心。",
+  "question_types": [{"type": "穴埋め", "count": 5}, {"type": "整序", "count": 3}],
   "key_items": ["am", "are", "is"]
 }
 
-重要：
-• unitは「Unit 1」〜「Unit 10」形式のみ
-• lessonはSceneやRead and Think・Grammar for Communication・Real Life Englishなどの名前を正確に記載
-• from_lessonとto_lessonで範囲の始まりと終わりを正確に表す
-• 問題形式は実際にテストに存在するものだけ
-• 教科書データがある場合はそれを参考にUnit・ページ範囲を特定`
+ルール：
+- grade：テストの難易度・内容から中学1〜3年を判断
+- from_unit/to_unit：テストの文法・語彙からUnit番号を特定（必須）
+- from_lesson/to_lesson：SceneやRead and Think等（わかる範囲で）
+- question_types：実際にテストに存在する問題形式と問題数
+- summary：200字以内でテストの特徴を日本語で説明
+${libCtx}`
       });
 
-      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。',6000);
+      const raw=await callGemini(parts,'あなたはNEW HORIZONテスト分析の専門家です。JSONのみ返してください。マークダウン不要。',6000);
       const r=parseAnyJ(raw);
       setSt(stEl,'ok','✅ 分析完了');
 
       // 範囲テキストを組み立て
       const rangeFrom = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
       const rangeTo   = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
-      const rangeStr  = rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`;
-      const pageStr   = `pp.${r.from_page||'?'}〜${r.to_page||'?'}`;
+      const rangeStr  = rangeFrom && rangeTo
+        ? (rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`)
+        : (rangeFrom || rangeTo || '範囲不明');
+
+      // 結果が空の場合は生レスポンスを表示（デバッグ用）
+      if (!r.grade && !r.from_unit) {
+        rsEl.innerHTML = `
+          <div class="card" style="border-color:#FCA5A5">
+            <div class="card-title" style="color:#DC2626">⚠️ 解析結果を取得できませんでした</div>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:8px">Geminiからの生の返答：</p>
+            <pre style="font-size:11px;background:#f8f8f8;padding:10px;border-radius:6px;overflow:auto;max-height:200px;white-space:pre-wrap">${esc(raw.substring(0,1000))}</pre>
+          </div>`;
+        return;
+      }
 
       // 履歴に保存
       try {
@@ -1423,7 +1431,7 @@
           name: file.name,
           grade: r.grade||'',
           range: rangeStr,
-          pages: pageStr,
+          pages: '',
           question_types: r.question_types||[],
           date: new Date().toLocaleDateString('ja-JP')
         });
@@ -1448,7 +1456,6 @@
         <div class="result-hero">
           <div class="result-grade">${esc(r.grade||'')}</div>
           <div class="result-range">${esc(rangeStr)}</div>
-          <div class="result-pages">教科書 ${esc(pageStr)}</div>
         </div>
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
         ${qtHtml}
