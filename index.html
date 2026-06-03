@@ -2246,40 +2246,68 @@ phrases フィールド：問題として問われた熟語・イディオムの
     document.getElementById('batchStartBtn').disabled = true;
     const stEl = document.getElementById('batchStatus');
 
-    for (let gi = 0; gi < names.length; gi++) {
-      if (testAnalysisStopped) { setSt(stEl,'err','⏹ 停止しました'); break; }
-      const name = names[gi];
-      const pdfs = groups[name];
-      setSt(stEl, 'load', `${gi+1}/${names.length}：「${name}」（${pdfs.length}校）を分析中...`);
-      try {
-        // 最大12ファイルを均等サンプリング・1ページのみ・scale 0.7
-        const MAX_SAMPLE = 12;
-        const step = Math.max(1, Math.floor(pdfs.length / MAX_SAMPLE));
-        const sampled = [];
-        for (let i=0; i<pdfs.length && sampled.length<MAX_SAMPLE; i+=step) sampled.push(pdfs[i]);
-
-        const allImgs = [];
-        for (const pdf of sampled) {
-          const buf = await pdf.arrayBuffer();
-          const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
-          // 1ページ目のみ（問題ページが最初にあるため）
-          allImgs.push(await toBase64(await pdfDoc.getPage(1), 0.7));
-          // ページ数が多ければ中間ページも1枚追加
-          if (pdfDoc.numPages >= 4) {
-            allImgs.push(await toBase64(await pdfDoc.getPage(Math.ceil(pdfDoc.numPages/2)), 0.7));
-          }
-        }
-        await analyzeTestBatch({ imgs: allImgs, name, schoolCount: pdfs.length });
-      } catch(e) {
-        setSt(stEl, 'err', `❌ 「${name}」エラー：${e.message}`);
-      }
-      // 速度①: エラー時のみ短い待機（通常時は待機なし）
-      if (gi < names.length-1 && !testAnalysisStopped) await sleep(500);
+    // 分析済みをスキップ
+    const existing = new Set(
+      JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]').map(h => h.name)
+    );
+    const pending = names.filter(n => !existing.has(n));
+    const skipped = names.length - pending.length;
+    if (skipped > 0) setSt(stEl,'load',`${skipped}件はスキップ（分析済み）。残り${pending.length}件を分析します...`);
+    if (!pending.length) {
+      setSt(stEl,'ok','✅ 全件分析済みです');
+      document.getElementById('batchStartBtn').disabled = false;
+      return;
     }
 
-    if (!testAnalysisStopped) setSt(stEl, 'ok', `✅ ${names.length}件の一括分析が完了しました`);
+    let useParallel = 2;
+    let errorStreak = 0;
+    let done = 0;
+
+    for (let gi = 0; gi < pending.length; gi += useParallel) {
+      if (testAnalysisStopped) { setSt(stEl,'err','⏹ 停止しました'); break; }
+      const batch = pending.slice(gi, gi + useParallel);
+      setSt(stEl,'load',`${done + skipped}/${names.length}完了 — 「${batch[0]}」${batch.length>1?' / 「'+batch[1]+'"':''} 分析中...`);
+
+      const results = await Promise.allSettled(
+        batch.map(name => processBatchGroup(name, groups[name]))
+      );
+
+      results.forEach((res, i) => {
+        if (res.status === 'fulfilled') {
+          done++;
+          errorStreak = 0;
+        } else {
+          const msg = (res.reason?.message || '');
+          if (msg.startsWith('__QUOTA__') || msg.includes('429')) {
+            errorStreak++;
+            if (errorStreak >= 2 && useParallel > 1) {
+              useParallel = 1;
+              setSt(stEl,'load','レート制限のため1並列に切り替えました');
+            }
+          }
+        }
+      });
+
+      if (gi + useParallel < pending.length && !testAnalysisStopped) await sleep(300);
+    }
+
+    if (!testAnalysisStopped) setSt(stEl,'ok',`✅ 完了（分析：${done}件、スキップ：${skipped}件）`);
     document.getElementById('batchStartBtn').disabled = false;
     renderTestHistory();
+  }
+
+  async function processBatchGroup(name, pdfs) {
+    const MAX_SAMPLE = 5;
+    const step = Math.max(1, Math.floor(pdfs.length / MAX_SAMPLE));
+    const sampled = [];
+    for (let i=0; i<pdfs.length && sampled.length<MAX_SAMPLE; i+=step) sampled.push(pdfs[i]);
+    const allImgs = [];
+    for (const pdf of sampled) {
+      const buf = await pdf.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
+      allImgs.push(await toBase64(await pdfDoc.getPage(1), 0.6));
+    }
+    await analyzeTestBatch({ imgs: allImgs, name, schoolCount: pdfs.length });
   }
 
   async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
