@@ -394,8 +394,22 @@
       <div class="row" style="margin-top:10px;gap:8px">
         <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('testFile').click()">📂 PDFを選択（複数可）</button>
         <button type="button" class="btn btn-primary" id="testStartBtn" style="flex:1" disabled onclick="runTestAnalysis()">🔍 分析開始</button>
+        <button type="button" class="btn btn-danger btn-sm" id="testStopBtn" style="display:none" onclick="stopTestAnalysis()">⏹ 停止</button>
       </div>
       <div id="testStatus"></div>
+    </div>
+
+    <div class="divider"><span>または — 複数校のPDFを一括分析</span></div>
+    <div class="card">
+      <div class="card-title">🏫 バッチ分析（複数校一括）</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">複数の中学校のテストPDFを一度に選択。同じファイル名のPDFをまとめて1テストとして分析します。範囲・サマリーは省略されます。</p>
+      <input type="file" id="batchFiles" accept=".pdf" multiple style="display:none" onchange="onBatchFilesSelected(this.files)">
+      <div class="row" style="gap:8px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('batchFiles').click()">📂 複数PDFを一括選択</button>
+        <button type="button" class="btn btn-primary" id="batchStartBtn" disabled onclick="runBatchAnalysis()">🏫 一括分析開始</button>
+      </div>
+      <div id="batchFileList" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+      <div id="batchStatus" style="margin-top:8px"></div>
     </div>
     <div id="testResult"></div>
     <div id="testHistory"></div>
@@ -501,6 +515,16 @@
             <option>穴埋め問題</option><option>正誤問題</option><option>正しい答えを選ぶ問題</option>
           </optgroup>
         </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">文法で絞り込み（任意）</label>
+          <input type="text" id="tsGrammar" class="form-in" placeholder="例：現在完了、SVOC構文" style="font-size:12px">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">熟語で絞り込み（任意）</label>
+          <input type="text" id="tsPhrases" class="form-in" placeholder="例：It is said that" style="font-size:12px">
+        </div>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="runTestSearch()">🔍 検索する</button>
     </div>
@@ -1642,20 +1666,21 @@
 1枚目から最後まで全ての大問を特定してください。大問が5個以下の結果は不完全です。
 絶対にサンプルや架空のデータを返さないこと。${libCtx}
 
-【NEW HORIZON 実在するセクション名（教科書に存在する）】
-A Mother's Lullaby（中3教科書の読み物）/ Over the Horizon / Let's Read / Let's Talk /
-Stage Activity / Grammar for Communication / Real Life English /
-Read and Think 1 / Read and Think 2 / Part 1 / Part 2
+【NEW HORIZON Unit内のセクション順序（重要）】
+各Unitの順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication 1 → Grammar for Communication 2 → Real Life English → Stage Activity
+特殊セクション（教科書に実在）: A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk / World Tour
 
-【Unit範囲の割り出し】
-・テストに登場する全文法・語彙がどのUnitのどのセクションで習うかを特定する
-・from_lesson/to_lessonには上記セクション名を正確に記載する
-・教科書データがある場合は単語とページ番号から逆算する
+【テスト範囲の終端（to_unit/to_lesson）の正確な判定手順】
+1. テスト内の長文・リスニング本文のタイトルを確認する（最も信頼できる指標）
+2. 本文タイトルが確認できたらそれをto_lessonに使う（例：A Mother's Lullaby → to_lesson: "A Mother's Lullaby"）
+3. 整序・英作文で使われる文法構造の中で最もUnit番号が大きいものを参照する
+4. 文法は前学年の復習が含まれるため、文法だけで終端を決めない
+5. 教科書データがある場合は必ず活用する
 
 【重要な制約】
+・tested_vocab：テスト問題文に登場する英単語・熟語を配列で列挙（ライブラリ照合に使用）
 ・grammar：問題として問われている文法構造のみ（現在完了進行形・SVOC構文・関係代名詞など）
-・phrases：問題として問われている熟語・イディオムのみ。本文に出てくるだけの語句は絶対に含めない
-  ただし、already・yet・just・ever・never・since・for などの文法に絡む副詞・前置詞は除外。純粋な熟語・イディオムのみ
+・phrases：問題として問われている熟語・イディオムのみ。already/yet/just/ever/never/since/forは除外。本文テキストを全部列挙しない
 ・SVOC構文（make＋人＋形容詞）は「SVOC構文」と記載。「make O C」は使わない
 ・関係代名詞はwho・which・thatのみ（whatの関係代名詞は中学で習わない）
 ・key_items：このテストPDFのみの内容
@@ -1709,13 +1734,16 @@ phrases フィールド：問題として問われた熟語・イディオムの
                 }
               }
             },
-            key_items: { type: 'ARRAY', items: { type: 'STRING' } }
+            key_items:    { type: 'ARRAY', items: { type: 'STRING' } },
+            tested_vocab: { type: 'ARRAY', items: { type: 'STRING' } }
           }
         },
         20000
       );
       setSt(stEl,'ok','✅ 分析完了');
       if (r.grade) r.grade = normalizeGrade(r.grade);
+      // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
+      refineRangeFromLibrary(r);
 
 
       // 範囲テキストを組み立て
@@ -1870,8 +1898,11 @@ phrases フィールド：問題として問われた熟語・イディオムの
     } catch {}
   }
 
-  function clearTestHistory() {
+  async function clearTestHistory() {
+    const ok = await showConfirm('テスト分析履歴を全て削除しますか？この操作は取り消せません。', '全て削除する');
+    if (!ok) return;
     localStorage.removeItem(TEST_HIST_KEY);
+    try { if(db) await db.collection(FB_CONFIG_COL).doc('test_history').delete(); } catch {}
     renderTestHistory();
   }
 
@@ -1976,6 +2007,38 @@ phrases フィールド：問題として問われた熟語・イディオムの
     }
   }
 
+  // ── ライブラリ照合による範囲補正 ────────────────────────────────────
+  function refineRangeFromLibrary(r) {
+    const items = getItems();
+    if (!items.length) return; // ライブラリデータがなければスキップ
+
+    // 照合用語彙を収集（tested_vocab + key_items）
+    const vocab = new Set();
+    (r.tested_vocab || []).forEach(v => { const t=v.trim().toLowerCase(); if(t.length>=2) vocab.add(t); });
+    (r.key_items    || []).forEach(v => {
+      v.split(/[・、,\s]+/).forEach(w => { const t=w.trim().toLowerCase(); if(t.length>=3) vocab.add(t); });
+    });
+    if (!vocab.size) return;
+
+    // ライブラリから照合してページ範囲を取得
+    let maxPage=0, maxItem=null;
+    items.forEach(item => {
+      const c = (item.content||'').toLowerCase();
+      for (const v of vocab) {
+        if (c === v || c.includes(v)) {
+          if (item.page > maxPage) { maxPage=item.page; maxItem=item; }
+          break;
+        }
+      }
+    });
+
+    // 終端を補正（ライブラリの照合結果がGeminiの推定より信頼性が高い）
+    if (maxItem && maxPage > 0) {
+      r.to_unit   = maxItem.unit   || r.to_unit;
+      r.to_lesson = maxItem.lesson || r.to_lesson;
+    }
+  }
+
   // ── テスト分析 手動開始 ──────────────────────────────────────────
   let pendingTestImages = null;
 
@@ -2031,9 +2094,97 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
   async function runTestAnalysis() {
     if (!pendingTestImages) return;
+    testAnalysisStopped = false;
     document.getElementById('testStartBtn').disabled = true;
+    const stopBtn = document.getElementById('testStopBtn');
+    if (stopBtn) stopBtn.style.display = 'inline-flex';
     await analyzeTest(pendingTestImages);
+    if (stopBtn) stopBtn.style.display = 'none';
     document.getElementById('testStartBtn').disabled = false;
+  }
+
+  // ── テスト分析 停止 ───────────────────────────────────────────────
+  let testAnalysisStopped = false;
+
+  function stopTestAnalysis() {
+    testAnalysisStopped = true;
+    const btn = document.getElementById('testStopBtn');
+    if (btn) btn.style.display = 'none';
+    const startBtn = document.getElementById('testStartBtn');
+    if (startBtn) startBtn.disabled = false;
+    setSt(document.getElementById('testStatus'), 'err', '⏹ 分析を停止しました');
+  }
+
+  // ── バッチ分析（複数校一括） ──────────────────────────────────────
+  let batchFileGroups = {};
+
+  function onBatchFilesSelected(files) {
+    if (!files || !files.length) return;
+    const groups = {};
+    Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf')).forEach(f => {
+      if (!groups[f.name]) groups[f.name] = [];
+      groups[f.name].push(f);
+    });
+    batchFileGroups = groups;
+    const names = Object.keys(groups);
+    const listEl = document.getElementById('batchFileList');
+    listEl.innerHTML = names.map(n => `📋 ${esc(n)}（${groups[n].length}校）`).join('<br>') ||
+      '<span style="color:var(--red)">PDFファイルが選択されていません</span>';
+    document.getElementById('batchStartBtn').disabled = !names.length;
+  }
+
+  async function runBatchAnalysis() {
+    const groups = batchFileGroups;
+    const names = Object.keys(groups);
+    if (!names.length) return;
+    if (!getApiKey()) { alert('APIキーを設定してください'); return; }
+    document.getElementById('batchStartBtn').disabled = true;
+    const stEl = document.getElementById('batchStatus');
+
+    for (let gi = 0; gi < names.length; gi++) {
+      const name = names[gi];
+      const pdfs = groups[name];
+      setSt(stEl, 'load', `${gi+1}/${names.length}：「${name}」（${pdfs.length}校）を分析中...`);
+      try {
+        const allImgs = [];
+        const maxPerFile = Math.max(3, Math.floor(40 / pdfs.length));
+        for (const pdf of pdfs) {
+          const buf = await pdf.arrayBuffer();
+          const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
+          for (let p=1; p<=Math.min(pdfDoc.numPages, maxPerFile); p++) {
+            allImgs.push(await toBase64(await pdfDoc.getPage(p), 1.0));
+          }
+        }
+        await analyzeTestBatch({ imgs: allImgs, name });
+      } catch(e) {
+        setSt(stEl, 'err', `❌ 「${name}」エラー：${e.message}`);
+      }
+      if (gi < names.length-1) await sleep(3000);
+    }
+
+    setSt(stEl, 'ok', `✅ ${names.length}件の一括分析が完了しました`);
+    document.getElementById('batchStartBtn').disabled = false;
+    renderTestHistory();
+  }
+
+  async function analyzeTestBatch({ imgs, name }) {
+    const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
+    parts.push({ text:`このテストの全大問を分析してください。範囲・サマリーは不要。question_typesに全大問を必ず記載。5個以下は不完全。大問番号・問題形式・問題数・文法・熟語を正確に。` });
+    const r = await callGeminiJSON(parts, 'テスト分析の専門家。全大問を漏れなく分析。', {
+      type:'OBJECT', properties:{ question_types:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
+        section:{ type:'STRING'}, type:{ type:'STRING'}, count:{ type:'INTEGER'},
+        details:{ type:'STRING'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'},
+        sub_questions:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
+          type:{ type:'STRING'}, count:{ type:'INTEGER'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'}
+        }}}
+      }}}}
+    }, 16000);
+    try {
+      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      hist.unshift({ name, grade:'', range:'（バッチ分析）', question_types: r.question_types||[], date: new Date().toLocaleDateString('ja-JP') });
+      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,50)));
+      saveTestHistoryToFirestore();
+    } catch {}
   }
 
   // ── 学年正規化 ────────────────────────────────────────────────────
@@ -2062,12 +2213,14 @@ phrases フィールド：問題として問われた熟語・イディオムの
   }
 
   function runTestSearch() {
-    const fromUnit = document.getElementById('tsFromUnit').value;
-    const fromPart = document.getElementById('tsFromPart').value;
-    const toUnit   = document.getElementById('tsToUnit').value;
-    const toPart   = document.getElementById('tsToPart').value;
-    const qtype    = document.getElementById('tsQType').value;
-    const rsEl     = document.getElementById('tsResults');
+    const fromUnit  = (document.getElementById('tsFromUnit')  ||{}).value  || '';
+    const fromPart  = (document.getElementById('tsFromPart')  ||{}).value  || '';
+    const toUnit    = (document.getElementById('tsToUnit')    ||{}).value  || '';
+    const toPart    = (document.getElementById('tsToPart')    ||{}).value  || '';
+    const qtype     = (document.getElementById('tsQType')     ||{}).value  || '';
+    const tsGrammar = ((document.getElementById('tsGrammar')  ||{}).value  || '').trim().toLowerCase();
+    const tsPhrases = ((document.getElementById('tsPhrases')  ||{}).value  || '').trim().toLowerCase();
+    const rsEl      = document.getElementById('tsResults');
 
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
@@ -2080,16 +2233,30 @@ phrases フィールド：問題として問われた熟語・イディオムの
     const fromN = fromUnit ? unitNum(fromUnit) : 0;
     const toN   = toUnit   ? unitNum(toUnit)   : 99;
 
+    // 文法・熟語が含まれるかチェック
+    function containsGrammarOrPhrase(qtypes, gQuery, pQuery) {
+      for (const qt of (qtypes||[])) {
+        if (gQuery && (qt.grammar||'').toLowerCase().includes(gQuery)) return true;
+        if (pQuery && (qt.phrases||'').toLowerCase().includes(pQuery)) return true;
+        for (const sq of (qt.sub_questions||[])) {
+          if (gQuery && (sq.grammar||'').toLowerCase().includes(gQuery)) return true;
+          if (pQuery && (sq.phrases||'').toLowerCase().includes(pQuery)) return true;
+        }
+      }
+      return false;
+    }
+
     const results = hist.filter(h => {
       const rangeStr = h.range || '';
       const hFrom = unitNum(rangeStr.split('〜')[0]);
       const hTo   = unitNum(rangeStr.split('〜').pop());
-      const unitOk = !fromUnit && !toUnit ? true : hFrom <= toN && hTo >= fromN;
-      // Part指定がある場合は範囲文字列に含まれるか確認
+      const unitOk  = !fromUnit && !toUnit ? true : hFrom <= toN && hTo >= fromN;
       const fromPartOk = !fromPart || rangeStr.includes(fromPart) || !fromUnit;
       const toPartOk   = !toPart   || rangeStr.includes(toPart)   || !toUnit;
-      const qtOk = !qtype || containsQType(h.question_types, qtype);
-      return unitOk && fromPartOk && toPartOk && qtOk;
+      const qtOk      = !qtype   || containsQType(h.question_types, qtype);
+      const gOk       = !tsGrammar || containsGrammarOrPhrase(h.question_types, tsGrammar, '');
+      const pOk       = !tsPhrases || containsGrammarOrPhrase(h.question_types, '', tsPhrases);
+      return unitOk && fromPartOk && toPartOk && qtOk && gOk && pOk;
     });
 
     if (!results.length) {
@@ -2099,17 +2266,35 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
     rsEl.innerHTML = `
       <p style="font-size:12px;color:var(--muted);margin:12px 0 8px">${results.length}件見つかりました</p>
-      <div class="tbl-wrap"><table>
-        <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>主な問題形式</th><th>日付</th></tr></thead>
-        <tbody>${results.map(h=>`<tr>
-          <td style="font-size:12px">${esc(h.name||'')}</td>
-          <td>${esc(h.grade||'')}</td>
-          <td style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</td>
-          <td style="font-size:12px">${(h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・')}</td>
-          <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
-        </tr>`).join('')}
-        </tbody>
-      </table></div>`;
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${results.map((h,idx) => {
+          const qtRows = (h.question_types||[]).map(qt => `
+            <div style="padding:4px 0;border-bottom:1px solid #f0f0f0;font-size:11px">
+              <span style="font-weight:600">${esc(qt.section||'')} ${esc(qt.type||'')}</span>
+              <span style="color:var(--navy);margin-left:6px">${qt.count||''}問</span>
+              ${qt.grammar?`<div style="color:var(--navy);padding-left:8px">📐 ${esc(qt.grammar)}</div>`:''}
+              ${qt.phrases?`<div style="color:#dc2626;font-weight:600;padding-left:8px">🔗 ${esc(qt.phrases)}</div>`:''}
+              ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:14px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問${sq.grammar?' 📐'+esc(sq.grammar):''}${sq.phrases?' 🔗'+esc(sq.phrases):''}</div>`).join('')}
+            </div>`).join('');
+          return `
+          <div class="card" style="padding:16px">
+            <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <div style="font-size:12px;color:var(--muted);margin-bottom:2px">${esc(h.date||'')}</div>
+                <div style="font-weight:700;font-size:13px;margin-bottom:4px">${esc(h.name||'')}</div>
+                <div style="font-size:12px">
+                  ${h.grade?`<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;margin-right:6px">${esc(h.grade)}</span>`:''}
+                  <span style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</span>
+                </div>
+              </div>
+              <div style="flex:1.5;min-width:260px">
+                <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">問題形式</div>
+                ${qtRows || '<div style="font-size:11px;color:var(--muted)">データなし</div>'}
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
   }
 
   // ── 問題形式トグル ────────────────────────────────────────────────
