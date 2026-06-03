@@ -834,9 +834,14 @@
   let FIREBASE_READY = false;
   const FB_LIBRARY_COL  = 'nhscope_library';
   const FB_CONFIG_COL   = 'nhscope_config';
+  const FB_TESTS_COL    = 'nhscope_test_entries'; // テスト1件=1ドキュメント方式
 
   function initFirebase() {
     try {
+      if (typeof firebase === 'undefined') {
+        console.warn('Firebase SDK未読み込み');
+        return;
+      }
       const cfg = {
         apiKey:            'AIzaSyCORNq_VwtZLT9mHS9ctdI2gt0og_mrCYQ',
         authDomain:        'nhscope-caa02.firebaseapp.com',
@@ -845,10 +850,25 @@
         messagingSenderId: '867615109850',
         appId:             '1:867615109850:web:5abc7f98315a0277f22be3'
       };
-      firebase.initializeApp(cfg);
-      db = firebase.firestore();
+      // 多重初期化を防ぐ
+      const app = firebase.apps.length
+        ? firebase.apps[0]
+        : firebase.initializeApp(cfg);
+      db = firebase.firestore(app);
       FIREBASE_READY = true;
     } catch(e) { console.warn('Firebase init failed:', e); }
+  }
+
+  // Firebase SDKの読み込み完了を待ってから初期化（最大5秒リトライ）
+  async function initFirebaseWhenReady() {
+    for (let i=0; i<10; i++) {
+      if (typeof firebase !== 'undefined') {
+        initFirebase();
+        return;
+      }
+      await sleep(500);
+    }
+    console.warn('Firebase SDK 5秒以内に読み込まれませんでした');
   }
 
   function setSyncBadge(state) {
@@ -895,11 +915,48 @@
         try { localStorage.setItem(BACKUP_KEY, JSON.stringify({library, activeId})); } catch {}
       }
 
-      // テスト履歴を読み込み
-      const histDoc = await db.collection(FB_CONFIG_COL).doc('test_history').get();
-      if (histDoc.exists && histDoc.data().tests?.length) {
-        localStorage.setItem(TEST_HIST_KEY, JSON.stringify(histDoc.data().tests));
-        try { renderTestHistory(); } catch {}
+      // テスト履歴を読み込み（セッション内キャッシュで読み取りコスト削減）
+      if (!sessionStorage.getItem('nhscope_tests_loaded')) {
+        // 旧形式（1文書）からマイグレーション
+        const oldHistDoc = await db.collection(FB_CONFIG_COL).doc('test_history').get();
+        if (oldHistDoc.exists && oldHistDoc.data().tests?.length) {
+          const oldTests = oldHistDoc.data().tests;
+          setSyncBadge('syncing');
+          for (const t of oldTests) {
+            if (!t.firestoreId) {
+              const ref = await db.collection(FB_TESTS_COL).add({
+                ...t, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+              });
+              t.firestoreId = ref.id;
+            }
+          }
+          await db.collection(FB_CONFIG_COL).doc('test_history').delete();
+          localStorage.setItem(TEST_HIST_KEY, JSON.stringify(oldTests));
+          try { renderTestHistory(); } catch {}
+        }
+
+        // 個別文書コレクションから読み込み（インデックスなしのフォールバック付き）
+        let firestoreTests = [];
+        try {
+          const snap = await db.collection(FB_TESTS_COL)
+            .orderBy('createdAt', 'desc').limit(2000).get();
+          snap.forEach(doc => firestoreTests.push({ ...doc.data(), firestoreId: doc.id }));
+        } catch {
+          // インデックスなし時のフォールバック（ソートなし）
+          const snap2 = await db.collection(FB_TESTS_COL).limit(2000).get();
+          snap2.forEach(doc => firestoreTests.push({ ...doc.data(), firestoreId: doc.id }));
+        }
+        if (firestoreTests.length) {
+          // localStorageと統合（firestoreIdで重複除去）
+          const localTests = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+          const localIds = new Set(localTests.map(t=>t.firestoreId).filter(Boolean));
+          const merged = [...localTests];
+          firestoreTests.forEach(t => { if (!localIds.has(t.firestoreId)) merged.push(t); });
+          merged.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+          localStorage.setItem(TEST_HIST_KEY, JSON.stringify(merged.slice(0,2000)));
+          try { renderTestHistory(); } catch {}
+        }
+        sessionStorage.setItem('nhscope_tests_loaded', '1');
       }
 
       setSyncBadge('ok');
@@ -925,14 +982,28 @@
     } catch(e) { console.warn('Firestore library save error:', e); setSyncBadge('error'); }
   }
 
-  // テスト履歴をFirestoreに保存
-  async function saveTestHistoryToFirestore() {
-    if (!FIREBASE_READY || !db) return;
+  // テスト1件をFirestoreに保存（IDを返す）
+  async function saveTestEntryToFirestore(entry) {
+    if (!FIREBASE_READY || !db) return null;
     try {
-      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
-      await db.collection(FB_CONFIG_COL).doc('test_history').set({ tests: hist });
-    } catch(e) { console.warn('Firestore test history save error:', e); }
+      const ref = await db.collection(FB_TESTS_COL).add({
+        ...entry,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return ref.id;
+    } catch(e) { console.warn('Firestore test save error:', e); return null; }
   }
+
+  // テスト1件をFirestoreから削除
+  async function deleteTestFromFirestore(firestoreId) {
+    if (!FIREBASE_READY || !db || !firestoreId) return;
+    try {
+      await db.collection(FB_TESTS_COL).doc(firestoreId).delete();
+    } catch(e) { console.warn('Firestore test delete error:', e); }
+  }
+
+  // 後方互換（旧コードから呼ばれる場合のダミー）
+  function saveTestHistoryToFirestore() {}
 
   // 設定をFirestoreに保存（APIキー・モデルを全員で共有）
   async function saveSettingsToFirestore() {
@@ -1766,17 +1837,20 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
       // 履歴に保存
       try {
-        const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
-        hist.unshift({
+        const entry = {
           name: name,
           grade: r.grade||'',
           range: rangeStr,
-          pages: '',
           question_types: r.question_types||[],
-          date: new Date().toLocaleDateString('ja-JP')
-        });
-        localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,50)));
-        saveTestHistoryToFirestore();
+          date: new Date().toLocaleDateString('ja-JP'),
+          year: new Date().getFullYear().toString()
+        };
+        const firestoreId = await saveTestEntryToFirestore(entry);
+        if (firestoreId) entry.firestoreId = firestoreId;
+        const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+        hist.unshift(entry);
+        localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,2000)));
+        renderTestHistory();
       } catch {}
 
       // 大問を番号順にソート
@@ -1852,63 +1926,93 @@ phrases フィールド：問題として問われた熟語・イディオムの
     } catch(e) { setSt(stEl,'err','❌ '+e.message); }
   }
 
+  let selectedHistYear = 'all';
+
+  function setHistYear(year) {
+    selectedHistYear = year;
+    renderTestHistory();
+  }
+
   function renderTestHistory() {
     const el = document.getElementById('testHistory');
     if (!el) return;
     try {
-      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
-      if (!hist.length) { el.innerHTML=''; return; }
+      const allHist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      if (!allHist.length) { el.innerHTML=''; return; }
+
+      // 年を抽出してタブ生成
+      const years = [...new Set(allHist.map(h => h.year || (h.date||'').split('/')[0] || '不明'))].sort().reverse();
+      const yearTabs = `<div class="pills" style="margin-bottom:12px">
+        <div class="pill ${selectedHistYear==='all'?'active':''}" onclick="setHistYear('all')">全て（${allHist.length}件）</div>
+        ${years.map(y=>`<div class="pill ${selectedHistYear===y?'active':''}" onclick="setHistYear('${y}')">${y}年（${allHist.filter(h=>(h.year||(h.date||'').split('/')[0]||'不明')===y).length}件）</div>`).join('')}
+      </div>`;
+
+      // 年フィルター
+      const hist = selectedHistYear === 'all'
+        ? allHist
+        : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
+
       el.innerHTML = `
         <div class="card" style="margin-top:16px">
-          <div class="card-title">
-            <span>📋 テスト分析履歴</span>
-            <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">履歴を削除</button>
-          </div>
+          <div class="card-title"><span>📋 テスト分析履歴</span></div>
+          ${yearTabs}
           <div class="tbl-wrap"><table>
             <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
             <tbody>${hist.map((h,idx)=>{
+              const realIdx = allHist.indexOf(h);
               const qtSummary = (h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・');
               const qtDetail = (h.question_types||[]).length
-                ? `<div id="qt-d-${idx}" style="display:none;margin-top:6px;font-size:11px;border-top:1px solid #eee;padding-top:4px">
+                ? `<div id="qt-d-${realIdx}" style="display:none;margin-top:6px;font-size:11px;border-top:1px solid #eee;padding-top:4px">
                     ${(h.question_types||[]).map(qt=>`<div style="padding:3px 0;border-bottom:1px solid #f0f0f0">
                       <div><b>${esc(qt.section||'')} ${esc(qt.type||'')}</b> ${qt.count||''}問${qt.details?` <span style="color:#94a3b8">（${esc(qt.details)}）</span>`:''}</div>
-                      ${qt.grammar?`<div style="padding-left:8px;color:var(--navy)">【文法】${esc(qt.grammar)}</div>`:''}
-                      ${qt.phrases?`<div style="padding-left:8px;color:#dc2626;font-weight:600">【熟語】${esc(qt.phrases)}</div>`:''}
+                      ${qt.grammar?`<div style="padding-left:8px;color:var(--navy)">📐 ${esc(qt.grammar)}</div>`:''}
+                      ${qt.phrases?`<div style="padding-left:8px;color:#dc2626;font-weight:600">🔗 ${esc(qt.phrases)}</div>`:''}
                       ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:12px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問
-                        ${sq.grammar?`<span style="color:var(--navy)"> 【文法】${esc(sq.grammar)}</span>`:''}
-                        ${sq.phrases?`<span style="color:#dc2626;font-weight:600"> 【熟語】${esc(sq.phrases)}</span>`:''}
+                        ${sq.grammar?`<span style="color:var(--navy)"> 📐${esc(sq.grammar)}</span>`:''}
+                        ${sq.phrases?`<span style="color:#dc2626;font-weight:600"> 🔗${esc(sq.phrases)}</span>`:''}
                       </div>`).join('')}
                     </div>`).join('')}
                    </div>
                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
-                     onclick="var d=document.getElementById('qt-d-${idx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
+                     onclick="var d=document.getElementById('qt-d-${realIdx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
                 : '';
               return `<tr>
-                <td style="font-size:11px">${esc(h.name||'')}</td>
+                <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
                 <td style="font-size:12px">${esc(h.grade||'')}</td>
                 <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
-                <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${idx})" style="padding:2px 8px;font-size:11px">✕</button></td>
+                <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${realIdx})" style="padding:2px 8px;font-size:11px">✕</button></td>
               </tr>`;
             }).join('')}
             </tbody>
           </table></div>
         </div>`;
-    } catch {}
+    } catch(e) { console.error('renderTestHistory error:', e); }
   }
 
   async function clearTestHistory() {
     const ok = await showConfirm('テスト分析履歴を全て削除しますか？この操作は取り消せません。', '全て削除する');
     if (!ok) return;
+    // localStorage削除
+    const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
     localStorage.removeItem(TEST_HIST_KEY);
-    try { if(db) await db.collection(FB_CONFIG_COL).doc('test_history').delete(); } catch {}
+    // Firestoreの個別文書を削除
+    if (FIREBASE_READY && db) {
+      for (const entry of hist) {
+        if (entry.firestoreId) {
+          try { await db.collection(FB_TESTS_COL).doc(entry.firestoreId).delete(); } catch {}
+        }
+      }
+    }
     renderTestHistory();
   }
 
   function deleteTestHistoryItem(index) {
     try {
       const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      const entry = hist[index];
+      if (entry?.firestoreId) deleteTestFromFirestore(entry.firestoreId);
       hist.splice(index, 1);
       localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist));
       renderTestHistory();
@@ -2138,39 +2242,58 @@ phrases フィールド：問題として問われた熟語・イディオムの
     const names = Object.keys(groups);
     if (!names.length) return;
     if (!getApiKey()) { alert('APIキーを設定してください'); return; }
+    testAnalysisStopped = false;
     document.getElementById('batchStartBtn').disabled = true;
     const stEl = document.getElementById('batchStatus');
 
     for (let gi = 0; gi < names.length; gi++) {
+      if (testAnalysisStopped) { setSt(stEl,'err','⏹ 停止しました'); break; }
       const name = names[gi];
       const pdfs = groups[name];
       setSt(stEl, 'load', `${gi+1}/${names.length}：「${name}」（${pdfs.length}校）を分析中...`);
       try {
+        // 最大12ファイルを均等サンプリング・1ページのみ・scale 0.7
+        const MAX_SAMPLE = 12;
+        const step = Math.max(1, Math.floor(pdfs.length / MAX_SAMPLE));
+        const sampled = [];
+        for (let i=0; i<pdfs.length && sampled.length<MAX_SAMPLE; i+=step) sampled.push(pdfs[i]);
+
         const allImgs = [];
-        const maxPerFile = Math.max(3, Math.floor(40 / pdfs.length));
-        for (const pdf of pdfs) {
+        for (const pdf of sampled) {
           const buf = await pdf.arrayBuffer();
           const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
-          for (let p=1; p<=Math.min(pdfDoc.numPages, maxPerFile); p++) {
-            allImgs.push(await toBase64(await pdfDoc.getPage(p), 1.0));
+          // 1ページ目のみ（問題ページが最初にあるため）
+          allImgs.push(await toBase64(await pdfDoc.getPage(1), 0.7));
+          // ページ数が多ければ中間ページも1枚追加
+          if (pdfDoc.numPages >= 4) {
+            allImgs.push(await toBase64(await pdfDoc.getPage(Math.ceil(pdfDoc.numPages/2)), 0.7));
           }
         }
-        await analyzeTestBatch({ imgs: allImgs, name });
+        await analyzeTestBatch({ imgs: allImgs, name, schoolCount: pdfs.length });
       } catch(e) {
         setSt(stEl, 'err', `❌ 「${name}」エラー：${e.message}`);
       }
-      if (gi < names.length-1) await sleep(3000);
+      // 速度①: エラー時のみ短い待機（通常時は待機なし）
+      if (gi < names.length-1 && !testAnalysisStopped) await sleep(500);
     }
 
-    setSt(stEl, 'ok', `✅ ${names.length}件の一括分析が完了しました`);
+    if (!testAnalysisStopped) setSt(stEl, 'ok', `✅ ${names.length}件の一括分析が完了しました`);
     document.getElementById('batchStartBtn').disabled = false;
     renderTestHistory();
   }
 
-  async function analyzeTestBatch({ imgs, name }) {
+  async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
     const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
-    parts.push({ text:`このテストの全大問を分析してください。範囲・サマリーは不要。question_typesに全大問を必ず記載。5個以下は不完全。大問番号・問題形式・問題数・文法・熟語を正確に。` });
-    const r = await callGeminiJSON(parts, 'テスト分析の専門家。全大問を漏れなく分析。', {
+    parts.push({ text:
+`このテストの全大問を分析してください。
+【絶対ルール】
+・typeフィールド：「リスニング」「単語」「整序」など10文字以内の日本語
+・detailsフィールド：最大30文字。同じ文を繰り返さない
+・grammar・phrasesは英語混在可（例：現在完了（経験）、make O C、It is said that）
+・全大問を漏れなく列挙（5個以下は不完全）
+・grammar・phrases：問われている文法・熟語のみ（本文テキスト列挙禁止）` });
+
+    const r = await callGeminiJSON(parts, '問題形式名は日本語。grammar/phrasesは英語混在可。テスト分析専門家。', {
       type:'OBJECT', properties:{ question_types:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
         section:{ type:'STRING'}, type:{ type:'STRING'}, count:{ type:'INTEGER'},
         details:{ type:'STRING'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'},
@@ -2178,13 +2301,47 @@ phrases フィールド：問題として問われた熟語・イディオムの
           type:{ type:'STRING'}, count:{ type:'INTEGER'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'}
         }}}
       }}}}
-    }, 16000);
+    }, 10000);
+
+    // 出力サニタイズ：details の繰り返し・英語・長文を除去
+    (r.question_types||[]).forEach(qt => {
+      qt.details = sanitizeBatchField(qt.details);
+      qt.type    = sanitizeBatchField(qt.type, 15);
+      (qt.sub_questions||[]).forEach(sq => {
+        sq.details = sanitizeBatchField(sq.details);
+        sq.type    = sanitizeBatchField(sq.type, 15);
+      });
+    });
+
     try {
+      const entry = {
+        name, grade:'', range:'（バッチ分析）',
+        question_types: r.question_types||[],
+        date: new Date().toLocaleDateString('ja-JP'),
+        year: new Date().getFullYear().toString(),
+        schoolCount
+      };
+      const firestoreId = await saveTestEntryToFirestore(entry);
+      if (firestoreId) entry.firestoreId = firestoreId;
       const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
-      hist.unshift({ name, grade:'', range:'（バッチ分析）', question_types: r.question_types||[], date: new Date().toLocaleDateString('ja-JP') });
-      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,50)));
-      saveTestHistoryToFirestore();
+      hist.unshift(entry);
+      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,2000)));
     } catch {}
+  }
+
+  // バッチ分析の出力サニタイズ（繰り返し・長文を除去）
+  function sanitizeBatchField(str, maxLen=40) {
+    if (!str) return '';
+    // 繰り返しパターンを検出して除去
+    const s = str.trim();
+    if (s.length > maxLen * 2) {
+      // 繰り返しの場合は最初の意味ある部分だけ取る
+      const sentences = s.split(/[。\.]/);
+      const unique = [...new Set(sentences.filter(x=>x.trim()))];
+      const result = unique.slice(0,2).join('。');
+      return result.substring(0, maxLen);
+    }
+    return s.substring(0, maxLen);
   }
 
   // ── 学年正規化 ────────────────────────────────────────────────────
@@ -2626,9 +2783,10 @@ phrases フィールド：問題として問われた熟語・イディオムの
     }
 
     // 4. Firebase起動 → Firestoreからデータ読み込み
-    initFirebase();
-    syncFromFirestore().then(() => {
-      if (!getApiKey()) openSetupGuide();
+    initFirebaseWhenReady().then(() => {
+      syncFromFirestore().then(() => {
+        if (!getApiKey()) openSetupGuide();
+      });
     });
   })();
 </script>
