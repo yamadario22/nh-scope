@@ -2286,10 +2286,16 @@ phrases フィールド：問題として問われた熟語・イディオムの
                   ${h.grade?`<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;margin-right:6px">${esc(h.grade)}</span>`:''}
                   <span style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</span>
                 </div>
-              </div>
-              <div style="flex:1.5;min-width:260px">
-                <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">問題形式</div>
-                ${qtRows || '<div style="font-size:11px;color:var(--muted)">データなし</div>'}
+                ${(h.question_types||[]).length ? `
+                <div style="margin-top:10px">
+                  <button class="btn btn-secondary btn-sm" onclick="
+                    var d=document.getElementById('ts-qt-${idx}');
+                    var open=d.style.display!=='none';
+                    d.style.display=open?'none':'block';
+                    this.textContent=open?'問題形式を見る ▼':'問題形式を閉じる ▲';
+                  ">問題形式を見る ▼</button>
+                  <div id="ts-qt-${idx}" style="display:none;margin-top:8px">${qtRows}</div>
+                </div>` : ''}
               </div>
             </div>
           </div>`;
