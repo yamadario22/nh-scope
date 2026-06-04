@@ -2311,27 +2311,55 @@ phrases フィールド：問題として問われた熟語・イディオムの
   }
 
   async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
+    const libCtx = getItems().length
+      ? '\n【教科書データ（Unit・ページ特定の参考）】\n'
+        + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,3000)
+      : '';
+
     const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
     parts.push({ text:
-`このテストの全大問を分析してください。
+`このテストを分析してください。${libCtx}
+
+【Unit範囲の判定方法】
+・Unit内の順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication → Real Life English → Stage Activity
+・特殊セクション（教科書に実在）: A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
+・長文・リスニング本文のタイトルで終端を判定する（最も信頼性が高い）
+・文法だけで終端を決めない（前学年の復習が含まれる場合があるため）
+・教科書データがある場合は必ず活用する
+
 【絶対ルール】
-・typeフィールド：「リスニング」「単語」「整序」など10文字以内の日本語
-・detailsフィールド：最大30文字。同じ文を繰り返さない
-・grammar・phrasesは英語混在可（例：現在完了（経験）、make O C、It is said that）
+・grade：「中１」「中２」「中３」のいずれか
+・from_unit/to_unit：「Unit 1」〜「Unit 10」形式で必ず特定
+・from_lesson/to_lesson：上記セクション名を正確に記載
+・tested_vocab：テスト問題文に登場する英単語・熟語（ライブラリ照合用）
+・typeフィールド：「リスニング」「単語」「整序」など日本語
+・detailsフィールド：最大30文字。繰り返し禁止
+・grammar・phrasesは英語混在可。already/yet/just/ever/neverは除外
 ・全大問を漏れなく列挙（5個以下は不完全）
-・grammar・phrases：問われている文法・熟語のみ（本文テキスト列挙禁止）` });
+・phrases：問われた熟語のみ（本文テキスト列挙禁止）` });
 
-    const r = await callGeminiJSON(parts, '問題形式名は日本語。grammar/phrasesは英語混在可。テスト分析専門家。', {
-      type:'OBJECT', properties:{ question_types:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
-        section:{ type:'STRING'}, type:{ type:'STRING'}, count:{ type:'INTEGER'},
-        details:{ type:'STRING'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'},
-        sub_questions:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
-          type:{ type:'STRING'}, count:{ type:'INTEGER'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'}
+    const r = await callGeminiJSON(parts, '問題形式名は日本語。テスト分析専門家。', {
+      type:'OBJECT', properties:{
+        grade:         { type:'STRING' },
+        from_unit:     { type:'STRING' },
+        from_lesson:   { type:'STRING' },
+        to_unit:       { type:'STRING' },
+        to_lesson:     { type:'STRING' },
+        tested_vocab:  { type:'ARRAY', items:{ type:'STRING' } },
+        question_types:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
+          section:{ type:'STRING'}, type:{ type:'STRING'}, count:{ type:'INTEGER'},
+          details:{ type:'STRING'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'},
+          sub_questions:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
+            type:{ type:'STRING'}, count:{ type:'INTEGER'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'}
+          }}}
         }}}
-      }}}}
-    }, 10000);
+      }
+    }, 12000);
 
-    // 出力サニタイズ：details の繰り返し・英語・長文を除去
+    // ライブラリ照合で範囲終端を補正
+    refineRangeFromLibrary(r);
+
+    // 出力サニタイズ
     (r.question_types||[]).forEach(qt => {
       qt.details = sanitizeBatchField(qt.details);
       qt.type    = sanitizeBatchField(qt.type, 15);
@@ -2341,9 +2369,16 @@ phrases フィールド：問題として問われた熟語・イディオムの
       });
     });
 
+    const grade = normalizeGrade(r.grade||'');
+    const rangeFrom = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
+    const rangeTo   = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
+    const rangeStr  = rangeFrom && rangeTo
+      ? (rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`)
+      : '（範囲不明）';
+
     try {
       const entry = {
-        name, grade:'', range:'（バッチ分析）',
+        name, grade, range: rangeStr,
         question_types: r.question_types||[],
         date: new Date().toLocaleDateString('ja-JP'),
         year: new Date().getFullYear().toString(),
