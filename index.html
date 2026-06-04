@@ -232,6 +232,7 @@
   <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 単語・文法検索</div>
   <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
   <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
+  <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
@@ -263,9 +264,16 @@
     <div class="tab-book-bar">
       <label>教科書：</label>
       <select class="book-select" id="bookSel" onchange="switchBook(this.value)">
-        <option value="default_c1">NEW HORIZON 中1</option>
-        <option value="default_c2">NEW HORIZON 中2</option>
-        <option value="default_c3">NEW HORIZON 中3</option>
+        <optgroup label="NEW HORIZON">
+          <option value="default_c1">NEW HORIZON 中1</option>
+          <option value="default_c2">NEW HORIZON 中2</option>
+          <option value="default_c3">NEW HORIZON 中3</option>
+        </optgroup>
+        <optgroup label="NEW CROWN">
+          <option value="nc_c1">NEW CROWN 中1</option>
+          <option value="nc_c2">NEW CROWN 中2</option>
+          <option value="nc_c3">NEW CROWN 中3</option>
+        </optgroup>
       </select>
       <button class="btn btn-secondary btn-sm" onclick="openAddBookModal()">＋ 追加</button>
       <button class="btn btn-danger btn-sm" id="delBookBtn" onclick="deleteBook()">削除</button>
@@ -419,7 +427,18 @@
   <div id="tab-search" class="tab-content">
     <div class="tab-book-bar">
       <label>教科書：</label>
-      <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
+      <select class="book-select book-sel-sync" onchange="switchBook(this.value)">
+        <optgroup label="NEW HORIZON">
+          <option value="default_c1">NEW HORIZON 中1</option>
+          <option value="default_c2">NEW HORIZON 中2</option>
+          <option value="default_c3">NEW HORIZON 中3</option>
+        </optgroup>
+        <optgroup label="NEW CROWN">
+          <option value="nc_c1">NEW CROWN 中1</option>
+          <option value="nc_c2">NEW CROWN 中2</option>
+          <option value="nc_c3">NEW CROWN 中3</option>
+        </optgroup>
+      </select>
     </div>
     <div id="searchWarn" class="warn" style="display:none">⚠️ 先に「教科書データ」タブで読み込んでください。</div>
 
@@ -449,7 +468,21 @@
     </div>
   </div>
 
-  <!-- ══ TAB 5: テスト検索 ══════════════════════════════════════════ -->
+  <!-- ══ TAB 6: 教科書比較 ══════════════════════════════════════════ -->
+  <div id="tab-compare" class="tab-content">
+    <div class="main">
+      <div class="card">
+        <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px">両教科書の解析データを読み込んでから使用してください。</p>
+        <div class="pills" id="comparePills">
+          <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語比較</div>
+          <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語比較</div>
+          <div class="pill" onclick="setCompareMode('grammar',this)">③ 文法履修表</div>
+        </div>
+      </div>
+      <div id="compareResult"></div>
+    </div>
+  </div>
   <div id="tab-test-search" class="tab-content">
     <div class="card">
       <div class="card-title">🗂 テスト検索</div>
@@ -673,8 +706,21 @@
   const DEFAULT_BOOKS = [
     { id: 'default_c1', name: 'NEW HORIZON 中1', items: [] },
     { id: 'default_c2', name: 'NEW HORIZON 中2', items: [] },
-    { id: 'default_c3', name: 'NEW HORIZON 中3', items: [] }
+    { id: 'default_c3', name: 'NEW HORIZON 中3', items: [] },
+    { id: 'nc_c1',      name: 'NEW CROWN 中1',   items: [] },
+    { id: 'nc_c2',      name: 'NEW CROWN 中2',   items: [] },
+    { id: 'nc_c3',      name: 'NEW CROWN 中3',   items: [] }
   ];
+
+  // NH/NC判定ヘルパー
+  function isNHBook(id)  { return !id || id.startsWith('default_'); }
+  function isNCBook(id)  { return id && id.startsWith('nc_'); }
+  function getNHItems()  {
+    return library.filter(b=>isNHBook(b.id)).flatMap(b=>b.items||[]);
+  }
+  function getNCItems()  {
+    return library.filter(b=>isNCBook(b.id)).flatMap(b=>b.items||[]);
+  }
 
   function mkBook(name) {
     const id = 'b' + Date.now() + Math.random().toString(36).slice(2,6);
@@ -724,8 +770,7 @@
 
   function resetLibrary() {
     try {
-      library = [];
-      ['NEW HORIZON 中1','NEW HORIZON 中2','NEW HORIZON 中3'].forEach(n=>mkBook(n));
+      library  = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
       activeId = library[0].id;
       renderBookSel();
       renderPreview();
@@ -1300,15 +1345,23 @@
     const pageLabel = pageNums.length === 1
       ? `p.${pageNums[0]}`
       : `p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}`;
+
+    const isNC = isNCBook(activeId);
+    const bookName   = isNC ? 'NEW CROWN' : 'NEW HORIZON';
+    const unitFormat = isNC ? '「Lesson 1」〜「Lesson 9」' : '「Unit 1」〜「Unit 10」';
+    const lessonEx   = isNC
+      ? '「Part 1」「Part 2」「Part 3」「Scene 1」「Scene 2」'
+      : '「Scene 1」「Read and Think 1」「Grammar for Communication 1」「Real Life English」「Stage Activity 1」';
+
     parts.push({ text:
-      `これはNEW HORIZONの教科書ページ（${pageLabel}）の画像です。添付した全ページから学習項目を抽出してください。
+      `これは${bookName}の教科書ページ（${pageLabel}）の画像です。添付した全ページから学習項目を抽出してください。
 
 必ず以下のJSON形式のみで返してください（マークダウン不要）：
-{"items":[{"unit":"Unit 1","lesson":"Scene 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
+{"items":[{"unit":"${isNC?'Lesson 1':'Unit 1'}","lesson":"Part 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
 
 重要なルール：
-• unitは必ず「Unit 1」〜「Unit 10」の形式のみ。Grammar for Communication・Real Life English・Read and Think・Stagesなどはunitではなくlessonフィールドに書くこと
-• lessonの例：「Scene 1」「Read and Think 1」「Grammar for Communication 1」「Real Life English」「Stage Activity 1」
+• unitは必ず${unitFormat}の形式のみ
+• lessonの例：${lessonEx}
 • translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
 • pageは各画像内のページ番号（数字）
@@ -1318,7 +1371,7 @@
 
     const raw = await callGemini(
       parts,
-      `あなたはNEW HORIZON英語教科書のデータ抽出専門家です。
+      `あなたは${bookName}英語教科書のデータ抽出専門家です。
 教科書の単語リストやWORD BOXから単語・文法・熟語を抽出し、必ず日本語訳を付けてJSONのみで返します。
 日本語訳が不明でも推測して必ず入れてください。マークダウン不要。`,
       16000
@@ -1726,9 +1779,11 @@
       setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
 
       const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
-      const libCtx = getItems().length
-        ? '\n\n【教科書データ（Unit・ページ特定の参考）】\n'
-          + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,4000)
+      // テスト分析はNH専用でlibCtxを生成
+      const nhItemsForCtx = getNHItems();
+      const libCtx = nhItemsForCtx.length
+        ? '\n\n【NEW HORIZON教科書データ（Unit・ページ特定の参考）】\n'
+          + nhItemsForCtx.map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,4000)
         : '';
 
       parts.push({text:
@@ -1824,13 +1879,12 @@ phrases フィールド：問題として問われた熟語・イディオムの
         ? (rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`)
         : (rangeFrom || rangeTo || '範囲不明');
 
-      // 結果が空の場合は生レスポンスを表示（デバッグ用）
-      if (!r.grade && !r.from_unit) {
+      // 結果が空の場合のエラー表示
+      if (!r.grade && !r.from_unit && !(r.question_types||[]).length) {
         rsEl.innerHTML = `
           <div class="card" style="border-color:#FCA5A5">
             <div class="card-title" style="color:#DC2626">⚠️ 解析結果を取得できませんでした</div>
-            <p style="font-size:12px;color:var(--muted);margin-bottom:8px">Geminiからの生の返答：</p>
-            <pre style="font-size:11px;background:#f8f8f8;padding:10px;border-radius:6px;overflow:auto;max-height:200px;white-space:pre-wrap">${esc(raw.substring(0,1000))}</pre>
+            <p style="font-size:13px;color:var(--muted)">PDFの画質が低いか、テスト内容が読み取れませんでした。別のPDFで再試行してください。</p>
           </div>`;
         return;
       }
@@ -1954,7 +2008,10 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
       el.innerHTML = `
         <div class="card" style="margin-top:16px">
-          <div class="card-title"><span>📋 テスト分析履歴</span></div>
+          <div class="card-title">
+            <span>📋 テスト分析履歴</span>
+            <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
+          </div>
           ${yearTabs}
           <div class="tbl-wrap"><table>
             <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
@@ -2169,7 +2226,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
     setSt(stEl,'load',`${fileArr.length}ファイルを読み込み中...`);
     try {
       const allImgs = [];
-      const MAX_TOTAL = 40; // 全ファイル合計の最大ページ数
+      const MAX_TOTAL = 80; // 全ファイル合計の最大ページ数
 
       for (let fi = 0; fi < fileArr.length; fi++) {
         if (allImgs.length >= MAX_TOTAL) break;
@@ -2311,9 +2368,11 @@ phrases フィールド：問題として問われた熟語・イディオムの
   }
 
   async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
-    const libCtx = getItems().length
-      ? '\n【教科書データ（Unit・ページ特定の参考）】\n'
-        + getItems().map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,3000)
+    // バッチ分析もNH専用
+    const nhBatchItems = getNHItems();
+    const libCtx = nhBatchItems.length
+      ? '\n【NEW HORIZON教科書データ（Unit・ページ特定の参考）】\n'
+        + nhBatchItems.map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,3000)
       : '';
 
     const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
@@ -2405,6 +2464,112 @@ phrases フィールド：問題として問われた熟語・イディオムの
       return result.substring(0, maxLen);
     }
     return s.substring(0, maxLen);
+  }
+
+  // ── 教科書比較 ────────────────────────────────────────────────────
+  let compareMode = 'vocab';
+
+  function setCompareMode(mode, el) {
+    compareMode = mode;
+    document.querySelectorAll('#comparePills .pill').forEach(p => p.classList.remove('active'));
+    if (el) el.classList.add('active');
+    renderCompare();
+  }
+
+  function renderCompare() {
+    const el = document.getElementById('compareResult');
+    if (!el) return;
+    const nhItems = getNHItems();
+    const ncItems = getNCItems();
+    if (!nhItems.length && !ncItems.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NH・NC両方の教科書データを解析してください。</div></div>`;
+      return;
+    }
+    if (compareMode === 'vocab')   renderCompareItems(el, nhItems, ncItems, '単語');
+    if (compareMode === 'phrases') renderCompareItems(el, nhItems, ncItems, '熟語');
+    if (compareMode === 'grammar') renderGrammarTable(el, nhItems, ncItems);
+  }
+
+  function renderCompareItems(el, nhItems, ncItems, type) {
+    const nhSet = new Set(nhItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
+    const ncSet = new Set(ncItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
+    const nhOnly = nhItems.filter(i=>i.type===type && !ncSet.has((i.content||'').toLowerCase().trim()));
+    const ncOnly = ncItems.filter(i=>i.type===type && !nhSet.has((i.content||'').toLowerCase().trim()));
+    const mkTable = (items, unitLabel) => items.length
+      ? `<div class="tbl-wrap"><table>
+          <thead><tr><th>内容</th><th>訳</th><th>${unitLabel}</th></tr></thead>
+          <tbody>${items.map(i=>`<tr>
+            <td style="font-weight:600">${esc(i.content||'')}</td>
+            <td style="font-size:12px;color:var(--muted)">${esc(i.translation||'')}</td>
+            <td style="font-size:11px;color:var(--muted)">${esc(i.unit||'')}${i.lesson?' '+esc(i.lesson):''}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`
+      : `<p style="font-size:13px;color:var(--muted);padding:8px">なし（または未解析）</p>`;
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="card"><div class="card-title" style="color:var(--navy)">NHのみ（${nhOnly.length}件）</div>${mkTable(nhOnly,'Unit')}</div>
+        <div class="card"><div class="card-title" style="color:#7c3aed">NCのみ（${ncOnly.length}件）</div>${mkTable(ncOnly,'Lesson')}</div>
+      </div>`;
+  }
+
+  function renderGrammarTable(el, nhItems, ncItems) {
+    const gradeOf = id => id.endsWith('c1')?'中1':id.endsWith('c2')?'中2':'中3';
+    const nhGrammar = library.filter(b=>isNHBook(b.id)).flatMap(b=>
+      (b.items||[]).filter(i=>i.type==='文法').map(i=>({...i, grade:gradeOf(b.id)}))
+    );
+    const ncGrammar = library.filter(b=>isNCBook(b.id)).flatMap(b=>
+      (b.items||[]).filter(i=>i.type==='文法').map(i=>({...i, grade:gradeOf(b.id)}))
+    );
+    if (!nhGrammar.length && !ncGrammar.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-ico">📋</div><div class="empty-txt">文法データがありません。教科書を解析してください。</div></div>`;
+      return;
+    }
+    const map = {};
+    nhGrammar.forEach(i => {
+      const k = (i.content||'').trim();
+      if (!map[k]) map[k] = {content:k,nhGrade:'',nhUnit:'',ncGrade:'',ncUnit:''};
+      map[k].nhGrade = i.grade;
+      map[k].nhUnit  = [i.unit,i.lesson].filter(Boolean).join(' ');
+    });
+    ncGrammar.forEach(i => {
+      const k = (i.content||'').trim();
+      if (!map[k]) map[k] = {content:k,nhGrade:'',nhUnit:'',ncGrade:'',ncUnit:''};
+      map[k].ncGrade = i.grade;
+      map[k].ncUnit  = [i.unit,i.lesson].filter(Boolean).join(' ');
+    });
+    const gOrd = {'中1':1,'中2':2,'中3':3};
+    const rows = Object.values(map).sort((a,b)=>
+      (gOrd[a.nhGrade||a.ncGrade]||9)-(gOrd[b.nhGrade||b.ncGrade]||9)
+    );
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">文法履修表（${rows.length}件）</div>
+        <div class="s-wrap" style="margin-bottom:12px">
+          <span class="s-ico">🔍</span>
+          <input class="s-input" id="grammarSearch" placeholder="文法事項を検索（例：現在完了、不定詞）" oninput="filterGrammarTable(this.value)">
+        </div>
+        <div class="tbl-wrap"><table id="grammarTable">
+          <thead><tr>
+            <th>文法事項</th>
+            <th style="color:var(--navy)">NH 学年</th><th style="color:var(--navy)">NH 単元</th>
+            <th style="color:#7c3aed">NC 学年</th><th style="color:#7c3aed">NC 単元</th>
+          </tr></thead>
+          <tbody id="grammarTbody">${rows.map(r=>`<tr>
+            <td style="font-weight:600">${esc(r.content)}</td>
+            <td style="color:var(--navy)">${esc(r.nhGrade)}</td>
+            <td style="font-size:12px;color:var(--navy)">${esc(r.nhUnit)}</td>
+            <td style="color:#7c3aed">${esc(r.ncGrade)}</td>
+            <td style="font-size:12px;color:#7c3aed">${esc(r.ncUnit)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`;
+  }
+
+  function filterGrammarTable(q) {
+    const lq = q.toLowerCase();
+    document.querySelectorAll('#grammarTbody tr').forEach(tr => {
+      tr.style.display = !lq || tr.textContent.toLowerCase().includes(lq) ? '' : 'none';
+    });
   }
 
   // ── 学年正規化 ────────────────────────────────────────────────────
@@ -2819,6 +2984,17 @@ phrases フィールド：問題として問われた熟語・イディオムの
       library  = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
       activeId = library[0].id;
     }
+
+    // DEFAULT_BOOKSの全冊が必ずlibrary内に存在するよう保証（NC追加・重複排除）
+    DEFAULT_BOOKS.forEach(def => {
+      if (!library.find(b => b.id === def.id)) {
+        library.push({ ...def, items: [] });
+      }
+    });
+    // IDで重複排除
+    const seen = new Set();
+    library = library.filter(b => { if (seen.has(b.id)) return false; seen.add(b.id); return true; });
+    if (!library.find(b => b.id === activeId)) activeId = library[0].id;
 
     // 2. UI描画（libraryは必ず1冊以上ある状態）
     try { renderBookSel(); }   catch(e) { console.error('renderBookSel:', e); }
