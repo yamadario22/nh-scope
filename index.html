@@ -1365,7 +1365,16 @@
 • translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
 • pageは各画像内のページ番号（数字）
-• 本文の地の文は抽出しない。単語リスト・語彙表・文法説明に絞ること
+• 本文の地の文は抽出しない
+
+【単語】単語リスト・WORD BOX・語彙表に掲載されている単語のみ
+【文法】KEY SENTENCEボックスの内容のみを抽出する（文法説明の本文は含めない）
+  - contentには文法事項名を記載（例：「現在完了（経験）have + 過去分詞」「不定詞（副詞的用法）」）
+  - translationには意味・用法（例：「〜したことがある」「〜するために」）
+  - notesにはKey Sentenceの例文を記載（例：「I have been to Kyoto.」）
+  - KEY SENTENCEボックスがないページは文法アイテムを抽出しない
+【熟語】新出熟語として明示されているもののみ（in addition / take advantage of / It is said that レベル）
+  - 単なる前置詞の用法・一般的なつなぎ言葉は含めない
 • 項目がないページは {"items":[]} を返す`
     });
 
@@ -1806,7 +1815,9 @@
 【重要な制約】
 ・tested_vocab：テスト問題文に登場する英単語・熟語を配列で列挙（ライブラリ照合に使用）
 ・grammar：問題として問われている文法構造のみ（現在完了進行形・SVOC構文・関係代名詞など）
-・phrases：問題として問われている熟語・イディオムのみ。already/yet/just/ever/never/since/forは除外。本文テキストを全部列挙しない
+・phrases：複数語から成る熟語・イディオム（新出かどうかは問わない）
+  ✅ 含める：be linked to / more and more / in addition / take advantage of / It is said that / make friends with / at the same time / hundreds of
+  ❌ 除外：already/yet/just/ever/never などの単語1語の副詞、have to/be going to/has been などの助動詞・時制表現
 ・SVOC構文（make＋人＋形容詞）は「SVOC構文」と記載。「make O C」は使わない
 ・関係代名詞はwho・which・thatのみ（whatの関係代名詞は中学で習わない）
 ・key_items：このテストPDFのみの内容
@@ -2393,7 +2404,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
 ・tested_vocab：テスト問題文に登場する英単語・熟語（ライブラリ照合用）
 ・typeフィールド：「リスニング」「単語」「整序」など日本語
 ・detailsフィールド：最大30文字。繰り返し禁止
-・grammar・phrasesは英語混在可。already/yet/just/ever/neverは除外
+・grammar・phrasesは英語混在可。phrasesは複数語の熟語・イディオム（be linked to / more and more / in addition 等、新出かどうかは問わない）。already/yet等の1語副詞・have to等の助動詞は除外
 ・全大問を漏れなく列挙（5個以下は不完全）
 ・phrases：問われた熟語のみ（本文テキスト列挙禁止）` });
 
