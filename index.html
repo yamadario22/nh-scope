@@ -233,7 +233,6 @@
   <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
   <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
   <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
-  <div class="tab"        data-tab="trends"      onclick="switchTab('trends');renderTrends()">📈 傾向分析</div>
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
@@ -469,40 +468,6 @@
     </div>
   </div>
 
-  <!-- ══ TAB 7: 傾向分析 ══════════════════════════════════════════ -->
-  <div id="tab-trends" class="tab-content">
-    <div class="main">
-      <div class="card">
-        <div class="card-title">📈 出題傾向分析</div>
-        <div class="row" style="gap:10px;margin-bottom:0">
-          <div>
-            <label style="font-size:12px;color:var(--muted)">年</label>
-            <select id="trendsYear" class="book-select" style="margin-left:6px" onchange="renderTrends()">
-              <option value="">全て</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">学年</label>
-            <select id="trendsGrade" class="book-select" style="margin-left:6px" onchange="renderTrends()">
-              <option value="">全て</option>
-              <option value="中１">中１</option>
-              <option value="中２">中２</option>
-              <option value="中３">中３</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size:12px;color:var(--muted)">表示</label>
-            <select id="trendsMode" class="book-select" style="margin-left:6px" onchange="renderTrends()">
-              <option value="overall">全体傾向</option>
-              <option value="school">学校別</option>
-            </select>
-          </div>
-        </div>
-      </div>
-      <div id="trendsResult"></div>
-    </div>
-  </div>
-
   <!-- ══ TAB 6: 教科書比較 ══════════════════════════════════════════ -->
   <div id="tab-compare" class="tab-content">
     <div class="main">
@@ -522,7 +487,16 @@
     <div class="card">
       <div class="card-title">🗂 テスト検索</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:14px">テスト分析済みのデータから条件に合うテストを検索します。</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">学年</label>
+          <select id="tsGradeFilter" class="book-select" style="width:100%">
+            <option value="">全て</option>
+            <option value="中１">中１</option>
+            <option value="中２">中２</option>
+            <option value="中３">中３</option>
+          </select>
+        </div>
         <div>
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">開始Unit</label>
           <select id="tsFromUnit" class="book-select" style="width:100%">
@@ -1841,44 +1815,40 @@
         : '';
 
       parts.push({text:
-`【最重要指示】
-添付した${imgs.length}枚は定期テストの全ページです。
-1枚目から最後まで全ての大問を特定してください。大問が5個以下の結果は不完全です。
-絶対にサンプルや架空のデータを返さないこと。${libCtx}
+`このテストを研究目的で分析。全大問を漏れなく列挙（5個以下は不完全）。${libCtx}
 
-【NEW HORIZON Unit内のセクション順序（重要）】
-各Unitの順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication 1 → Grammar for Communication 2 → Real Life English → Stage Activity
-特殊セクション（教科書に実在）: A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk / World Tour
+【Unit内順序】Part 1→Part 2→Read and Think 1→Read and Think 2→Grammar for Communication→Real Life English→Stage Activity
+特殊セクション：A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
 
-【テスト範囲の終端（to_unit/to_lesson）の正確な判定手順】
-1. テスト内の長文・リスニング本文のタイトルを確認する（最も信頼できる指標）
-2. 本文タイトルが確認できたらそれをto_lessonに使う（例：A Mother's Lullaby → to_lesson: "A Mother's Lullaby"）
-3. 整序・英作文で使われる文法構造の中で最もUnit番号が大きいものを参照する
-4. 文法は前学年の復習が含まれるため、文法だけで終端を決めない
-5. 教科書データがある場合は必ず活用する
+【④出題範囲の特定】
+・長文・リスニング本文のタイトルから終端を判定（最確実）
+・出題文法がどのUnitで習うかから逆算
+・前学年の復習は範囲の根拠にしない
+・tested_vocab：範囲特定用。文法パターン・熟語・5文字以上の特徴語のみ（go/be/the等は除外）
 
-【重要な制約】
-・tested_vocab：テスト問題文に登場する英単語・熟語を配列で列挙（ライブラリ照合に使用）
-・grammar：問題として問われている文法構造のみ（現在完了進行形・SVOC構文・関係代名詞など）
-・phrases：複数語から成る熟語・イディオム（新出かどうかは問わない）
-  ✅ 含める：be linked to / more and more / in addition / take advantage of / It is said that / make friends with / at the same time / hundreds of
-  ❌ 除外：already/yet/just/ever/never などの単語1語の副詞、have to/be going to/has been などの助動詞・時制表現
-・SVOC構文（make＋人＋形容詞）は「SVOC構文」と記載。「make O C」は使わない
-・関係代名詞はwho・which・thatのみ（whatの関係代名詞は中学で習わない）
-・key_items：このテストPDFのみの内容
-・全大問を漏れなく列挙すること（最重要）
-・section：テストの大問番号をそのまま記載
-・type：日本語で記載（英語タイトルは翻訳）
-・長文・対話文は「教科書内」「教科書外」を区別
-・count：問題数を正確に数える`
+【各大問で抽出する内容】
+・type：問題形式名（10文字以内の日本語）
+・count：問題数
+・grammar：問われている文法パターン名のみ
+  例：現在完了（経験）・SVOC構文・不定詞（副詞的用法）・関係代名詞that
+  除外：already/yet/just等の1語副詞、have to/be going to等の助動詞
+・phrases：問われている複数語の熟語・イディオムのみ
+  ✅ be linked to / more and more / in addition / It is said that / take advantage of
+  ❌ 1語副詞・助動詞表現
+・theme：長文・対話文・リスニング本文のみ→テーマを15文字以内
+  例：「ボランティアの対話（教科書内）」「環境問題スピーチ（教科書外）」
+
+【絶対に含めない】
+・内容一致問題の答え・選択肢・解説
+・SVOC構文はmake O C不可、「SVOC構文」と記載
+・whatの関係代名詞（中学で習わない）`
       });
 
       const r = await callGeminiJSON(
         parts,
-        `テスト分析の専門家です。
-全てのページを精査し、全大問を漏れなく列挙してください。
-question_typesには必ず全大問を含めること。1〜2個では絶対に不十分です。
-phrases フィールド：問題として問われた熟語・イディオムのみ記載。本文テキストを全部列挙しない。`,
+        `定期テスト分析の専門家。研究目的で以下の4点のみ抽出：
+①問題形式と問題数 ②出題文法パターン ③出題熟語 ④長文・対話文・リスニングのテーマ
+不要な情報（内容一致の答え・解説・選択肢の内容）は一切含めない。全大問を漏れなく列挙。`,
         {
           type: 'OBJECT',
           properties: {
@@ -1887,19 +1857,18 @@ phrases フィールド：問題として問われた熟語・イディオムの
             from_lesson:       { type: 'STRING' },
             to_unit:           { type: 'STRING' },
             to_lesson:         { type: 'STRING' },
-            cross_grade_notes: { type: 'STRING' },
             summary:           { type: 'STRING' },
             question_types: {
               type: 'ARRAY',
               items: {
                 type: 'OBJECT',
                 properties: {
-                  section:  { type: 'STRING' },
-                  type:     { type: 'STRING' },
-                  count:    { type: 'INTEGER' },
-                  details:  { type: 'STRING' },
-                  grammar:  { type: 'STRING' },
-                  phrases:  { type: 'STRING' },
+                  section: { type: 'STRING' },
+                  type:    { type: 'STRING' },
+                  count:   { type: 'INTEGER' },
+                  theme:   { type: 'STRING' },
+                  grammar: { type: 'STRING' },
+                  phrases: { type: 'STRING' },
                   sub_questions: {
                     type: 'ARRAY',
                     items: {
@@ -1907,7 +1876,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
                       properties: {
                         type:    { type: 'STRING' },
                         count:   { type: 'INTEGER' },
-                        details: { type: 'STRING' },
+                        theme:   { type: 'STRING' },
                         grammar: { type: 'STRING' },
                         phrases: { type: 'STRING' }
                       }
@@ -1973,8 +1942,6 @@ phrases フィールド：問題として問われた熟語・イディオムの
       };
       const sortedQTypes = [...(r.question_types||[])].sort((a,b) => sectionOrder(a.section) - sectionOrder(b.section));
 
-      const isReadingType = t => /長文読解|対話文読解/.test(t||'');
-
       const qtHtml = sortedQTypes.length
         ? `<div class="card">
             <div class="card-title" style="justify-content:space-between">
@@ -1983,17 +1950,17 @@ phrases フィールド：問題として問われた熟語・イディオムの
             </div>
             <div class="qt-body" style="display:none">
             <div class="tbl-wrap"><table>
-              <thead><tr><th style="width:80px">大問</th><th>問題形式</th><th style="width:60px;text-align:right">問題数</th></tr></thead>
+              <thead><tr><th style="width:70px">大問</th><th>問題形式</th><th style="width:55px;text-align:right">問題数</th></tr></thead>
               <tbody>${sortedQTypes.map(qt=>{
-                const isReading = isReadingType(qt.type);
                 const subHtml = (qt.sub_questions||[]).length
                   ? (qt.sub_questions||[]).map(sq=>`
                       <tr style="background:#f9fafb">
                         <td></td>
-                        <td style="padding-left:20px;font-size:12px;color:var(--muted)">
-                          <div>└ ${esc(sq.type||'')}${sq.details?` <span style="color:#94a3b8">（${esc(sq.details)}）</span>`:''}</div>
-                          ${sq.grammar?`<div style="padding-left:8px;font-size:11px;color:var(--navy)">【文法】${esc(sq.grammar)}</div>`:''}
-                          ${sq.phrases?`<div style="padding-left:8px;font-size:11px;color:#dc2626;font-weight:600">【熟語】${esc(sq.phrases)}</div>`:''}
+                        <td style="padding-left:20px;font-size:12px">
+                          <span style="color:var(--muted)">└ ${esc(sq.type||'')}</span>
+                          ${sq.theme?`<div style="font-size:11px;color:#dc2626;font-weight:700;font-style:italic;padding-left:8px">🎯 ${esc(sq.theme)}</div>`:''}
+                          ${sq.grammar?`<div style="font-size:11px;color:#dc2626;font-weight:700;padding-left:8px">📐 ${esc(sq.grammar)}</div>`:''}
+                          ${sq.phrases?`<div style="font-size:11px;color:#dc2626;font-weight:700;padding-left:8px">🔗 ${esc(sq.phrases)}</div>`:''}
                         </td>
                         <td style="font-size:12px;color:var(--navy);text-align:right">${sq.count||'-'}問</td>
                       </tr>`).join('')
@@ -2001,9 +1968,10 @@ phrases フィールド：問題として問われた熟語・イディオムの
                 return `<tr style="border-top:1px solid var(--border)">
                   <td style="font-size:12px;color:var(--muted);white-space:nowrap">${esc(qt.section||'')}</td>
                   <td>
-                    <div style="font-weight:600">${esc(qt.type||'')}${qt.details?`<span style="font-size:11px;font-weight:${isReading?'600':'400'};color:${isReading?'#dc2626':'var(--muted)'};margin-left:6px">※${esc(qt.details)}</span>`:''}</div>
-                    ${qt.grammar?`<div style="font-size:11px;color:var(--navy);margin-top:2px">【文法】${esc(qt.grammar)}</div>`:''}
-                    ${qt.phrases?`<div style="font-size:11px;color:#dc2626;font-weight:600;margin-top:1px">【熟語】${esc(qt.phrases)}</div>`:''}
+                    <div style="font-weight:600">${esc(qt.type||'')}</div>
+                    ${qt.theme?`<div style="font-size:12px;color:#dc2626;font-weight:700;font-style:italic;margin-top:2px">🎯 ${esc(qt.theme)}</div>`:''}
+                    ${qt.grammar?`<div style="font-size:12px;color:#dc2626;font-weight:700;margin-top:2px">📐 ${esc(qt.grammar)}</div>`:''}
+                    ${qt.phrases?`<div style="font-size:12px;color:#dc2626;font-weight:700;margin-top:1px">🔗 ${esc(qt.phrases)}</div>`:''}
                   </td>
                   <td style="color:var(--navy);font-weight:700;text-align:right">${qt.count||'-'}問</td>
                 </tr>${subHtml}`;
@@ -2620,139 +2588,6 @@ phrases フィールド：問題として問われた熟語・イディオムの
   }
 
   // ── 傾向分析 ────────────────────────────────────────────────────────
-  function renderTrends() {
-    const rsEl = document.getElementById('trendsResult');
-    if (!rsEl) return;
-
-    let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
-    if (!hist.length) {
-      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">📊</div><div class="empty-txt">テスト分析履歴がありません。</div></div>`;
-      return;
-    }
-
-    // 年フィルターの選択肢を更新
-    const yearSel = document.getElementById('trendsYear');
-    if (yearSel) {
-      const years = [...new Set(hist.map(h=>h.year||(h.date||'').split('/')[0]).filter(Boolean))].sort().reverse();
-      const curYear = yearSel.value;
-      yearSel.innerHTML = '<option value="">全て</option>' + years.map(y=>`<option value="${y}" ${curYear===y?'selected':''}>${y}年</option>`).join('');
-    }
-
-    const filterYear  = (document.getElementById('trendsYear')  ||{}).value || '';
-    const filterGrade = (document.getElementById('trendsGrade') ||{}).value || '';
-    const mode = (document.getElementById('trendsMode')||{}).value || 'overall';
-
-    const filtered = hist.filter(h => {
-      const y = h.year||(h.date||'').split('/')[0]||'';
-      return (!filterYear || y === filterYear) && (!filterGrade || h.grade === filterGrade);
-    });
-
-    if (!filtered.length) {
-      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">条件に一致するデータがありません。</div></div>`;
-      return;
-    }
-
-    if (mode === 'school') renderSchoolTrends(rsEl, filtered);
-    else renderOverallTrends(rsEl, filtered);
-  }
-
-  function aggregateItems(hist) {
-    const grammar = {}, phrases = {}, qtypes = {};
-    hist.forEach(h => {
-      (h.question_types||[]).forEach(qt => {
-        if (qt.type) qtypes[qt.type] = (qtypes[qt.type]||0) + 1;
-        if (qt.grammar) qt.grammar.split(/[・、,\/]+/).forEach(g => {
-          const t = g.trim(); if (t.length>=2) grammar[t] = (grammar[t]||0) + 1;
-        });
-        if (qt.phrases) qt.phrases.split(/[・、,\/]+/).forEach(p => {
-          const t = p.trim(); if (t.length>=2) phrases[t] = (phrases[t]||0) + 1;
-        });
-        (qt.sub_questions||[]).forEach(sq => {
-          if (sq.grammar) sq.grammar.split(/[・、,\/]+/).forEach(g => {
-            const t = g.trim(); if (t.length>=2) grammar[t] = (grammar[t]||0) + 1;
-          });
-          if (sq.phrases) sq.phrases.split(/[・、,\/]+/).forEach(p => {
-            const t = p.trim(); if (t.length>=2) phrases[t] = (phrases[t]||0) + 1;
-          });
-        });
-      });
-    });
-    const sort = obj => Object.entries(obj).sort((a,b)=>b[1]-a[1]);
-    return { grammar: sort(grammar), phrases: sort(phrases), qtypes: sort(qtypes) };
-  }
-
-  function mkRankTable(items, limit=15) {
-    if (!items.length) return '<p style="font-size:13px;color:var(--muted)">データなし</p>';
-    return `<div class="tbl-wrap"><table>
-      <thead><tr><th>順位</th><th>内容</th><th style="text-align:right">出現回数</th></tr></thead>
-      <tbody>${items.slice(0,limit).map(([k,v],i)=>`<tr>
-        <td style="font-size:12px;color:var(--muted)">${i+1}</td>
-        <td style="font-weight:${i<3?'700':'400'};color:${i<3?'var(--navy)':'var(--text)'}">${esc(k)}</td>
-        <td style="text-align:right;font-weight:600;color:var(--navy)">${v}件</td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
-  }
-
-  function renderOverallTrends(el, hist) {
-    const { grammar, phrases, qtypes } = aggregateItems(hist);
-    el.innerHTML = `
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">対象：${hist.length}件のテスト</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-        <div class="card">
-          <div class="card-title">📐 文法出現ランキング</div>
-          ${mkRankTable(grammar)}
-        </div>
-        <div class="card">
-          <div class="card-title" style="color:#dc2626">🔗 熟語出現ランキング</div>
-          ${mkRankTable(phrases)}
-        </div>
-        <div class="card">
-          <div class="card-title">📝 問題形式ランキング</div>
-          ${mkRankTable(qtypes)}
-        </div>
-      </div>`;
-  }
-
-  function renderSchoolTrends(el, hist) {
-    const schools = {};
-    hist.forEach(h => {
-      const school = extractSchoolName(h.name||'') || '不明';
-      if (!schools[school]) schools[school] = [];
-      schools[school].push(h);
-    });
-
-    const rows = Object.entries(schools).sort((a,b)=>b[1].length-a[1].length);
-    el.innerHTML = `
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">${rows.length}校のデータ</p>
-      <div style="display:flex;flex-direction:column;gap:12px">
-        ${rows.map(([school, tests]) => {
-          const { grammar, phrases, qtypes } = aggregateItems(tests);
-          const teachers = [...new Set(tests.map(t=>extractTeacherName(t.name||'')).filter(Boolean))];
-          return `<div class="card">
-            <div class="card-title" style="justify-content:space-between">
-              <span>${esc(school)}</span>
-              <span style="font-size:11px;font-weight:400;color:var(--muted)">${tests.length}件${teachers.length?' / 担当：'+teachers.map(t=>esc(t)).join('・'):''}</span>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-              <div>
-                <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">文法Top5</div>
-                ${grammar.slice(0,5).map(([k,v])=>`<div style="font-size:12px;display:flex;justify-content:space-between"><span>${esc(k)}</span><span style="color:var(--navy);font-weight:600">${v}</span></div>`).join('')||'<span style="font-size:12px;color:var(--muted)">データなし</span>'}
-              </div>
-              <div>
-                <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">熟語Top5</div>
-                ${phrases.slice(0,5).map(([k,v])=>`<div style="font-size:12px;display:flex;justify-content:space-between"><span style="color:#dc2626">${esc(k)}</span><span style="color:#dc2626;font-weight:600">${v}</span></div>`).join('')||'<span style="font-size:12px;color:var(--muted)">データなし</span>'}
-              </div>
-              <div>
-                <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">問題形式Top5</div>
-                ${qtypes.slice(0,5).map(([k,v])=>`<div style="font-size:12px;display:flex;justify-content:space-between"><span>${esc(k)}</span><span style="color:var(--navy);font-weight:600">${v}</span></div>`).join('')||'<span style="font-size:12px;color:var(--muted)">データなし</span>'}
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
-  }
-
   // ── 教科書比較 ────────────────────────────────────────────────────
   let compareMode = 'vocab';
 
@@ -2885,6 +2720,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
   }
 
   function runTestSearch() {
+    const gradeFilter = (document.getElementById('tsGradeFilter')||{}).value || '';
     const fromUnit  = (document.getElementById('tsFromUnit')  ||{}).value  || '';
     const fromPart  = (document.getElementById('tsFromPart')  ||{}).value  || '';
     const toUnit    = (document.getElementById('tsToUnit')    ||{}).value  || '';
@@ -2924,15 +2760,17 @@ phrases フィールド：問題として問われた熟語・イディオムの
       const rangeStr = h.range || '';
       const hFrom = unitNum(rangeStr.split('〜')[0]);
       const hTo   = unitNum(rangeStr.split('〜').pop());
+      const gradeOk   = !gradeFilter || h.grade === gradeFilter;
       const schoolOk  = !tsSchool  || extractSchoolName(h.name||'').toLowerCase().includes(tsSchool) || (h.name||'').toLowerCase().includes(tsSchool);
       const teacherOk = !tsTeacher || extractTeacherName(h.name||'').toLowerCase().includes(tsTeacher) || (h.name||'').toLowerCase().includes(tsTeacher);
-      const unitOk  = !fromUnit && !toUnit ? true : hFrom <= toN && hTo >= fromN;
+      // テストの範囲が指定範囲に完全に収まるか（指定範囲をはみ出したものは除外）
+      const unitOk  = !fromUnit && !toUnit ? true : hFrom >= fromN && hTo <= toN;
       const fromPartOk = !fromPart || rangeStr.includes(fromPart) || !fromUnit;
       const toPartOk   = !toPart   || rangeStr.includes(toPart)   || !toUnit;
       const qtOk      = !qtype   || containsQType(h.question_types, qtype);
       const gOk       = !tsGrammar || containsGrammarOrPhrase(h.question_types, tsGrammar, '');
       const pOk       = !tsPhrases || containsGrammarOrPhrase(h.question_types, '', tsPhrases);
-      return schoolOk && teacherOk && unitOk && fromPartOk && toPartOk && qtOk && gOk && pOk;
+      return gradeOk && schoolOk && teacherOk && unitOk && fromPartOk && toPartOk && qtOk && gOk && pOk;
     });
 
     if (!results.length) {
