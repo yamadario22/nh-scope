@@ -229,10 +229,10 @@
 <nav class="tabs">
   <div class="tab active" data-tab="setup"       onclick="switchTab('setup')">📚 教科書データ解析</div>
   <div class="tab"        data-tab="edit"        onclick="switchTab('edit')">📋 教科書データ編集</div>
-  <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 単語・文法検索</div>
+  <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 NH単語・熟語・文法検索</div>
+  <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
   <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
   <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
-  <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
@@ -2365,9 +2365,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
       return;
     }
 
-    let useParallel = 2;
-    let errorStreak = 0;
-    let done = 0;
+    let useParallel = 3; // 3並列スタート（429時は2→1に自動降格）
     const batchStart = Date.now();
     const groupTimes = []; // 各グループの所要時間（ms）
 
@@ -2424,8 +2422,9 @@ phrases フィールド：問題として問われた熟語・イディオムの
           if (msg.startsWith('__QUOTA__') || msg.includes('429')) {
             errorStreak++;
             if (errorStreak >= 2 && useParallel > 1) {
-              useParallel = 1;
-              setSt(stEl,'load','レート制限のため1並列に切り替えました');
+              useParallel--;
+              setSt(stEl,'load',`レート制限のため${useParallel}並列に切り替えました`);
+              errorStreak = 0;
             }
           }
         }
@@ -2575,7 +2574,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
     const nhItems = getNHItems();
     const ncItems = getNCItems();
     if (!nhItems.length && !ncItems.length) {
-      el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NH・NC両方の教科書データを解析してください。</div></div>`;
+      el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NEW HORIZON・NEW CROWN両方の教科書データを解析してください。</div></div>`;
       return;
     }
     if (compareMode === 'vocab')   renderCompareItems(el, nhItems, ncItems, '単語');
@@ -2600,8 +2599,8 @@ phrases フィールド：問題として問われた熟語・イディオムの
       : `<p style="font-size:13px;color:var(--muted);padding:8px">なし（または未解析）</p>`;
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="card"><div class="card-title" style="color:var(--navy)">NHのみ（${nhOnly.length}件）</div>${mkTable(nhOnly,'Unit')}</div>
-        <div class="card"><div class="card-title" style="color:#7c3aed">NCのみ（${ncOnly.length}件）</div>${mkTable(ncOnly,'Lesson')}</div>
+        <div class="card"><div class="card-title" style="color:var(--navy)">NEW HORIZONのみ（${nhOnly.length}件）</div>${mkTable(nhOnly,'NEW HORIZON 単元')}</div>
+        <div class="card"><div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${ncOnly.length}件）</div>${mkTable(ncOnly,'NEW CROWN 単元')}</div>
       </div>`;
   }
 
@@ -2644,8 +2643,8 @@ phrases フィールド：問題として問われた熟語・イディオムの
         <div class="tbl-wrap"><table id="grammarTable">
           <thead><tr>
             <th>文法事項</th>
-            <th style="color:var(--navy)">NH 学年</th><th style="color:var(--navy)">NH 単元</th>
-            <th style="color:#7c3aed">NC 学年</th><th style="color:#7c3aed">NC 単元</th>
+            <th style="color:var(--navy)">NEW HORIZON 学年</th><th style="color:var(--navy)">NEW HORIZON 単元</th>
+            <th style="color:#7c3aed">NEW CROWN 学年</th><th style="color:#7c3aed">NEW CROWN 単元</th>
           </tr></thead>
           <tbody id="grammarTbody">${rows.map(r=>`<tr>
             <td style="font-weight:600">${esc(r.content)}</td>
