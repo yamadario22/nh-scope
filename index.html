@@ -1717,15 +1717,26 @@
     document.getElementById('editWarn').style.display = nd?'block':'none';
     if (nd) { document.getElementById('unitPills').innerHTML=''; document.getElementById('unitTable').innerHTML=''; return; }
 
-    const units=['all',...new Set(items.map(i=>i.unit).filter(Boolean).sort())];
+    // Unit番号で数値ソート（Unit 1, Unit 2, ... Unit 10 の順）
+    const unitSet = [...new Set(items.map(i=>i.unit).filter(Boolean))];
+    unitSet.sort((a, b) => {
+      const na = parseInt(a.match(/\d+/)?.[0] || '0');
+      const nb = parseInt(b.match(/\d+/)?.[0] || '0');
+      return na - nb;
+    });
+    const units = ['all', ...unitSet];
     if (!units.includes(activeUnit)) activeUnit='all';
 
+    // data属性を使ってクォート問題を回避
     document.getElementById('unitPills').innerHTML = units.map(u=>`
-      <div class="unit-pill ${u===activeUnit?'active':''}" onclick="selectUnit(${JSON.stringify(u)})">
+      <div class="unit-pill ${u===activeUnit?'active':''}" data-unit="${esc(u)}" onclick="selectUnit(this.dataset.unit)">
         ${u==='all'?`すべて (${items.length})`:esc(u)}
       </div>`).join('');
 
-    const list = activeUnit==='all' ? items : items.filter(i=>i.unit===activeUnit);
+    // ページ順でソート
+    const list = (activeUnit==='all' ? items : items.filter(i=>i.unit===activeUnit))
+      .slice().sort((a,b)=>(a.page||0)-(b.page||0));
+
     if (!list.length) {
       document.getElementById('unitTable').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div class="empty-txt">このUnitに項目がありません</div></div>';
       return;
@@ -2133,7 +2144,7 @@
     const filtered=items.filter(it=>{
       if (activeFilter!=='all'&&it.type!==activeFilter) return false;
       return [it.content,it.translation,it.notes,it.unit].some(v=>(v||'').toLowerCase().includes(ql));
-    });
+    }).slice().sort((a,b)=>(a.page||0)-(b.page||0));
     if (!filtered.length) { res.innerHTML=`<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">「${esc(q)}」に一致する項目は見つかりません</div></div>`; return; }
     const hi=s=>s?esc(s).replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<mark>$1</mark>'):'-';
     res.innerHTML=`
