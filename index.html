@@ -410,7 +410,7 @@
     <div class="divider"><span>または — 複数校のPDFを一括分析</span></div>
     <div class="card">
       <div class="card-title">🏫 バッチ分析（複数校一括）</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">複数の中学校のテストPDFを一度に選択。同じファイル名のPDFをまとめて1テストとして分析します。範囲・サマリーは省略されます。</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">複数の中学校のテストPDFを一度に選択。同じファイル名のPDFをまとめて1テストとして分析します。</p>
       <input type="file" id="batchFiles" accept=".pdf" multiple style="display:none" onchange="onBatchFilesSelected(this.files)">
       <div class="row" style="gap:8px">
         <button type="button" class="btn btn-secondary" onclick="document.getElementById('batchFiles').click()">📂 複数PDFを一括選択</button>
@@ -427,7 +427,7 @@
   <div id="tab-search" class="tab-content">
     <div class="tab-book-bar">
       <label>教科書：</label>
-      <select class="book-select book-sel-sync" onchange="switchBook(this.value)">
+      <select class="book-select" id="searchBookSel" onchange="switchBook(this.value)">
         <optgroup label="NEW HORIZON">
           <option value="default_c1">NEW HORIZON 中1</option>
           <option value="default_c2">NEW HORIZON 中2</option>
@@ -470,20 +470,18 @@
 
   <!-- ══ TAB 6: 教科書比較 ══════════════════════════════════════════ -->
   <div id="tab-compare" class="tab-content">
-    <div class="main">
-      <div class="card">
-        <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:14px">両教科書の解析データを読み込んでから使用してください。</p>
-        <div class="pills" id="comparePills">
-          <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語比較</div>
-          <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語比較</div>
-          <div class="pill" onclick="setCompareMode('grammar',this)">③ 文法履修表</div>
-        </div>
+    <div class="card">
+      <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">両教科書の解析データを読み込んでから使用してください。</p>
+      <div class="pills" id="comparePills">
+        <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語比較</div>
+        <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語比較</div>
+        <div class="pill" onclick="setCompareMode('grammar',this)">③ 文法履修表</div>
       </div>
-      <div id="compareResult"></div>
     </div>
+    <div id="compareResult"></div>
   </div>
-  <div id="tab-test-search" class="tab-content">
+  <div id="tab-test-search" class="tab-content"><div style="max-width:960px;margin:0 auto;padding:28px 20px 80px">
     <div class="card">
       <div class="card-title">🗂 テスト検索</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:14px">テスト分析済みのデータから条件に合うテストを検索します。</p>
@@ -581,7 +579,7 @@
       <button class="btn btn-primary" style="width:100%" onclick="runTestSearch()">🔍 検索する</button>
     </div>
     <div id="tsResults"></div>
-  </div>
+  </div></div><!-- /test-search inner -->
 
 </div><!-- /main -->
 
@@ -819,16 +817,15 @@
   }
 
   function renderBookSel() {
-    // 描画のみ。library操作はしない。呼び出し元がlibraryを保証すること。
     const optHtml = library
       .map(b => `<option value="${esc(b.id)}" ${b.id===activeId?'selected':''}>${esc(b.name)}</option>`)
       .join('');
-    // メインセレクター
     const sel = document.getElementById('bookSel');
     if (sel) sel.innerHTML = optHtml;
-    // 同期セレクター（各タブ内）
     document.querySelectorAll('.book-sel-sync').forEach(s => { s.innerHTML = optHtml; });
-    // 削除ボタン
+    // 検索タブのoptgroup付きドロップダウンは選択状態のみ同期
+    const searchSel = document.getElementById('searchBookSel');
+    if (searchSel) searchSel.value = activeId;
     const delBtn = document.getElementById('delBookBtn');
     if (delBtn) delBtn.disabled = library.length <= 1;
   }
@@ -838,7 +835,7 @@
     try {
       document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id==='tab-'+name));
-      const nd = !getItems().length;
+      const nd = !getNHItems().length;
       if (name==='edit')   { try { renderUnitView(); } catch(e){} document.getElementById('editWarn').style.display   = nd?'block':'none'; }
       if (name==='test') {
         document.getElementById('testWarn').style.display = nd?'block':'none';
@@ -2719,6 +2716,18 @@
     return false;
   }
 
+  function containsGrammarOrPhrase(qtypes, gQuery, pQuery) {
+    for (const qt of (qtypes||[])) {
+      if (gQuery && (qt.grammar||'').toLowerCase().includes(gQuery)) return true;
+      if (pQuery && (qt.phrases||'').toLowerCase().includes(pQuery)) return true;
+      for (const sq of (qt.sub_questions||[])) {
+        if (gQuery && (sq.grammar||'').toLowerCase().includes(gQuery)) return true;
+        if (pQuery && (sq.phrases||'').toLowerCase().includes(pQuery)) return true;
+      }
+    }
+    return false;
+  }
+
   function runTestSearch() {
     const gradeFilter = (document.getElementById('tsGradeFilter')||{}).value || '';
     const fromUnit  = (document.getElementById('tsFromUnit')  ||{}).value  || '';
@@ -2743,18 +2752,7 @@
     const fromN = fromUnit ? unitNum(fromUnit) : 0;
     const toN   = toUnit   ? unitNum(toUnit)   : 99;
 
-    // 文法・熟語が含まれるかチェック
-    function containsGrammarOrPhrase(qtypes, gQuery, pQuery) {
-      for (const qt of (qtypes||[])) {
-        if (gQuery && (qt.grammar||'').toLowerCase().includes(gQuery)) return true;
-        if (pQuery && (qt.phrases||'').toLowerCase().includes(pQuery)) return true;
-        for (const sq of (qt.sub_questions||[])) {
-          if (gQuery && (sq.grammar||'').toLowerCase().includes(gQuery)) return true;
-          if (pQuery && (sq.phrases||'').toLowerCase().includes(pQuery)) return true;
-        }
-      }
-      return false;
-    }
+    // 文法・熟語フィルター（モジュールレベルのcontainsGrammarOrPhraseを使用）
 
     const results = hist.filter(h => {
       const rangeStr = h.range || '';
