@@ -2366,6 +2366,8 @@ phrases フィールド：問題として問われた熟語・イディオムの
     }
 
     let useParallel = 3; // 3並列スタート（429時は2→1に自動降格）
+    let errorStreak = 0;
+    let done = 0;
     const batchStart = Date.now();
     const groupTimes = []; // 各グループの所要時間（ms）
 
