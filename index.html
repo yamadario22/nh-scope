@@ -961,7 +961,10 @@
         const data = doc.data();
         const book = library.find(b => b.id === doc.id);
         if (book) {
-          if (data.items) { book.items = data.items; updated = true; }
+          if (data.items) {
+            book.items = data.items.slice().sort((a,b)=>(a.page||0)-(b.page||0));
+            updated = true;
+          }
           if (data.name)  { book.name  = data.name; }
         } else if (data.name) {
           library.push({ id: doc.id, name: data.name, items: data.items || [] });
@@ -1405,9 +1408,23 @@
     const parsed = parseJ(raw);
     const items = parsed.items || [];
     if (items.length === 0 && raw.length < 30) {
-      // 単語リストがないページは正常（エラーではなくスキップ）
       return [];
     }
+
+    // ページ番号を検証・補正（Geminiの誤読を修正）
+    const minP = Math.min(...pageNums);
+    const maxP = Math.max(...pageNums);
+    items.forEach(item => {
+      const p = parseInt(item.page);
+      if (!p || p < minP || p > maxP) {
+        // 範囲外の場合は対応するページ番号を割り当て
+        // 複数ページある場合は最初のページを使用
+        item.page = pageNums[0];
+      } else {
+        item.page = p;
+      }
+    });
+
     return items;
   }
 
@@ -2839,8 +2856,13 @@
 
   function saveBackup() {
     if (!Array.isArray(library) || library.length === 0) return;
+    // 保存前にページ順でソート（Unit順の保証）
+    library.forEach(book => {
+      if (Array.isArray(book.items)) {
+        book.items.sort((a, b) => (a.page||0) - (b.page||0));
+      }
+    });
     try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ library, activeId })); } catch {}
-    // Firestoreにも保存（バックグラウンド）
     saveLibraryToFirestore(activeId);
   }
 
