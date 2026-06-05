@@ -2181,31 +2181,69 @@ phrases フィールド：問題として問われた熟語・イディオムの
 
   // ── ライブラリ照合による範囲補正 ────────────────────────────────────
   function refineRangeFromLibrary(r) {
-    const items = getItems();
-    if (!items.length) return; // ライブラリデータがなければスキップ
+    const items = getNHItems(); // テスト分析は常にNH専用
+    if (!items.length) return;
 
-    // 照合用語彙を収集（tested_vocab + key_items）
+    // 照合候補を収集（tested_vocab + key_items + question_types の grammar/phrases）
     const vocab = new Set();
-    (r.tested_vocab || []).forEach(v => { const t=v.trim().toLowerCase(); if(t.length>=2) vocab.add(t); });
-    (r.key_items    || []).forEach(v => {
-      v.split(/[・、,\s]+/).forEach(w => { const t=w.trim().toLowerCase(); if(t.length>=3) vocab.add(t); });
+    (r.tested_vocab || []).forEach(v => {
+      const t = v.trim().toLowerCase();
+      if (t.length >= 3) vocab.add(t);
     });
+    (r.key_items || []).forEach(v => {
+      v.split(/[・、,\s]+/).forEach(w => {
+        const t = w.trim().toLowerCase();
+        if (t.length >= 3) vocab.add(t);
+      });
+    });
+    (r.question_types || []).forEach(qt => {
+      [qt.grammar, qt.phrases].filter(Boolean).forEach(s => {
+        s.split(/[・、,\/]+/).forEach(w => {
+          const t = w.trim().toLowerCase();
+          if (t.length >= 3) vocab.add(t);
+        });
+      });
+      (qt.sub_questions || []).forEach(sq => {
+        [sq.grammar, sq.phrases].filter(Boolean).forEach(s => {
+          s.split(/[・、,\/]+/).forEach(w => {
+            const t = w.trim().toLowerCase();
+            if (t.length >= 3) vocab.add(t);
+          });
+        });
+      });
+    });
+
     if (!vocab.size) return;
 
-    // ライブラリから照合してページ範囲を取得
-    let maxPage=0, maxItem=null;
+    let maxPage = 0, maxItem = null;
+
     items.forEach(item => {
-      const c = (item.content||'').toLowerCase();
+      const content     = (item.content || '').toLowerCase().trim();
+      const translation = (item.translation || '').toLowerCase();
+      const notes       = (item.notes || '').toLowerCase();
+      let matched = false;
+
       for (const v of vocab) {
-        if (c === v || c.includes(v)) {
-          if (item.page > maxPage) { maxPage=item.page; maxItem=item; }
-          break;
+        if (item.type === '熟語' || item.type === '文法') {
+          // 熟語・文法：部分一致OK（テスト側が含むか、ライブラリ側が含むか）
+          if (content.includes(v) || v.includes(content) && content.length >= 5
+              || notes.includes(v) || v.includes(notes) && notes.length >= 5) {
+            matched = true;
+          }
+        } else if (item.type === '単語') {
+          // 単語：5文字以上の完全一致のみ（go/be/the等の一般語を除外）
+          if (v === content && content.length >= 5) matched = true;
         }
+        if (matched) break;
+      }
+
+      if (matched && item.page > maxPage) {
+        maxPage = item.page;
+        maxItem = item;
       }
     });
 
-    // 終端を補正（ライブラリの照合結果がGeminiの推定より信頼性が高い）
-    if (maxItem && maxPage > 0) {
+    if (maxItem) {
       r.to_unit   = maxItem.unit   || r.to_unit;
       r.to_lesson = maxItem.lesson || r.to_lesson;
     }
@@ -2330,17 +2368,54 @@ phrases フィールド：問題として問われた熟語・イディオムの
     let useParallel = 2;
     let errorStreak = 0;
     let done = 0;
+    const batchStart = Date.now();
+    const groupTimes = []; // 各グループの所要時間（ms）
+
+    const fmt = ms => {
+      const s = Math.round(ms / 1000);
+      return s < 60 ? `${s}秒` : `${Math.floor(s/60)}分${s%60}秒`;
+    };
+    const fmtClock = ms => {
+      const d = new Date(Date.now() + ms);
+      return `${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+    };
+
+    const updateStatus = (currentName) => {
+      const elapsed = Date.now() - batchStart;
+      const avgPerGroup = groupTimes.length
+        ? groupTimes.reduce((a,b)=>a+b,0) / groupTimes.length / useParallel
+        : null;
+      const remaining = pending.length - done;
+      const remainGroups = Math.ceil(remaining / useParallel);
+      const etaMs = avgPerGroup ? avgPerGroup * remainGroups : null;
+
+      const lines = [
+        `${done + skipped}/${names.length}完了（スキップ${skipped}件）`,
+        `経過：${fmt(elapsed)}`,
+        groupTimes.length >= 1 && avgPerGroup
+          ? `1グループ平均：${fmt(avgPerGroup)}（実測${groupTimes.length}件）`
+          : '計測中...',
+        etaMs
+          ? `残り推定：${fmt(etaMs)}　完了予定：${fmtClock(etaMs)}`
+          : '',
+        currentName ? `分析中：「${currentName}」` : ''
+      ].filter(Boolean).join(' ／ ');
+
+      setSt(stEl, 'load', lines);
+    };
 
     for (let gi = 0; gi < pending.length; gi += useParallel) {
       if (testAnalysisStopped) { setSt(stEl,'err','⏹ 停止しました'); break; }
       const batch = pending.slice(gi, gi + useParallel);
-      setSt(stEl,'load',`${done + skipped}/${names.length}完了 — 「${batch[0]}」${batch.length>1?' / 「'+batch[1]+'"':''} 分析中...`);
+      updateStatus(batch[0]);
 
+      const groupStart = Date.now();
       const results = await Promise.allSettled(
         batch.map(name => processBatchGroup(name, groups[name]))
       );
+      const groupElapsed = Date.now() - groupStart;
 
-      results.forEach((res, i) => {
+      results.forEach((res) => {
         if (res.status === 'fulfilled') {
           done++;
           errorStreak = 0;
@@ -2356,10 +2431,17 @@ phrases フィールド：問題として問われた熟語・イディオムの
         }
       });
 
+      // 実測時間を記録（最新10件の移動平均で精度を高める）
+      groupTimes.push(groupElapsed);
+      if (groupTimes.length > 10) groupTimes.shift();
+
       if (gi + useParallel < pending.length && !testAnalysisStopped) await sleep(300);
     }
 
-    if (!testAnalysisStopped) setSt(stEl,'ok',`✅ 完了（分析：${done}件、スキップ：${skipped}件）`);
+    if (!testAnalysisStopped) {
+      const total = Date.now() - batchStart;
+      setSt(stEl,'ok',`✅ 完了（分析：${done}件、スキップ：${skipped}件、合計所要時間：${fmt(total)}）`);
+    }
     document.getElementById('batchStartBtn').disabled = false;
     renderTestHistory();
   }
@@ -2401,7 +2483,7 @@ phrases フィールド：問題として問われた熟語・イディオムの
 ・grade：「中１」「中２」「中３」のいずれか
 ・from_unit/to_unit：「Unit 1」〜「Unit 10」形式で必ず特定
 ・from_lesson/to_lesson：上記セクション名を正確に記載
-・tested_vocab：テスト問題文に登場する英単語・熟語（ライブラリ照合用）
+・tested_vocab：テストに登場する文法パターン・熟語・特徴的な単語（5文字以上）を配列で列挙。ライブラリと照合してテスト範囲の終端を特定するために使用。例：["want O to do", "May I help you", "hundreds of", "volunteer", "traditional"]。一般的な短い単語（go/be/the/have等）は含めない
 ・typeフィールド：「リスニング」「単語」「整序」など日本語
 ・detailsフィールド：最大30文字。繰り返し禁止
 ・grammar・phrasesは英語混在可。phrasesは複数語の熟語・イディオム（be linked to / more and more / in addition 等、新出かどうかは問わない）。already/yet等の1語副詞・have to等の助動詞は除外
