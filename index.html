@@ -3083,9 +3083,22 @@ phrases フィールド：問題として問われた熟語・イディオムの
         library.push({ ...def, items: [] });
       }
     });
-    // IDで重複排除
-    const seen = new Set();
-    library = library.filter(b => { if (seen.has(b.id)) return false; seen.add(b.id); return true; });
+    // DEFAULT_BOOKSの固定IDを優先しつつ、IDとname両方で重複排除
+    const defaultIds = new Set(DEFAULT_BOOKS.map(b => b.id));
+    // まず固定IDのものを先に並べる
+    library.sort((a, b) => {
+      const aD = defaultIds.has(a.id) ? 0 : 1;
+      const bD = defaultIds.has(b.id) ? 0 : 1;
+      return aD - bD;
+    });
+    const seenId   = new Set();
+    const seenName = new Set();
+    library = library.filter(b => {
+      if (seenId.has(b.id) || seenName.has(b.name)) return false;
+      seenId.add(b.id);
+      seenName.add(b.name);
+      return true;
+    });
     if (!library.find(b => b.id === activeId)) activeId = library[0].id;
 
     // 2. UI描画（libraryは必ず1冊以上ある状態）
