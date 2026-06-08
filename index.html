@@ -229,10 +229,11 @@
 <nav class="tabs">
   <div class="tab active" data-tab="setup"       onclick="switchTab('setup')">📚 教科書データ解析</div>
   <div class="tab"        data-tab="edit"        onclick="switchTab('edit')">📋 教科書データ編集</div>
-  <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 NH単語・熟語・文法検索</div>
+  <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 単語・熟語・文法検索</div>
   <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
   <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
   <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
+  <div class="tab"        data-tab="exam"        onclick="switchTab('exam');renderExamHistory()">🎓 入試分析</div>
 </nav>
 
 <!-- BOOK SWITCHER BAR -->
@@ -472,11 +473,24 @@
   <div id="tab-compare" class="tab-content">
     <div class="card">
       <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">両教科書の解析データを読み込んでから使用してください。</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">両教科書の解析データを読み込んでから使用してください。</p>
       <div class="pills" id="comparePills">
         <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語比較</div>
         <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語比較</div>
         <div class="pill" onclick="setCompareMode('grammar',this)">③ 文法履修表</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <div class="s-wrap" style="flex:1;min-width:180px;margin-bottom:0">
+          <span class="s-ico">🔍</span>
+          <input class="s-input" id="compareSearch" placeholder="単語・熟語・文法を検索..."
+                 style="height:40px;font-size:13px" oninput="renderCompare()">
+        </div>
+        <select id="compareTypeFilter" class="book-select" onchange="setCompareModeFromFilter()">
+          <option value="">全種類</option>
+          <option value="単語">単語</option>
+          <option value="熟語">熟語</option>
+          <option value="文法">文法</option>
+        </select>
       </div>
     </div>
     <div id="compareResult"></div>
@@ -580,6 +594,36 @@
     </div>
     <div id="tsResults"></div>
   </div></div><!-- /test-search inner -->
+
+  <!-- ══ TAB 7: 入試分析 ══════════════════════════════════════════ -->
+  <div id="tab-exam" class="tab-content"><div style="max-width:960px;margin:0 auto;padding:28px 20px 80px">
+    <div class="card">
+      <div class="card-title">🎓 入試PDF分析</div>
+      <div class="row" style="gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">年度</label>
+          <input type="text" id="examYear" class="form-in" style="width:180px"
+                 placeholder="例：令和8、2026（PDFから自動取得）">
+        </div>
+      </div>
+      <div class="upload-zone" id="examZone">
+        <div class="uz-ico">📄</div>
+        <div class="uz-title" id="examTitle">入試PDFをアップロード</div>
+        <div class="uz-sub" id="examSub">問題・解答PDF複数可 — ドラッグ＆ドロップ または ↓ボタン</div>
+      </div>
+      <div id="examFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      <input type="file" id="examFile" accept=".pdf" multiple style="display:none"
+             onchange="onExamFilesSelected(this.files)">
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button type="button" class="btn btn-secondary"
+                onclick="document.getElementById('examFile').click()">📂 PDFを選択</button>
+        <button type="button" class="btn btn-primary" id="examStartBtn" disabled
+                onclick="runExamAnalysis()">🎓 分析開始</button>
+      </div>
+      <div id="examStatus"></div>
+    </div>
+    <div id="examHistorySection"></div>
+  </div></div>
 
 </div><!-- /main -->
 
@@ -810,6 +854,9 @@
 
   async function deleteBook() {
     if (library.length <= 1) { alert('最後の1冊は削除できません。'); return; }
+    if (isNHBook(activeId) || isNCBook(activeId)) {
+      alert('NEW HORIZON・NEW CROWNのデフォルト教科書は削除できません。'); return;
+    }
     const ok = await showConfirm(`「${activeBook()?.name}」を削除しますか？`);
     if (!ok) return;
     library = library.filter(b => b.id !== activeId);
@@ -1361,9 +1408,9 @@
 
   async function extractBatch(images, pageNums) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
-    const pageLabel = pageNums.length === 1
-      ? `p.${pageNums[0]}`
-      : `p.${pageNums[0]}〜p.${pageNums[pageNums.length-1]}`;
+    const pageLabel = `PDFの${pageNums.length === 1
+      ? `${pageNums[0]}ページ目`
+      : `${pageNums[0]}〜${pageNums[pageNums.length-1]}ページ目`}の画像`;
 
     const isNC = isNCBook(activeId);
     const bookName   = isNC ? 'NEW CROWN' : 'NEW HORIZON';
@@ -1373,7 +1420,7 @@
       : '「Scene 1」「Read and Think 1」「Grammar for Communication 1」「Real Life English」「Stage Activity 1」';
 
     parts.push({ text:
-      `これは${bookName}の教科書ページ（${pageLabel}）の画像です。添付した全ページから学習項目を抽出してください。
+      `これは${bookName}の教科書（${pageLabel}）です。添付した全ページから学習項目を抽出してください。
 
 必ず以下のJSON形式のみで返してください（マークダウン不要）：
 {"items":[{"unit":"${isNC?'Lesson 1':'Unit 1'}","lesson":"Part 1","page":10,"type":"単語","content":"hello","translation":"やあ、こんにちは","notes":""}]}
@@ -1383,7 +1430,7 @@
 • lessonの例：${lessonEx}
 • translationには必ず日本語訳を入れること（空白にしない）
 • typeは「単語」「文法」「熟語」のいずれか
-• pageは各画像内のページ番号（数字）
+• pageは教科書の各ページ下部・隅に印刷されている実際のページ番号（数字）を正確に読み取ること。PDFの通し番号ではなく、教科書に印字されている番号
 • 本文の地の文は抽出しない
 
 【単語】単語リスト・WORD BOX・語彙表に掲載されている単語のみ
@@ -1401,7 +1448,7 @@
       parts,
       `あなたは${bookName}英語教科書のデータ抽出専門家です。
 教科書の単語リストやWORD BOXから単語・文法・熟語を抽出し、必ず日本語訳を付けてJSONのみで返します。
-日本語訳が不明でも推測して必ず入れてください。マークダウン不要。`,
+pageは教科書に印刷されているページ番号を正確に読み取ること。日本語訳が不明でも推測して必ず入れてください。マークダウン不要。`,
       16000
     );
 
@@ -1411,18 +1458,10 @@
       return [];
     }
 
-    // ページ番号を検証・補正（Geminiの誤読を修正）
-    const minP = Math.min(...pageNums);
-    const maxP = Math.max(...pageNums);
+    // 基本サニタイズのみ（補正は行わない・Geminiの読み取りを信頼する）
     items.forEach(item => {
       const p = parseInt(item.page);
-      if (!p || p < minP || p > maxP) {
-        // 範囲外の場合は対応するページ番号を割り当て
-        // 複数ページある場合は最初のページを使用
-        item.page = pageNums[0];
-      } else {
-        item.page = p;
-      }
+      item.page = (p > 0) ? p : null;
     });
 
     return items;
@@ -1917,6 +1956,7 @@
         20000
       );
       setSt(stEl,'ok','✅ 分析完了');
+      if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
       // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
       refineRangeFromLibrary(r);
@@ -2613,6 +2653,339 @@
   }
 
   // ── 傾向分析 ────────────────────────────────────────────────────────
+  // ── 入試分析 ────────────────────────────────────────────────────────
+  const EXAM_HIST_KEY = 'nhscope_exams';
+  const FB_EXAMS_COL  = 'nhscope_exam_entries';
+  let pendingExamData = null;
+  let selectedExamYear = null;
+
+  function parseExamYear(input) {
+    const s = (input||'').trim();
+    const r8 = s.match(/令和\s*(\d+)/);
+    if (r8) { const n=parseInt(r8[1]); return { year:(2018+n).toString(), nengo:`令和${n}` }; }
+    const h = s.match(/平成\s*(\d+)/);
+    if (h)  { const n=parseInt(h[1]);  return { year:(1988+n).toString(), nengo:`平成${n}` }; }
+    const y = s.match(/(\d{4})/);
+    if (y)  {
+      const yr=parseInt(y[1]);
+      const ng = yr>=2019?`令和${yr-2018}`:yr>=1989?`平成${yr-1988}`:'';
+      return { year:yr.toString(), nengo:ng };
+    }
+    return null;
+  }
+
+  function findInNHLibrary(word) {
+    if (!word) return null;
+    const wLow = (word||'').toLowerCase().trim();
+    if (wLow.length < 2) return null;
+    let best = null, bestPage = Infinity;
+    for (const book of library) {
+      if (!isNHBook(book.id)) continue;
+      const grade = book.id.endsWith('c1')?'中1':book.id.endsWith('c2')?'中2':'中3';
+      for (const item of (book.items||[])) {
+        const c = (item.content||'').toLowerCase().trim();
+        if (c === wLow || (c.includes(wLow) && wLow.length >= 5)) {
+          if ((item.page||0) < bestPage) {
+            bestPage = item.page||0;
+            best = { grade, unit:item.unit||'', lesson:item.lesson||'', page:item.page||0 };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  async function onExamFilesSelected(files) {
+    if (!files||!files.length) return;
+    const pdfs = Array.from(files).filter(f=>f.name.toLowerCase().endsWith('.pdf'));
+    if (!pdfs.length) return;
+    const stEl = document.getElementById('examStatus');
+    const btn  = document.getElementById('examStartBtn');
+    btn.disabled = true;
+    pendingExamData = null;
+    document.getElementById('examTitle').textContent = pdfs.length===1 ? pdfs[0].name : `${pdfs.length}ファイル選択済み`;
+    document.getElementById('examFileList').innerHTML = pdfs.map(f=>`📄 ${esc(f.name)}`).join('<br>');
+    setSt(stEl,'load','PDFを読み込み中...');
+    try {
+      const allImgs = []; const MAX=40;
+      for (const pdf of pdfs) {
+        if (allImgs.length>=MAX) break;
+        const buf = await pdf.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
+        const remain = MAX-allImgs.length;
+        for (let i=1; i<=Math.min(pdfDoc.numPages,remain); i++) {
+          allImgs.push(await toBase64(await pdfDoc.getPage(i),1.1));
+        }
+      }
+      pendingExamData = { imgs:allImgs, name:pdfs.map(f=>f.name).join('・') };
+
+      // 1ページ目から年度を自動検出
+      setSt(stEl,'load','年度を自動検出中...');
+      try {
+        const yr = await callGeminiJSON(
+          [{ inlineData:{ mimeType:'image/jpeg', data:allImgs[0] } },
+           { text:'この試験の表紙・ヘッダーから年度を読み取ってください。nengo（例：令和8）とyear（西暦4桁、例：2026）のみ返してください。' }],
+          '年度の読み取りのみ行う。',
+          { type:'OBJECT', properties:{ nengo:{ type:'STRING' }, year:{ type:'STRING' } } },
+          300
+        );
+        if (yr.nengo) document.getElementById('examYear').value = yr.nengo;
+        else if (yr.year) document.getElementById('examYear').value = yr.year;
+      } catch {}
+
+      setSt(stEl,'ok',`✅ ${allImgs.length}ページ読み込み完了 — 内容を確認して分析開始`);
+      btn.disabled = false;
+    } catch(e) { setSt(stEl,'err','❌ PDF読み込みエラー: '+e.message); }
+  }
+
+  async function runExamAnalysis() {
+    if (!pendingExamData) return;
+    if (!getApiKey()) { alert('APIキーを設定してください'); return; }
+    const yearInput = document.getElementById('examYear').value;
+    const parsed = parseExamYear(yearInput); // 未入力でもOK（Geminiが自動検出）
+
+    const stEl = document.getElementById('examStatus');
+    document.getElementById('examStartBtn').disabled = true;
+    setSt(stEl,'load','入試問題を分析中（しばらくお待ちください）...');
+
+    try {
+      const { imgs, name } = pendingExamData;
+      const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
+      const nhItems = getNHItems();
+      const libCtx = nhItems.length
+        ? '\n\n【NEW HORIZON教科書データ（参考）】\n'+nhItems.slice(0,1500).map(i=>`${i.unit} p.${i.page||'-'} [${i.type}] ${i.content}`).join('\n').substring(0,2500)
+        : '';
+
+      parts.push({ text:
+`この英語入試問題（筆記検査）を研究目的で分析してください。${libCtx}
+
+【最初に年度を特定】
+・nengo：表紙・ヘッダーに書かれている元号（例：「令和8」）
+・year：対応する西暦4桁（令和8→2026、令和7→2025、令和6→2024）
+
+【抽出する6項目】
+①tested_grammar：問題として問われている文法事項（空欄・下線・整序の答えとなる文法）
+②tested_phrases：問題として問われている熟語・イディオム（複数語のみ）
+③passage_grammar：長文・対話文中の文法事項（問題とは無関係、本文中に使われている文法）
+④passage_phrases：長文・対話文中の熟語・イディオム（問題とは無関係）
+⑤passage_vocabulary：長文・対話文中の特徴的語彙（5文字以上、教科書レベルの重要語）
+⑥summaries：各長文・対話文のテーマと5文以内の日本語要約
+
+【ルール】
+・tested：空欄(___)・下線部・並べ替えで「答え」として求められているもの
+・passage：文章に登場するが答えではないもの
+・grammar例：現在完了（経験）・不定詞（副詞的用法）・比較級・関係代名詞that・SVOC構文
+・phrases例：take part in / look forward to / according to / such as / because of
+・vocabulary：decrease/circulation/survey などの特徴的語彙（go/be/the等は除外）
+・summaries.type：「長文」「対話文」のいずれか
+・リスニングは分析対象外（音声なしのため）` });
+
+      const r = await callGeminiJSON(parts,
+        '英語入試問題分析の専門家。6項目を正確に抽出。リスニング不要。',
+        { type:'OBJECT', properties:{
+          nengo:              { type:'STRING' },
+          year:               { type:'STRING' },
+          tested_grammar:     { type:'ARRAY', items:{ type:'STRING' } },
+          tested_phrases:     { type:'ARRAY', items:{ type:'STRING' } },
+          passage_grammar:    { type:'ARRAY', items:{ type:'STRING' } },
+          passage_phrases:    { type:'ARRAY', items:{ type:'STRING' } },
+          passage_vocabulary: { type:'ARRAY', items:{ type:'STRING' } },
+          summaries:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
+            section:{ type:'STRING' }, type:{ type:'STRING' },
+            theme:  { type:'STRING' }, summary:{ type:'STRING' }
+          }}}
+        }}, 16000);
+
+      // 年度：Geminiが自動検出、なければ手動入力を使用
+      let finalNengo = r.nengo || parsed?.nengo || '';
+      let finalYear  = r.year  || parsed?.year  || '';
+
+      // 令和→西暦の変換補正
+      if (finalNengo && !finalYear) {
+        const m = finalNengo.match(/令和\s*(\d+)/);
+        if (m) finalYear = (2018+parseInt(m[1])).toString();
+      }
+      if (finalYear && !finalNengo) {
+        const y = parseInt(finalYear);
+        if (y >= 2019) finalNengo = `令和${y-2018}`;
+        else if (y >= 1989) finalNengo = `平成${y-1988}`;
+      }
+
+      // 入力欄に自動補完
+      const yearInput = document.getElementById('examYear');
+      if (yearInput && finalNengo) yearInput.value = finalNengo;
+
+      if (!finalYear) { setSt(stEl,'err','❌ 年度を特定できませんでした。手動で入力してください。'); return; }
+      const entry = {
+        name, year:finalYear, nengo:finalNengo,
+        date: new Date().toLocaleDateString('ja-JP'),
+        tested_grammar:   r.tested_grammar||[],
+        tested_phrases:   crossRef(r.tested_phrases),
+        passage_grammar:  r.passage_grammar||[],
+        passage_phrases:  crossRef(r.passage_phrases),
+        passage_vocabulary: crossRef(r.passage_vocabulary),
+        summaries:        r.summaries||[]
+      };
+
+      if (FIREBASE_READY && db) {
+        try {
+          const ref = await db.collection(FB_EXAMS_COL).add({ ...entry, createdAt:firebase.firestore.FieldValue.serverTimestamp() });
+          entry.firestoreId = ref.id;
+        } catch {}
+      }
+      const exams = JSON.parse(localStorage.getItem(EXAM_HIST_KEY)||'[]');
+      exams.unshift(entry);
+      localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(exams.slice(0,200)));
+
+      setSt(stEl,'ok','✅ 分析完了');
+      selectedExamYear = parsed.year;
+      renderExamHistory();
+    } catch(e) {
+      setSt(stEl,'err','❌ '+e.message);
+    } finally {
+      document.getElementById('examStartBtn').disabled = false;
+    }
+  }
+
+  function setExamYear(year) {
+    selectedExamYear = year;
+    renderExamHistory();
+  }
+
+  function renderExamHistory() {
+    const el = document.getElementById('examHistorySection');
+    if (!el) return;
+    let exams = [];
+    try { exams = JSON.parse(localStorage.getItem(EXAM_HIST_KEY)||'[]'); } catch {}
+    if (!exams.length) {
+      el.innerHTML = `<div class="empty" style="margin-top:20px"><div class="empty-ico">🎓</div><div class="empty-txt">入試PDFをアップロードして分析してください。</div></div>`;
+      return;
+    }
+    const years = [...new Set(exams.map(e=>e.year))].sort().reverse();
+    if (!selectedExamYear || (!years.includes(selectedExamYear) && selectedExamYear!=='stats')) {
+      selectedExamYear = years[0];
+    }
+    const yearTabs = `<div class="pills" style="margin:16px 0 0">
+      ${years.map(y=>{
+        const e0=exams.find(e=>e.year===y);
+        const label=`${e0?.nengo||''}年度(${y}年)`;
+        return `<div class="pill ${y===selectedExamYear?'active':''}" onclick="setExamYear('${y}')">${label}</div>`;
+      }).join('')}
+      <div class="pill ${selectedExamYear==='stats'?'active':''}" onclick="setExamYear('stats')">📊 統計</div>
+    </div>`;
+
+    let content = '';
+    if (selectedExamYear === 'stats') {
+      content = buildExamStatsHTML(exams);
+    } else {
+      const yearExams = exams.filter(e=>e.year===selectedExamYear);
+      content = yearExams.map((exam,i)=>buildExamEntryHTML(exam,i)).join('');
+    }
+    el.innerHTML = yearTabs + content;
+  }
+
+  function buildExamEntryHTML(exam, idx) {
+    const refLabel = ref => ref
+      ? `<span style="font-size:10px;color:var(--muted);margin-left:4px">${ref.grade} ${ref.unit} p.${ref.page}</span>`
+      : `<span style="font-size:10px;color:#fca5a5;margin-left:4px">未収録</span>`;
+
+    const grammarRows = [
+      ...(exam.tested_grammar||[]).map(g=>`<tr><td style="color:#dc2626;font-weight:700">📐 ${esc(g)}</td><td style="font-size:11px;color:#dc2626;font-weight:600;white-space:nowrap">出題</td></tr>`),
+      ...(exam.passage_grammar||[]).map(g=>`<tr><td>${esc(g)}</td><td style="font-size:11px;color:var(--muted);white-space:nowrap">本文</td></tr>`)
+    ].join('');
+
+    const vocabRows = (exam.passage_vocabulary||[]).map(item=>`<tr>
+      <td style="font-weight:500">${esc(item.word||item)}</td>
+      <td>${refLabel(item.ref)}</td>
+    </tr>`).join('');
+
+    const phrasesRows = [
+      ...(exam.tested_phrases||[]).map(item=>`<tr><td style="color:#dc2626;font-weight:700">🔗 ${esc(item.word||item)}</td><td>${refLabel(item.ref)}</td><td style="font-size:11px;color:#dc2626;white-space:nowrap">出題</td></tr>`),
+      ...(exam.passage_phrases||[]).map(item=>`<tr><td>${esc(item.word||item)}</td><td>${refLabel(item.ref)}</td><td style="font-size:11px;color:var(--muted);white-space:nowrap">本文</td></tr>`)
+    ].join('');
+
+    const summaryHTML = (exam.summaries||[]).map(s=>`
+      <div style="padding:10px 13px;background:#f8fafc;border-radius:8px;border-left:3px solid var(--blue);margin-bottom:8px">
+        <div style="font-weight:700;margin-bottom:4px">${esc(s.section||'')} ${esc(s.type||'')}：<span style="color:#dc2626;font-style:italic">${esc(s.theme||'')}</span></div>
+        <div style="font-size:13px;line-height:1.8;color:var(--muted)">${esc(s.summary||'')}</div>
+      </div>`).join('');
+
+    const mkTable = (id, headers, rows, fallback) => rows
+      ? `<div class="tbl-wrap"><table id="et-${id}-${idx}"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<p style="font-size:12px;color:var(--muted)">${fallback}</p>`;
+
+    return `<div class="card" style="margin-top:12px">
+      <div class="card-title" style="justify-content:space-between">
+        <span>🎓 ${esc(exam.nengo||'')}年度(${esc(exam.year||'')}年)</span>
+        <span style="font-size:11px;color:var(--muted)">${esc(exam.date||'')}　${esc(exam.name||'')}</span>
+      </div>
+      <div class="s-wrap" style="margin-bottom:14px">
+        <span class="s-ico">🔍</span>
+        <input class="s-input" placeholder="文法・単語・熟語を検索..." oninput="filterExamEntry(${idx},this.value)">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">📐 文法</div>
+          ${mkTable('gram','文法事項,区分'.split(','), grammarRows, 'データなし')}
+        </div>
+        <div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">📝 掲載単語</div>
+          ${mkTable('vocab','単語,教科書掲載'.split(','), vocabRows, 'データなし')}
+        </div>
+        <div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">🔗 掲載熟語</div>
+          ${mkTable('phrases','熟語,教科書掲載,区分'.split(','), phrasesRows, 'データなし')}
+        </div>
+      </div>
+      ${summaryHTML ? `<div><div style="font-weight:700;font-size:13px;margin-bottom:8px">📖 長文・対話文要約</div>${summaryHTML}</div>` : ''}
+    </div>`;
+  }
+
+  function filterExamEntry(idx, query) {
+    const q = query.toLowerCase();
+    ['gram','vocab','phrases'].forEach(type => {
+      const el = document.getElementById(`et-${type}-${idx}`);
+      if (!el) return;
+      el.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+  }
+
+  function buildExamStatsHTML(exams) {
+    const gc={}, pc={};
+    exams.forEach(e => {
+      (e.tested_grammar||[]).forEach(g => { gc[g]=(gc[g]||0)+1; });
+      (e.tested_phrases||[]).forEach(p => { const w=p.word||p; pc[w]=(pc[w]||0)+1; });
+    });
+    const sortedG=Object.entries(gc).sort((a,b)=>b[1]-a[1]);
+    const sortedP=Object.entries(pc).sort((a,b)=>b[1]-a[1]);
+    const mkRows=items=>items.map(([k,v],i)=>`<tr>
+      <td style="font-size:12px;color:var(--muted)">${i+1}</td>
+      <td style="font-weight:${i<3?700:400}">${esc(k)}</td>
+      <td style="text-align:right;font-weight:600;color:var(--navy)">${v}回</td>
+    </tr>`).join('');
+    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div class="card">
+        <div class="card-title">📐 出題文法ランキング</div>
+        ${sortedG.length?`<div class="tbl-wrap"><table><thead><tr><th>順位</th><th>文法事項</th><th style="text-align:right">出題回数</th></tr></thead><tbody>${mkRows(sortedG)}</tbody></table></div>`:'<p style="font-size:13px;color:var(--muted)">データなし</p>'}
+      </div>
+      <div class="card">
+        <div class="card-title" style="color:#dc2626">🔗 出題熟語ランキング</div>
+        ${sortedP.length?`<div class="tbl-wrap"><table><thead><tr><th>順位</th><th>熟語</th><th style="text-align:right">出題回数</th></tr></thead><tbody>${mkRows(sortedP)}</tbody></table></div>`:'<p style="font-size:13px;color:var(--muted)">データなし</p>'}
+      </div>
+    </div>`;
+  }
+
+  // ── 教科書比較フィルター更新 ────────────────────────────────────────
+  function setCompareModeFromFilter() {
+    const v = (document.getElementById('compareTypeFilter')||{}).value||'';
+    if (v==='単語') { compareMode='vocab'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===0)); }
+    else if (v==='熟語') { compareMode='phrases'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===1)); }
+    else if (v==='文法') { compareMode='grammar'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===2)); }
+    renderCompare();
+  }
+
   // ── 教科書比較 ────────────────────────────────────────────────────
   let compareMode = 'vocab';
 
@@ -2638,10 +3011,15 @@
   }
 
   function renderCompareItems(el, nhItems, ncItems, type) {
+    const searchQ = ((document.getElementById('compareSearch')||{}).value||'').toLowerCase();
     const nhSet = new Set(nhItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
     const ncSet = new Set(ncItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
-    const nhOnly = nhItems.filter(i=>i.type===type && !ncSet.has((i.content||'').toLowerCase().trim()));
-    const ncOnly = ncItems.filter(i=>i.type===type && !nhSet.has((i.content||'').toLowerCase().trim()));
+    let nhOnly = nhItems.filter(i=>i.type===type && !ncSet.has((i.content||'').toLowerCase().trim()));
+    let ncOnly = ncItems.filter(i=>i.type===type && !nhSet.has((i.content||'').toLowerCase().trim()));
+    if (searchQ) {
+      nhOnly = nhOnly.filter(i=>(i.content||'').toLowerCase().includes(searchQ)||(i.translation||'').toLowerCase().includes(searchQ));
+      ncOnly = ncOnly.filter(i=>(i.content||'').toLowerCase().includes(searchQ)||(i.translation||'').toLowerCase().includes(searchQ));
+    }
     const mkTable = (items, unitLabel) => items.length
       ? `<div class="tbl-wrap"><table>
           <thead><tr><th>内容</th><th>訳</th><th>${unitLabel}</th></tr></thead>
@@ -2869,26 +3247,32 @@
   // ── 自動分割実行 ─────────────────────────────────────────────────
   async function autoSplitAnalyze() {
     if (!currentPDF) { alert('先にPDFを読み込んでください。'); return; }
+    const statusEl = document.getElementById('pdfStatus');
     const total = currentPDF.numPages;
     const chunk = 30;
     const chunks = [];
     for (let s = 1; s <= total; s += chunk) chunks.push([s, Math.min(s+chunk-1, total)]);
+    shouldStop = false;
     for (let ci = 0; ci < chunks.length; ci++) {
+      if (shouldStop) break;
       const [s, e] = chunks[ci];
       document.getElementById('startP').value = s;
       document.getElementById('endP').value   = e;
       updateEst();
-      setSt('pdfStatus', `自動分割: ${ci+1}/${chunks.length}回目（p.${s}〜p.${e}）実行中...`, 'info');
+      setSt(statusEl, 'load', `自動分割: ${ci+1}/${chunks.length}回目（p.${s}〜p.${e}）実行中...`);
       await startProcessing();
+      if (shouldStop) break;
       if (ci < chunks.length - 1) {
         for (let w = 20; w > 0; w--) {
+          if (shouldStop) break;
           document.getElementById('pInfo').textContent =
             `次のチャンク（p.${chunks[ci+1][0]}〜）まで ${w}秒待機中...`;
           await sleep(1000);
         }
       }
     }
-    setSt('pdfStatus', `✅ 全${chunks.length}回の自動分割実行が完了しました`, 'ok');
+    setSt(statusEl, shouldStop ? 'err' : 'ok',
+      shouldStop ? '⏹ 停止しました' : `✅ 全${chunks.length}回の自動分割実行が完了しました`);
   }
 
   // ── 重複削除 ─────────────────────────────────────────────────────
@@ -3194,7 +3578,17 @@
       });
     }
 
-    // 4. Firebase起動 → Firestoreからデータ読み込み
+    // 入試タブのD&D
+    const ez = document.getElementById('examZone');
+    if (ez) {
+      ez.addEventListener('dragover',  e=>{e.preventDefault();ez.classList.add('over');});
+      ez.addEventListener('dragleave', ()=>ez.classList.remove('over'));
+      ez.addEventListener('drop', e=>{
+        e.preventDefault(); ez.classList.remove('over');
+        const pdfs=Array.from(e.dataTransfer.files).filter(f=>f.type==='application/pdf');
+        if (pdfs.length) onExamFilesSelected(pdfs);
+      });
+    }
     initFirebaseWhenReady().then(() => {
       syncFromFirestore().then(() => {
         if (!getApiKey()) openSetupGuide();
