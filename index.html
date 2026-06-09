@@ -1012,13 +1012,29 @@
             book.items = data.items.slice().sort((a,b)=>(a.page||0)-(b.page||0));
             updated = true;
           }
-          if (data.name)  { book.name  = data.name; }
+          if (data.name)  { book.name = data.name; }
         } else if (data.name) {
-          library.push({ id: doc.id, name: data.name, items: data.items || [] });
-          updated = true;
+          // 同名の教科書が既にある場合は追加しない（重複防止）
+          const duplicate = library.find(b => b.name === data.name);
+          if (duplicate) {
+            // 既存の教科書にアイテムをマージ（データが新しい方を優先）
+            if (data.items && data.items.length > (duplicate.items||[]).length) {
+              duplicate.items = data.items.slice().sort((a,b)=>(a.page||0)-(b.page||0));
+              updated = true;
+            }
+          } else {
+            library.push({ id: doc.id, name: data.name, items: (data.items||[]).slice().sort((a,b)=>(a.page||0)-(b.page||0)) });
+            updated = true;
+          }
         }
       });
       if (updated) {
+        // 重複排除（ID・名前の両方で）
+        const seenId = new Set(), seenName = new Set();
+        library = library.filter(b => {
+          if (seenId.has(b.id) || seenName.has(b.name)) return false;
+          seenId.add(b.id); seenName.add(b.name); return true;
+        });
         renderBookSel();
         renderPreview();
         updateBadge();
