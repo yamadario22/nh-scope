@@ -341,11 +341,15 @@
     <div class="divider"><span>または — 画像ファイル（PNG/JPEG）を直接投入（iLovePDF不要）</span></div>
     <div class="card">
       <div class="card-title">🖼️ 画像ファイルから直接解析</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Snipping Toolで保存したPNG/JPEGを直接投入できます。PDF変換不要です。</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">スマホで撮った写真（見開き2ページでもOK）やPNG/JPEGを直接投入できます。PDF変換不要。各ページ隅の印字ページ番号がはっきり写るように撮影してください（番号がUnit補正の基準になります）。</p>
       <input type="file" id="imgFiles" accept=".png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="onImagesLoaded(this.files)">
       <button type="button" class="btn btn-secondary" style="width:100%" onclick="document.getElementById('imgFiles').click()">🖼️ 画像ファイルを選択（複数可）</button>
       <div id="imgStatus" style="font-size:13px;color:var(--muted);margin-top:8px"></div>
       <div id="imgSetupCard" style="display:none;margin-top:12px">
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:12px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="imgClearFirst" style="cursor:pointer">
+          解析前にこの教科書の既存データを全て削除する（撮り直し・重複防止用）
+        </label>
         <div class="row" style="gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" onclick="startImageProcessing()">🤖 画像から解析開始</button>
           <button class="btn btn-danger btn-sm" onclick="clearImageFiles()">✕ クリア</button>
@@ -1825,7 +1829,9 @@
 
   async function extractBatch(images, pageNums) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
-    const pageLabel = `PDFの${pageNums.length === 1
+    const pageLabel = !pageNums || !pageNums.length
+      ? '見開き等の画像（各ページ隅の印字番号を読み取ること）'
+      : `PDFの${pageNums.length === 1
       ? `${pageNums[0]}ページ目`
       : `${pageNums[0]}〜${pageNums[pageNums.length-1]}ページ目`}の画像`;
 
@@ -4264,6 +4270,7 @@ ${dataText}
     document.getElementById('imgFiles').value = '';
     document.getElementById('imgStatus').textContent = '';
     document.getElementById('imgSetupCard').style.display = 'none';
+    const cb = document.getElementById('imgClearFirst'); if (cb) cb.checked = false;
   }
 
   async function startImageProcessing() {
@@ -4272,25 +4279,46 @@ ${dataText}
     if (!getModel())   { alert('モデルを設定してください。'); return; }
 
     const statusEl = document.getElementById('imgStatus');
+
+    // 「既存データを全削除してから解析」オプション
+    if (document.getElementById('imgClearFirst')?.checked) {
+      const ok = await showConfirm(`「${activeBook()?.name}」の既存データを全て削除してから解析します。教科書・学年は正しいですか？`, '削除して解析');
+      if (!ok) return;
+      setItems([]); saveBackup(); updateBadge(); renderPreview();
+    }
+
     shouldStop = false;
     let totalItems = 0, errorCount = 0;
+    // 見開き写真は1枚に2ページ分の情報があるため、画像は1枚ずつ送る（精度安定）
+    const total = currentImageFiles.length;
+    const t0 = Date.now();
+    const draw = (done, cur) => {
+      const elapsed = Date.now() - t0;
+      const per = done ? elapsed/done : 0;
+      const remain = done ? fmtDur(per * (total-done)) : '計測中...';
+      const pct = Math.min(98, done/total*100);
+      statusEl.innerHTML = `
+        <div class="proc-panel" style="padding:18px;margin:10px 0 0">
+          <div class="proc-head"><div class="proc-title"><div class="spinner"></div>画像をAIが解析中</div></div>
+          <div class="proc-stats">
+            <div class="proc-stat"><div class="proc-num">${done}/${total}</div><div class="proc-lbl">処理済み画像</div></div>
+            <div class="proc-stat"><div class="proc-num">${totalItems}</div><div class="proc-lbl">取得項目数</div></div>
+            <div class="proc-stat"><div class="proc-num" style="font-size:20px">${done?'約'+remain:remain}</div><div class="proc-lbl">推定残り</div></div>
+          </div>
+          <div class="prog-wrap"><div class="prog-bar" style="width:${pct}%"></div></div>
+        </div>`;
+    };
+    draw(0);
 
-    // BATCH枚ずつ処理
-    for (let i = 0; i < currentImageFiles.length; i += BATCH) {
+    for (let i = 0; i < total; i++) {
       if (shouldStop) break;
-      const batch = currentImageFiles.slice(i, i + BATCH);
-      const pageNums = batch.map((_, idx) => i + idx + 1);
-      statusEl.textContent = `処理中 ${i+1}〜${Math.min(i+BATCH, currentImageFiles.length)} / ${currentImageFiles.length}枚...`;
-
       try {
-        // 画像を縮小してbase64に変換（スマホ写真の巨大サイズ対策）
-        const images = await Promise.all(batch.map(file => fileToResizedBase64(file)));
-
-        const items = await extractBatch(images, pageNums);
+        const b64 = await fileToResizedBase64(currentImageFiles[i]);
+        // ページ番号はGeminiが画像内の印字から読む（連番は渡さない）
+        const items = await extractBatch([b64], []);
         if (items.length > 0) {
           setItems([...getItems(), ...items]);
-          // 目次の対応表でUnit表記を自動補正（PDF経由と同じ扱い）
-          fixUnitsByPageTable(activeId);
+          fixUnitsByPageTable(activeId); // 文法→Unit対応表で即補正
           totalItems += items.length;
           saveBackup();
         }
@@ -4298,13 +4326,13 @@ ${dataText}
         errorCount++;
         console.error('画像処理エラー:', e);
       }
-
-      if (i + BATCH < currentImageFiles.length) await sleep(ROUND_DELAY);
+      draw(i+1);
+      if (i+1 < total) await sleep(ROUND_DELAY);
     }
 
     renderPreview();
     updateBadge();
-    statusEl.textContent = `✅ 完了：${totalItems}件を追加しました${errorCount ? `（${errorCount}枚エラー）` : ''}`;
+    statusEl.innerHTML = `<div style="color:var(--green);font-weight:600;padding:8px 0">✅ 完了：${totalItems}件を追加しました${errorCount ? `（${errorCount}枚エラー）` : ''}</div>`;
   }
 
   // ── 訳の空欄一括補完 ──────────────────────────────────────────────
