@@ -852,7 +852,7 @@
   const BATCH = 2;    // 2ページ/バッチ（速度2倍・API呼び出し半減）
   const PAR   = 3;    // 並列バッチ数（有料Tier1では3並列で安全）
   const ROUND_DELAY = 3000;  // ラウンド間の待機時間(ms)：有料Tier1では3秒で十分
-  const SCALE = 2.2;  // 高解像度レンダリング（誤読防止）
+  const SCALE = 1.8;  // レンダリング解像度（誤読防止とトークン節約のバランス。元は2.2）
   const QUAL  = 0.88; // JPEG品質
 
   // ── STATE ──────────────────────────────────────────────────────────
@@ -1695,7 +1695,7 @@
   function friendlyError(err) {
     const m = (err && err.message ? err.message : String(err||'')).trim();
     if (m.startsWith('__QUOTA__') || m.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(m))
-      return 'いまAIの利用が混み合っています（利用上限）。少し時間をおいてから、もう一度試してください。';
+      return 'AIの利用上限に達したか、前払い残高が不足しているようです。少し時間をおくか、Google AI Studioで残高と利用状況を確認してください。';
     if (/Failed to fetch|NetworkError|network/i.test(m) || m.includes('fetch'))
       return 'ネットワークに繋がりませんでした。通信環境を確認して、もう一度試してください。';
     if (/503|high demand|overloaded|UNAVAILABLE/i.test(m))
