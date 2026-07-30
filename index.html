@@ -1240,11 +1240,11 @@
     return map;
   }
 
-  // NEW HORIZONの教科書に入っていたら確実に他教科書由来と言える用語
-  const FOREIGN_SURE_RE  = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson)/i;
-  // 他教科書の疑いはあるが断定できない用語
-  // ※「Unit Activity」「Key Sentences」はNEW HORIZONの本文に実際に使われている見出しなので対象外
-  const FOREIGN_MAYBE_RE = /(基本文|Project\s*\d)/i;
+  // NEW HORIZONの教科書に入っていたら、他教科書の呼び方に見えるセクション名。
+  // ただしこれだけでは異物と断定できない。中3の巻末（p.132の文法のまとめ、p.144の語の成り立ち、
+  // p.150の英語の音と文字）は実在するのに、AIがセクション名を「Lesson 1」と誤記録していた。
+  // 名前が間違っているだけで中身は本物、というケースがあるため「疑い」にとどめる。
+  const FOREIGN_NAME_RE = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson|Language\s*Focus|基本文|Project\s*\d)/i;
 
   // 他の教科書にある項目を {内容+ページ → その教科書とセクション} で引ける形にする。
   // 同じ内容が同じページで別の本にもあるなら、片方がもう片方のコピー（＝混入）である。
@@ -1321,11 +1321,9 @@
         });
       }
 
-      // ④ 他教科書の呼び方
-      if (isNH && FOREIGN_SURE_RE.test(label)) {
-        reasons.push({ level:'確実', text:'NEW HORIZONにない呼び方（他教科書由来）' });
-      } else if (isNH && FOREIGN_MAYBE_RE.test(label)) {
-        reasons.push({ level:'疑い', text:'NEW HORIZONで使うか確認したい呼び方' });
+      // ④ 他教科書の呼び方に見えるセクション名（名前の誤記録の可能性もあるため「疑い」）
+      if (isNH && FOREIGN_NAME_RE.test(label)) {
+        reasons.push({ level:'疑い', text:'NEW HORIZONの呼び方ではないセクション名（名前だけ誤って記録された可能性もある）' });
       }
 
       // ⑤ 他学年で習う文法（凌央さんが作った文法対応表で照合）
@@ -1448,12 +1446,24 @@
         <div style="font-weight:600;font-size:13px;color:var(--navy);margin-bottom:2px">${title}（${list.length}件）</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${note}
           <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 6px;margin-left:6px"
-            onclick="document.querySelectorAll('#anomTbl${list===sure?'A':'B'} .anomChk').forEach(c=>c.checked=true)">この分類を全部選ぶ</button>
+            onclick="document.querySelectorAll('#anomTbl${list===sure?'A':'B'} .anomChk').forEach(c=>c.checked=true);updateAnomSelCount()">この分類を全部選ぶ</button>
         </div>
-        <div class="tbl-wrap" id="anomTbl${list===sure?'A':'B'}"><table>
+        <div class="tbl-wrap" id="anomTbl${list===sure?'A':'B'}" onchange="updateAnomSelCount()"><table>
           <thead><tr><th style="width:34px">削除</th><th>種類</th><th>内容</th><th>ページ</th><th>Unit</th><th>理由</th></tr></thead>
           <tbody>${rows(list)}</tbody>
         </table></div>
+      </div>` : '';
+
+    const filterUI = found.length ? `
+      <div style="background:var(--background-secondary,#f8fafc);border:0.5px solid var(--color-border-secondary,#e2e8f0);border-radius:8px;padding:8px;margin-bottom:12px">
+        <div style="font-size:12px;margin-bottom:6px">ページ番号やセクション名を入れて、まとめて選べます（例：<code>144</code> / <code>Lesson 1</code> / <code>基本文</code>）</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input id="anomFilter" placeholder="しぼり込む文字" style="flex:1;min-width:140px;padding:5px 8px;font-size:12px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+          <button class="btn btn-secondary btn-sm" onclick="anomSelectByFilter(true)">合う行を選ぶ</button>
+          <button class="btn btn-ghost btn-sm" onclick="anomSelectByFilter(false)">合う行を外す</button>
+          <button class="btn btn-ghost btn-sm" onclick="anomSelectByFilter(null)">全部外す</button>
+          <span id="anomSelCount" style="font-size:12px;color:var(--muted)"></span>
+        </div>
       </div>` : '';
 
     const counts = ['default_c1','default_c2','default_c3']
@@ -1469,6 +1479,7 @@
          学年ごとの件数が大きく違う場合は、どこかに他学年のデータが流れ込んでいる可能性があります。
        </div>
        ${found.length ? '' : '<div style="color:var(--muted);font-size:13px">異物は見つかりませんでした。</div>'}
+       ${filterUI}
        ${tbl('確実に異物と言えるもの', sure, 'この学年に存在しないセクション名、他学年のページ構成との一致、他教科書の呼び方から、この学年のデータではないと判断できるものです。')}
        ${tbl('疑いがあるもの', maybe, '断定はできないものです。他学年で習う文法名（学年をまたいで重なる用語もあります）や、NEW HORIZONで使うか確認したい呼び方です。内容を見て判断してください。')}
        ${found.length ? `<div style="background:#FEF3C7;padding:8px;border-radius:6px;font-size:12px;margin-top:8px">
@@ -1476,10 +1487,62 @@
 
     document.getElementById('anomalyFoot').innerHTML = found.length
       ? `<button class="btn btn-ghost btn-sm" onclick="closeAnomalyModal()">閉じる</button>
+         <button class="btn btn-secondary btn-sm" onclick="renameCheckedAnomalies()">選んだ項目のセクション名を直す</button>
          <button class="btn btn-danger btn-sm" onclick="deleteCheckedAnomalies()">選んだ項目を削除</button>`
       : `<button class="btn btn-primary btn-sm" onclick="closeAnomalyModal()">閉じる</button>`;
 
     document.getElementById('anomalyModal').style.display = 'flex';
+  }
+
+  // 一覧の行を、入力した文字（ページ番号・セクション名・理由など）でまとめて選ぶ／外す。
+  // on=true：合う行を選ぶ／on=false：合う行を外す／on=null：全部外す
+  function anomSelectByFilter(on) {
+    const box = document.getElementById('anomFilter');
+    const q = ((box && box.value) || '').trim().toLowerCase();
+    const rows = [...document.querySelectorAll('#anomalyBody tbody tr')];
+    rows.forEach(tr => {
+      const chk = tr.querySelector('.anomChk');
+      if (!chk) return;
+      if (on === null) { chk.checked = false; return; }
+      if (!q) return;
+      if (tr.textContent.toLowerCase().includes(q)) chk.checked = on;
+    });
+    updateAnomSelCount();
+  }
+
+  function updateAnomSelCount() {
+    const el = document.getElementById('anomSelCount');
+    if (!el) return;
+    const n = [...document.querySelectorAll('#anomalyBody .anomChk')].filter(c => c.checked).length;
+    el.textContent = n ? `${n}件を選択中` : '選択なし';
+  }
+
+  // 選んだ項目のセクション名だけを書き換える。
+  // 中身は正しいのにセクション名が誤記録されている項目（中3巻末の「Lesson 1」など）を、
+  // 削除せずに直すために使う。
+  async function renameCheckedAnomalies() {
+    const chks = [...document.querySelectorAll('#anomalyBody .anomChk')].filter(c => c.checked);
+    if (!chks.length) { alert('書き換える項目が選ばれていません。'); return; }
+    const idxs = chks.map(c => parseInt(c.dataset.idx)).filter(n => !isNaN(n));
+    const name = prompt(`選んだ${idxs.length}件のセクション名を、何に書き換えますか。\n（例：文法のまとめ／語の成り立ち／英語の音と文字）`, '');
+    if (name === null) return;
+    const newName = name.trim();
+    const ok = await showConfirm(
+      `${idxs.length}件のセクション名を「${newName || '（空欄）'}」に書き換えます。よろしいですか。`, '書き換える');
+    if (!ok) return;
+    const book = bookById(activeId);
+    if (!book) return;
+    const set = new Set(idxs);
+    let changed = 0;
+    (book.items || []).forEach((it, i) => {
+      if (!set.has(i)) return;
+      if ((it.lesson || '') !== newName) { it.lesson = newName; changed++; }
+    });
+    saveBackup();
+    renderUnitView();
+    renderPreview();
+    closeAnomalyModal();
+    alert(`${changed}件のセクション名を「${newName || '（空欄）'}」に書き換えました。`);
   }
 
   async function deleteCheckedAnomalies() {
