@@ -4264,8 +4264,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         otherGradeHits.push(`${v}（${first.grade || '他学年'}）`);
         continue;
       }
-      // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
-      const ru = rangeUnitFromPage(first.bookId, first.page) || first.unit;
+      // 場所はページから特定する。
+      // 項目に書かれた単元名をそのまま信用すると、中3の本に残った「Unit 9」のような
+      // ありえないラベルが範囲に出てしまう（中3にUnit 9はない）。
+      // ページから特定できない項目は、位置の根拠にしない。
+      const ru = rangeUnitFromPage(first.bookId, first.page);
+      if (!ru) { diag.noMatch = diag.noMatch || []; diag.noMatch.push(`${v}（ページ不明で位置が特定できず）`); continue; }
       const pos = rangePos([ru, first.lesson].filter(Boolean).join(' '), firstGrade);
       if (pos >= 0) wordHits.push({
         pos, unit: ru, lesson: first.lesson || '', term: v,
@@ -4365,6 +4369,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // Let's Read には Part / Scene などの下位区分がない（「Let's Read 3 Scene 1」は存在しない）
     if (/Let'?s\s*Read/i.test(r.from_unit)) r.from_lesson = '';
     if (/Let'?s\s*Read/i.test(r.to_unit))   r.to_lesson   = '';
+
+    // 安全網：その学年に存在しない単元が範囲に出ていたら、範囲を出さない。
+    // 中3はUnit 0〜6しかないのに「Unit 9」が出た実例があった（ページ不明の項目のラベルを
+    // そのまま使っていたのが原因）。ありえない範囲を出すより、出さないほうが害が小さい。
+    const bookIdOfGrade = `default_c${gradeNum}`;
+    const validUnitNames = new Set((PAGE_UNIT_TABLES[bookIdOfGrade] || [])
+      .flatMap(e => [e[1], e[2]]).filter(Boolean));
+    const unitExists = u => !u || validUnitNames.has(u) || /資料編/.test(u);
+    if (!unitExists(r.from_unit) || !unitExists(r.to_unit)) {
+      diag.reason = `中${gradeNum}に存在しない単元（${r.from_unit || '不明'} 〜 ${r.to_unit || '不明'}）が出たため、範囲を出していません`;
+      r.from_unit=''; r.from_lesson=''; r.to_unit=''; r.to_lesson='';
+      diag.after = buildRangeText(r);
+      return diag;
+    }
 
     // 復習として外したものをメモに残す（透明性のため）
     const excludedTerms = allHits.filter(h => Math.floor(h.pos) < minUnit).map(h => h.term);
