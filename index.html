@@ -3052,15 +3052,22 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   // 大問がページの境目をまたぐと同じ大問が2回出てくるため、大問番号でまとめ直す。
   function mergeTestResults(list) {
     const merged = { grade:'', from_unit:'', from_lesson:'', to_unit:'', to_lesson:'',
-                     summary:'', question_types:[], tested_vocab:[], key_items:[] };
+                     summary:'', question_types:[], tested_vocab:[], key_items:[], gradeVotes:{} };
     const qtMap = new Map();   // 大問番号+形式 → 大問
     const vocab = new Map();   // 小文字 → 元の表記（重複を除きつつ表記は最初のものを残す）
     const keys  = new Map();
     const summaries = [];
+    const gradeVotes = {};     // 学年ごとの票数
 
     (list || []).forEach(r => {
       if (!r) return;
-      if (!merged.grade && r.grade) merged.grade = r.grade;
+      // 学年は「最初に出たもの」ではなく多数決で決める。
+      // 3ページずつに分けて読ませているため、表紙や注意書きしか写っていないまとまりが
+      // 当てずっぽうの学年を返すことがある。それが先頭だと全部が狂う（実際に中3のテストが
+      // 中1と判定され、範囲がまるごと外れた）。
+      const g = String(r.grade || '').trim();
+      if (g) gradeVotes[g] = (gradeVotes[g] || 0) + 1;
+
       ['from_unit','from_lesson','to_unit','to_lesson'].forEach(k => {
         if (!merged[k] && r[k]) merged[k] = r[k];
       });
@@ -3100,6 +3107,11 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     merged.tested_vocab   = [...vocab.values()];
     merged.key_items      = [...keys.values()];
     merged.summary        = summaries.join(' ').slice(0, 400);
+    // 学年は多数決。同数のときは票が入った順（＝先に読んだまとまり）を採る
+    merged.gradeVotes = gradeVotes;
+    let bestG = '', bestN = 0;
+    Object.keys(gradeVotes).forEach(g => { if (gradeVotes[g] > bestN) { bestN = gradeVotes[g]; bestG = g; } });
+    merged.grade = bestG;
     return merged;
   }
 
@@ -3161,7 +3173,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
 【いま渡されている範囲】全${imgs.length}ページのうち ${ch.from}〜${ch.to}ページ目です。
 この画像に写っている大問だけを書いてください。写っていない大問を想像で補わないでください。
-大問が前のページから続いている場合も、この画像に見えている内容を書いてください。` });
+大問が前のページから続いている場合も、この画像に見えている内容を書いてください。
+
+【学年（grade）について】
+・この画像に写っている内容から学年が判断できる場合だけ書いてください
+・表紙や注意書きだけで中身が見えない場合は、grade を空文字にしてください
+・当てずっぽうで書かないでください。学年を間違えると出題範囲がまるごと外れます` });
           results.push(await callGeminiJSON(
             parts,
         `定期テスト分析の専門家。研究目的で次を抽出：
@@ -3241,6 +3258,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           </div>`;
         return;
       }
+
+      // 学年の判定が割れた場合は警告する。学年を間違えると範囲がまるごと外れるため。
+      const votes = r.gradeVotes || {};
+      const voteKeys = Object.keys(votes);
+      const gradeWarn = voteKeys.length > 1
+        ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+             <div class="card-title" style="color:#DC2626">⚠️ 学年の判定が割れました</div>
+             <p style="font-size:13px;color:var(--muted)">
+               読み取ったまとまりごとに学年の判断が違いました（${esc(voteKeys.map(k=>`${k}：${votes[k]}票`).join('／'))}）。
+               多いほうの<b>${esc(r.grade||'不明')}</b>を採用しています。
+               <b>学年が違うと出題範囲はまるごと外れます。</b>合っているか必ず確認してください。</p>
+           </div>`
+        : (!r.grade
+            ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+                 <div class="card-title" style="color:#DC2626">⚠️ 学年が判定できませんでした</div>
+                 <p style="font-size:13px;color:var(--muted)">学年が分からないため、出題範囲は正しく判定できません。</p>
+               </div>`
+            : '');
 
       // 読み取りが不十分なときは警告する（範囲判定の材料が足りず、範囲が手前で止まるため）
       // 目安はページ数から出す。1ページに大問1つ以上、出題語3語以上は取れているのが普通。
@@ -3343,6 +3378,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <div class="result-grade">${esc(r.grade||'')}</div>
           <div class="result-range">${esc(rangeStr)}</div>
         </div>
+        ${gradeWarn}
         ${thinWarn}
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
         ${crossNote}
@@ -3415,7 +3451,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 : '';
               return `<tr>
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
-                <td style="font-size:12px">${esc(h.grade||'')}</td>
+                <td style="font-size:12px">${esc(h.grade||'')}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
                 <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}${h.rangePrev&&h.rangePrev!==h.range?`<br><span style="font-weight:400;color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</span>`:''}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
@@ -3532,6 +3568,46 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // ── 範囲判定の内訳表示 ─────────────────────────────────────────
   // テスト1件について「どの語がどのUnitに一致して、範囲がどう決まったか」を全部出す。
   // 実物と見比べて、判定のどこが間違っているかを特定するための画面。Geminiは使わない。
+  // 保存済みテストの学年を直す。学年を間違えると範囲がまるごと外れるが、
+  // 分析し直すとAPI料金がかかるため、学年だけ直して範囲を計算し直せるようにする。
+  async function fixTestGrade(idx) {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const h = hist[idx];
+    if (!h) { alert('このテストのデータが見つかりません。'); return; }
+
+    const input = prompt(`「${h.name||''}」の学年を入力してください（中1／中2／中3）。\n現在：${h.grade||'不明'}`, h.grade||'');
+    if (input === null) return;
+    const g = normalizeGrade(String(input).trim());
+    if (!/^中[123]$/.test(g)) { alert('「中1」「中2」「中3」のいずれかを入力してください。'); return; }
+    if (g === h.grade) { alert('学年は変わっていません。'); return; }
+
+    // 学年を直して、保存済みの材料で範囲を計算し直す
+    const r = {
+      grade: g,
+      question_types: h.question_types || [],
+      tested_vocab: h.tested_vocab || [],
+      key_items: h.key_items || [],
+      from_unit:'', from_lesson:'', to_unit:'', to_lesson:''
+    };
+    refineRangeFromLibrary(r);
+    const newRange = buildRangeText(r);
+
+    const ok = await showConfirm(
+      `学年：${h.grade||'不明'} → ${g}\n範囲：${h.range||'不明'} → ${newRange}\n\nこの内容で書き換えますか。`, '書き換える');
+    if (!ok) return;
+
+    h.gradePrev = h.grade || '';
+    h.rangePrev = h.range || '';
+    h.grade = g;
+    h.range = newRange;
+    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    catch { alert('ブラウザへの保存に失敗しました。'); return; }
+    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, { grade: h.grade, range: h.range, gradePrev: h.gradePrev, rangePrev: h.rangePrev });
+    renderTestHistory();
+    alert(`学年を${g}に直し、範囲を「${newRange}」に計算し直しました。`);
+  }
+
   function closeRangeDiag() {
     const m = document.getElementById('rangeDiagModal');
     if (m) m.style.display = 'none';
