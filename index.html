@@ -436,6 +436,18 @@
         <button type="button" class="btn btn-ghost btn-sm" onclick="clearTestPDFs()" title="選択中のPDFを解除します">✕</button>
         <button type="button" class="btn btn-danger btn-sm" id="testStopBtn" style="display:none" onclick="stopTestAnalysis()">⏹ 停止</button>
       </div>
+      <div class="row" style="margin-top:10px;gap:8px;align-items:center">
+        <label style="font-size:12px;color:var(--muted);white-space:nowrap">学年</label>
+        <select id="testGradeSel" style="flex:1;padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+          <option value="">自動判定（AIに読み取らせる）</option>
+          <option value="中１">中1</option>
+          <option value="中２">中2</option>
+          <option value="中３">中3</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        学年を指定すると、AIの読み取り間違いによる範囲のズレがなくなります。学年が分かっているときは指定してください。
+      </div>
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--muted);cursor:pointer">
         <input type="checkbox" id="fastMode" style="cursor:pointer">
         ⚡ 高速モード — AIの思考量を制限して分析時間を短縮します（複雑なテストでは精度が下がる可能性あり）
@@ -1066,8 +1078,11 @@
       // 「形式主語」という語だけでも中2だが、forが書かれていれば中3の形なので除外する。
       [/^(?!.*\bfor\b)(?:.*(?:名詞的用法|形式主語)|.*it\s*(?:is|was)\b.*\bto\b|.*\bit\s*to\b)/i, 'Unit 3','Read and Think 2'],
       [/感情/,                              'Unit 3','Part 2'],
-      // 「不定詞」だけの表記も中2だが、forが書かれていれば中3の形（It is 形容詞 for O to ～）
-      [/^(?!.*\bfor\b).*(副詞的用法|不定詞)/,  'Unit 3','Part 1'],
+      // 中2の不定詞は3用法（名詞的・形容詞的・副詞的）。
+      // 「want O to do」は中3 Unit 3 Part 2 なので、ここには含めない。
+      // 除外しないと、AIが「want + O + to do (不定詞)」と書いたときだけ中2にも当たってしまい、
+      // 書き方によって学年の判定が変わってしまう。
+      [/^(?!.*\bfor\b)(?!.*(want|tell|ask)).*(副詞的用法|不定詞)/i,  'Unit 3','Part 1'],
       [/have\s*to/i,                        'Unit 4','Part 1'],
       [/\bmust\b/i,                         'Unit 4','Part 2'],
       [/動名詞.*主語|主語.*動名詞/,         'Unit 4','Read and Think 2'],
@@ -1087,8 +1102,9 @@
       [/現在完了.*継続|継続.*現在完了|継続用法/, 'Unit 2','Part 2'],
       [/現在完了/,                          'Unit 1','Part 1'],
       [/make\s*(人|[OＯA])\s*(形容詞|[CＣB])|svoc/i, 'Unit 1','Read and Think 1'],
-      // 「The story shows me that ...」＝Unit 1。SVOO・人物動詞という書き方でも拾えるようにする
-      [/(show|tell|teach).*(人|me|us).*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
+      // 「The story shows me that ...」＝Unit 1。SVOO・人物動詞という書き方でも拾えるようにする。
+      // 目的語が「A」「O」と書かれることもあるため、そこも許す
+      [/(show|tell|teach)\s*[+＋]?\s*(人|me|us|[AO])\b.*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
       // 「It is important for us to understand ....」＝Unit 3 Part 1。
       // 中3で習うのは「It is 形容詞 for O to ～」で、for が入るのが中2との違い。
       // AIは「It is + (for + (人など)) + to + 動詞の原形」のように記号を挟んで書くため、
@@ -1102,8 +1118,10 @@
       [/^(?!.*(how|what|where|when|who)\s*to\b)(?!.*疑問詞\s*[+＋]\s*(to|不定詞)).*(間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節)/i, 'Unit 4','Part 1'],
       [/let\s*(人|[a-z]+)?\s*(原形)?/i,     'Unit 3','Read and Think 1'],
       [/help\s*(人|[a-z]+)?\s*(原形)?/i,    'Unit 3','Read and Think 2'],
-      // 「I want everyone to know ....」＝Unit 3 Part 2。「動詞 + 目的語 + to不定詞」でも拾う
-      [/(want|tell|ask)\s*(人|[a-z]+)?\s*(to|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
+      // 「I want everyone to know ....」＝Unit 3 Part 2。
+      // AIは「want + O + to do」「want 人 to do」のように記号を挟んで書くため、
+      // 目的語の位置に記号や英字が入っても拾えるようにする
+      [/(want|tell|ask)\s*[+＋]?\s*(人|目的語|[AO]|[A-Za-z]+)?\s*[+＋]?\s*(to\b|to不定詞|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
       [/後置修飾|分詞.*修飾|現在分詞|過去分詞.*(修飾|名詞)/, 'Unit 4','Read and Think 2'],
       [/接触節/,                            'Unit 5','Part 1'],
       [/関係代名詞.*who|who.*関係代名詞/i,  'Unit 5','Part 2'],
@@ -1135,6 +1153,22 @@
       if (page >= p) result = u; else break;
     }
     return result || null;
+  }
+
+  // テスト範囲に入らないセクション。
+  // 凌央さんの確認：範囲に入るのは Unit / Let's Read / Real Life English / Stage Activity。
+  // 下の6つは、そのページの語が出題されていても「範囲がそこまで進んだ証拠」にならない。
+  const NOT_IN_RANGE_SECTIONS = ['Sounds and Letters', 'Grammar for Communication',
+                                 'Learning in English', '英語の歌', '夏休み特集'];
+
+  // そのページが範囲判定の対象かどうか
+  function isRangeTargetPage(bookId, page) {
+    const label = unitFromPage(bookId, page);
+    if (!label) return false;                       // 巻末（資料編）・表外
+    const aux = parseAuxName(label);
+    if (aux && NOT_IN_RANGE_SECTIONS.includes(aux.base)) return false;
+    if (/Unit Activity|資料編/.test(label)) return false;
+    return true;
   }
 
   // テスト範囲の判定に使うUnitを返す。
@@ -3331,6 +3365,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       setSt(stEl,'ok','✅ 分析完了');
       if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
+      // 画面で学年が指定されていれば、それを最優先で使う。
+      // 学年は範囲判定の土台なので、分かっているならAIの読み取りに頼る必要がない。
+      const pickedGrade = normalizeGrade(((document.getElementById('testGradeSel')||{}).value || '').trim());
+      const gradeWasPicked = /^中[１２３]$/.test(pickedGrade);
+      if (gradeWasPicked) r.grade = pickedGrade;
       // AIが学年を出せなかった場合は、拾った文法から推測する
       let gradeInfer = null;
       if (!r.grade) {
@@ -3387,7 +3426,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const votes = r.gradeVotes || {};
       const voteKeys = Object.keys(votes);
       let gradeWarn = '';
-      if (voteKeys.length > 1) {
+      if (gradeWasPicked) {
+        // 指定されているので、AIの判定が割れていても関係ない
+        gradeWarn = `<div style="font-size:12px;color:var(--muted);margin:6px 0">学年は指定された<b>${esc(r.grade)}</b>で判定しました。</div>`;
+      } else if (voteKeys.length > 1) {
         gradeWarn = `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
              <div class="card-title" style="color:#DC2626">⚠️ 学年の判定が割れました</div>
              <p style="font-size:13px;color:var(--muted)">
@@ -3857,6 +3899,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
     if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
+    if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
     if ((d.onceOnlyTerms||[]).length) decision.push(`1回しか出ていないため終わりの根拠にしなかった文法：${esc((d.onceOnlyTerms||[]).slice(0,8).join('・'))}`);
     if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
     if ((d.otherGrade||[]).length) decision.push(`他学年でのみ見つかった語：${esc((d.otherGrade||[]).slice(0,12).join('・'))}`);
@@ -4297,6 +4340,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         otherGradeHits.push(`${v}（${first.grade || '他学年'}）`);
         continue;
       }
+      // 範囲に入らないセクション（Sounds and Letters / Grammar for Communication /
+      // Learning in English / 英語の歌 / 夏休み特集 / 資料編）の語は根拠にしない。
+      // そのページの語が出題されていても、範囲がそこまで進んだ証拠にならないため。
+      if (!isRangeTargetPage(first.bookId, first.page)) {
+        diag.outOfRange = diag.outOfRange || [];
+        diag.outOfRange.push(`${v}（${unitFromPage(first.bookId, first.page) || '巻末'}）`);
+        continue;
+      }
       // 場所はページから特定する。
       // 項目に書かれた単元名をそのまま信用すると、中3の本に残った「Unit 9」のような
       // ありえないラベルが範囲に出てしまう（中3にUnit 9はない）。
@@ -4431,11 +4482,41 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // ── テスト分析 手動開始 ──────────────────────────────────────────
-  let pendingTestImages = null;
+  let pendingTestGroups = null;   // テスト単位にまとめた読み込み済み画像
 
   // ⚡高速モード：AIの思考トークンを制限して分析時間を短縮（精度がやや下がる可能性）
   function getFastModeOpts(checkboxId='fastMode') {
     return (document.getElementById(checkboxId)||{}).checked ? { thinkingBudget: 1024 } : {};
+  }
+
+  // ファイル名から「同じテスト」を見分けるキーを作る。
+  // 末尾の「問題1」「解答1」「問題・解答1」を取り除くと、同じテストは同じ名前になる。
+  //   常磐中ﾌﾒｲ2025年05月20日問題1.pdf ┐
+  //   常磐中ﾌﾒｲ2025年05月20日解答1.pdf ┘ → 常磐中ﾌﾒｲ2025年05月20日
+  // 問題と解答をそろえて渡すと、正答から文法を読み取れるので判定が正確になる。
+  function testGroupKey(fileName) {
+    const noExt = String(fileName || '').replace(/\.pdf$/i, '');
+    const key = noExt.replace(/(問題|解答)(?:[・･](?:問題|解答))?\s*\d*\s*$/, '').trim();
+    return key || noExt;
+  }
+
+  // 選ばれたファイルをテスト単位にまとめる。問題→解答の順に並べる（正答は後ろで参照される）
+  function groupTestFiles(fileArr) {
+    const map = new Map();
+    fileArr.forEach(f => {
+      const key = testGroupKey(f.name);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(f);
+    });
+    return [...map.entries()].map(([key, files]) => {
+      files.sort((a, b) => {
+        const rank = n => /問題/.test(n) ? 0 : (/解答/.test(n) ? 1 : 0);
+        return rank(a.name) - rank(b.name) || a.name.localeCompare(b.name);
+      });
+      // 履歴に残す名前は、学校名・先生名・日付が取れる「問題」側を優先する
+      const main = files.find(f => /問題/.test(f.name)) || files[0];
+      return { key, name: main.name, files };
+    });
   }
 
   async function onTestFilesSelected(files) {
@@ -4443,40 +4524,65 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
     if (!fileArr.length) return;
 
+    // 解答用紙だけのまとまりは、問題文がないため出題範囲を判定できない。
+    // 問題用紙と一緒なら正答から文法が読み取れて精度が上がるので、その場合は使う。
+    const allGroups = groupTestFiles(fileArr);
+    const usable = allGroups.filter(g => g.files.some(f => /問題/.test(f.name)));
+    const skipped = allGroups.filter(g => !g.files.some(f => /問題/.test(f.name)));
+    if (!usable.length) {
+      alert('解答用紙だけのファイルです。\n問題文がないため出題範囲を判定できません。\n\n問題用紙のPDFも一緒に選んでください（正答があると文法の読み取りが正確になります）。');
+      return;
+    }
+    if (skipped.length) {
+      alert(`次の${skipped.length}件は解答用紙だけなので分析しません。\n\n${skipped.map(g=>'・'+g.key).join('\n')}\n\n問題用紙も一緒に選べば分析できます。`);
+    }
+
     const stEl = document.getElementById('testStatus');
     const btn  = document.getElementById('testStartBtn');
     btn.disabled = true;
-    pendingTestImages = null;
+    pendingTestGroups = null;
 
-    // ファイル一覧を表示
+    // ファイル一覧を、テスト単位でまとめて表示
     const listEl = document.getElementById('testFileList');
-    listEl.innerHTML = fileArr.map((f,i) => `📄 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)`).join('<br>');
-    document.getElementById('testTitle').textContent = fileArr.length === 1
-      ? fileArr[0].name
-      : `${fileArr.length}ファイル選択済み`;
-    document.getElementById('testSub').textContent = `合計 ${(fileArr.reduce((s,f)=>s+f.size,0)/1024).toFixed(0)}KB`;
+    const previewGroups = usable;
+    listEl.innerHTML = previewGroups.map(g =>
+      `<div style="margin-bottom:4px">
+         <b>${esc(g.key)}</b>（${g.files.length}ファイル）<br>
+         <span style="padding-left:12px">${g.files.map(f=>esc(f.name)).join('<br><span style="padding-left:12px"></span>')}</span>
+       </div>`).join('');
+    document.getElementById('testTitle').textContent = previewGroups.length === 1
+      ? previewGroups[0].key
+      : `${previewGroups.length}件のテスト`;
+    document.getElementById('testSub').textContent =
+      `${fileArr.length}ファイル ／ 合計 ${(fileArr.reduce((s,f)=>s+f.size,0)/1024).toFixed(0)}KB`;
     document.getElementById('testResult').innerHTML = '';
     try { localStorage.removeItem('nhscope_test_result'); } catch {}
 
-    setSt(stEl,'load',`${fileArr.length}ファイルを読み込み中...`);
+    const groups = usable;
+    setSt(stEl,'load',`${groups.length}件のテスト（${fileArr.length}ファイル）を読み込み中...`);
     try {
-      const allImgs = [];
-      const MAX_TOTAL = 80; // 全ファイル合計の最大ページ数
+      const MAX_PER_TEST = 30;   // テスト1件あたりの最大ページ数
+      const loaded = [];
 
-      for (let fi = 0; fi < fileArr.length; fi++) {
-        if (allImgs.length >= MAX_TOTAL) break;
-        const buf = await fileArr[fi].arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({data:buf}).promise;
-        const remain = MAX_TOTAL - allImgs.length;
-        for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
-          allImgs.push(await toBase64(await pdf.getPage(i), testScale()));
+      for (let gi = 0; gi < groups.length; gi++) {
+        const g = groups[gi];
+        const imgs = [];
+        for (const f of g.files) {
+          if (imgs.length >= MAX_PER_TEST) break;
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+          const remain = MAX_PER_TEST - imgs.length;
+          for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
+            imgs.push(await toBase64(await pdf.getPage(i), testScale()));
+          }
         }
-        setSt(stEl,'load',`${fi+1}/${fileArr.length}ファイル処理済み（${allImgs.length}ページ）...`);
+        loaded.push({ imgs, name: g.name, key: g.key, fileCount: g.files.length });
+        setSt(stEl,'load',`${gi+1}/${groups.length}件処理済み...`);
       }
 
-      const names = fileArr.map(f=>f.name).join('・');
-      pendingTestImages = { imgs: allImgs, name: names };
-      setSt(stEl,'ok',`✅ ${allImgs.length}ページ読み込み完了 — 分析開始を押してください`);
+      pendingTestGroups = loaded;
+      const totalPages = loaded.reduce((s,g)=>s+g.imgs.length,0);
+      setSt(stEl,'ok',`✅ ${loaded.length}件のテスト・計${totalPages}ページ読み込み完了 — 分析開始を押してください`);
       btn.disabled = false;
     } catch(e) {
       setSt(stEl,'err','❌ PDF読み込みエラー: '+e.message);
@@ -4489,14 +4595,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   async function runTestAnalysis() {
-    if (!pendingTestImages) return;
+    if (!pendingTestGroups || !pendingTestGroups.length) return;
     testAnalysisStopped = false;
     document.getElementById('testStartBtn').disabled = true;
     const stopBtn = document.getElementById('testStopBtn');
     if (stopBtn) stopBtn.style.display = 'inline-flex';
-    await analyzeTest(pendingTestImages);
+    const stEl = document.getElementById('testStatus');
+    // テストごとに順番に分析する。1つのテストの問題と解答はまとめて渡される。
+    for (let i = 0; i < pendingTestGroups.length; i++) {
+      if (testAnalysisStopped) break;
+      const g = pendingTestGroups[i];
+      if (pendingTestGroups.length > 1) {
+        setSt(stEl, 'load', `【${i+1}/${pendingTestGroups.length}件目】${g.name} を分析中...`);
+      }
+      await analyzeTest(g);
+    }
     if (stopBtn) stopBtn.style.display = 'none';
     document.getElementById('testStartBtn').disabled = false;
+    if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
+      setSt(stEl, 'ok', `✅ ${pendingTestGroups.length}件のテストを分析しました（結果は履歴で確認できます）`);
+    }
   }
 
   // ── テスト分析 停止 ───────────────────────────────────────────────
@@ -4540,7 +4658,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('pdfStatus').textContent = '';
   }
   function clearTestPDFs() {
-    pendingTestImages = null;
+    pendingTestGroups = null;
     const f = document.getElementById('testFile'); if (f) f.value = '';
     document.getElementById('testTitle').textContent = 'テストPDFをアップロード';
     document.getElementById('testFileList').innerHTML = '';
