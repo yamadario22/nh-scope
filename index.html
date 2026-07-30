@@ -2548,7 +2548,16 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 【絶対に含めない】
 ・内容一致問題の答え・選択肢・解説
 ・whatの関係代名詞（中学で習わない）
-・already/yet/just等の1語副詞、have to等の助動詞表現`;
+・already/yet/just等の1語副詞、have to等の助動詞表現
+
+【範囲欄（from_unit/from_lesson/to_unit/to_lesson）の書き方】
+・from_unit / to_unit は「Unit 2」のような単元名だけを書く。数字以外の情報を足さない
+・from_lesson / to_lesson は「Part 1」「Read and Think 2」のようなセクション名だけを書く
+・ページ番号・本文タイトル・教科書の版・判断理由・迷った経緯などを、これらの欄に一切書かない
+　❌「Unit 3 Read and Think 2 (p.56-57) - 内容がテストと違うようだが…」
+　✅ to_unit:「Unit 3」 to_lesson:「Read and Think 2」
+・判断に迷った場合も、欄には最も可能性が高い単元名だけを書く。説明は書かない
+・全大問の question_types を必ず埋める。1つも書けない場合は読み取り失敗なので、無理に範囲を推測しない`;
 
   async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
@@ -2642,6 +2651,8 @@ ${GRAMMAR_NOTATION_RULES}`
       setSt(stEl,'ok','✅ 分析完了');
       if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
+      // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
+      const droppedFields = sanitizeRangeFields(r);
       // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
       refineRangeFromLibrary(r);
 
@@ -2653,12 +2664,13 @@ ${GRAMMAR_NOTATION_RULES}`
         ? (rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`)
         : (rangeFrom || rangeTo || '範囲不明');
 
-      // 結果が空の場合のエラー表示
-      if (!r.grade && !r.from_unit && !(r.question_types||[]).length) {
+      // 分析が失敗しているものを保存しない（問題形式が1つも取れていなければ失敗とみなす）
+      if (!(r.question_types||[]).length) {
         rsEl.innerHTML = `
           <div class="card" style="border-color:#FCA5A5">
             <div class="card-title" style="color:#DC2626">⚠️ 解析結果を取得できませんでした</div>
-            <p style="font-size:13px;color:var(--muted)">PDFの画質が低いか、テスト内容が読み取れませんでした。別のPDFで再試行してください。</p>
+            <p style="font-size:13px;color:var(--muted)">問題形式が1つも読み取れなかったため、保存していません。PDFの画質が低い、解答用紙のみ、または読み取りに失敗した可能性があります。もう一度実行するか、別のPDFで試してください。</p>
+            ${droppedFields.length?`<p style="font-size:11px;color:var(--muted);margin-top:6px">AIが範囲欄に不正な値を返していました：<br>${droppedFields.map(esc).join('<br>')}</p>`:''}
           </div>`;
         return;
       }
@@ -3198,6 +3210,65 @@ ${GRAMMAR_NOTATION_RULES}`
     return expanded;
   }
 
+  // ── 範囲欄の検証と整形 ──────────────────────────────────────────
+  // AIが from_unit / to_lesson などに説明文やページ番号を書き込むことがある。
+  // 例：「Unit 3 Read and Think 2 (p.56-57) - The Story of ... 2021 edition ...」
+  // そのまま保存すると範囲が壊れるため、正しい形だけを取り出して他は捨てる。
+  // 取り出せない場合は空にする（誤った情報を残すより、空のほうが害が小さい）。
+  const VALID_LESSON_PATTERNS = [
+    [/Part\s*([123])/i,                    n => `Part ${n}`],
+    [/Read\s*and\s*Think\s*([12])/i,       n => `Read and Think ${n}`],
+    [/Scene\s*([12])/i,                    n => `Scene ${n}`],
+    [/Grammar\s*for\s*Communication\s*(\d?)/i, n => `Grammar for Communication${n?' '+n:''}`],
+    [/Real\s*Life\s*English\s*(\d?)/i,     n => `Real Life English${n?' '+n:''}`],
+    [/Sounds\s*and\s*Letters\s*(\d?)/i,    n => `Sounds and Letters${n?' '+n:''}`],
+    [/Stage\s*Activity\s*(\d?)/i,          n => `Stage Activity${n?' '+n:''}`],
+    [/Let'?s\s*Read\s*(\d?)/i,             n => `Let's Read${n?' '+n:''}`],
+    [/Let'?s\s*Talk\s*(\d?)/i,             n => `Let's Talk${n?' '+n:''}`],
+    [/Let'?s\s*Write\s*(\d?)/i,            n => `Let's Write${n?' '+n:''}`],
+    [/Learning\s*(?:\.\.\.\s*)?in\s*English\s*(\d?)/i, n => `Learning in English${n?' '+n:''}`],
+    [/Over\s*the\s*Horizon/i,              () => 'Over the Horizon'],
+  ];
+
+  function normalizeUnitField(v) {
+    const s = String(v || '');
+    if (!s.trim()) return '';
+    let m = s.match(/\b(Unit|Lesson)\s*(\d{1,2})\b/i);
+    if (m) return `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ${parseInt(m[2])}`;
+    m = s.match(/Let'?s\s*Read\s*(\d?)/i);
+    if (m) return `Let's Read${m[1] ? ' ' + m[1] : ''}`;
+    if (/\bStarter\b/i.test(s)) return 'Starter';
+    if (/資料編/.test(s)) return '資料編';
+    return '';
+  }
+
+  function normalizeLessonField(v) {
+    const s = String(v || '');
+    if (!s.trim()) return '';
+    // パターンの並び順ではなく「文中で最初に現れたもの」を採る。
+    // 順番に試すと、説明文の後ろにある「(Part 2)」を先に拾ってしまい、
+    // 冒頭の「Read and Think 2」を取り逃す（実際にその誤りが起きた）。
+    let best = null, bestIdx = Infinity;
+    for (const [re, fmt] of VALID_LESSON_PATTERNS) {
+      const m = s.match(re);
+      if (m && m.index < bestIdx) { bestIdx = m.index; best = fmt(m[1] || ''); }
+    }
+    return best || '';
+  }
+
+  // AIの返り値の範囲欄をまとめて整形。捨てた内容があれば配列で返す（画面に出して気づけるようにする）
+  function sanitizeRangeFields(r) {
+    const dropped = [];
+    [['from_unit', normalizeUnitField], ['to_unit', normalizeUnitField],
+     ['from_lesson', normalizeLessonField], ['to_lesson', normalizeLessonField]].forEach(([k, fn]) => {
+      const before = String(r[k] || '').trim();
+      const after  = fn(before);
+      if (before !== after) dropped.push(`${k}：「${before.slice(0, 60)}${before.length > 60 ? '…' : ''}」→「${after || '空'}」`);
+      r[k] = after;
+    });
+    return dropped;
+  }
+
   function refineRangeFromLibrary(r) {
     // diag：判定の途中経過。範囲がどう決まったかを画面で見るための記録。
     // 判定そのものには一切影響しない（記録するだけ）。
@@ -3678,6 +3749,16 @@ ${GRAMMAR_NOTATION_RULES}` });
         }}}
       }
     }, 12000, getFastModeOpts('fastModeBatch'));
+
+    // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
+    const droppedBatch = sanitizeRangeFields(r);
+
+    // 分析が失敗しているものは保存しない（問題形式が1つも取れていなければ失敗）
+    if (!(r.question_types||[]).length) {
+      console.warn('バッチ分析：問題形式が取得できず保存を中止', name, droppedBatch);
+      showToast(`⚠️ ${name} は読み取りに失敗したため保存していません`, 'error');
+      return;
+    }
 
     // ライブラリ照合で範囲終端を補正
     refineRangeFromLibrary(r);
