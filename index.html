@@ -1200,22 +1200,49 @@
   // 編集タブのボタンから手動実行（既存データの一括補正）
   // ── 教科書データの異物チェック ──────────────────────────────────
   // 学年を選び間違えた解析やCSV取り込みで、別学年・別教科書の項目が混ざることがある。
-  // 混ざったデータは範囲判定を狂わせるだけでなく、AIへ渡す参考データも汚すため、
-  // 実害が大きい。ここでは「確実に異物と言えるもの」と「疑いがあるもの」を分けて出す。
+  // 混ざったデータは範囲判定を狂わせるだけでなく、AIへ渡す参考データも汚す。
+  //
+  // 【判定の考え方】
+  // 「その学年の対応表に載っていない」だけでは異物の証拠にならない。
+  // 対応表はもともと網羅的ではないため（中1のbe動詞・一般動詞は意図的に入れていない）、
+  // それを異物扱いすると大量の誤検出になる。
+  // 「他学年のデータと一致する」ことが示せたときだけ異物と判定する。
 
-  // その学年の教科書に実在する補助セクション名の一覧（ページ→Unit対応表から作る）
-  function auxSectionsOf(bookId) {
-    const table = PAGE_UNIT_TABLES[bookId] || [];
-    const set = new Set();
-    table.forEach(e => { if (e[1]) set.add(e[1]); if (e[2]) set.add(e[2]); });
-    return set;
+  // 補助セクション名（Part / Read and Think はUnit内の小見出しなので対象外）
+  const AUX_BASE_NAMES = ['Grammar for Communication','Real Life English','Sounds and Letters',
+                          'Learning in English','Stage Activity',"Let's Read",'英語の歌','夏休み特集'];
+
+  // セクション名から「基本の名前」と「番号」を取り出す。
+  // データ側は番号あり（Sounds and Letters 2）と番号なし（Sounds and Letters）が混在しているため、
+  // 番号なしを異物扱いしないよう、基本の名前で照合する。
+  function parseAuxName(s) {
+    const t = String(s || '').trim();
+    if (!t) return null;
+    for (const base of AUX_BASE_NAMES) {
+      const re = new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace("'", "'?") + '\\s*(\\d+)?', 'i');
+      const m = t.match(re);
+      if (m) return { base, num: m[1] ? parseInt(m[1]) : null };
+    }
+    return null;
   }
 
-  // 補助セクション名かどうか（Part / Read and Think はUnit内の小見出しなので対象外）
-  const AUX_NAME_RE = /^(Grammar for Communication|Real Life English|Sounds and Letters|Learning in English|Stage Activity|Let'?s Read|英語の歌|夏休み特集)(\s*\d+)?$/i;
+  // その学年の教科書に実在する補助セクションを {基本の名前 → 番号の集合} で返す
+  function auxMapOf(bookId) {
+    const table = PAGE_UNIT_TABLES[bookId] || [];
+    const map = new Map();
+    table.forEach(e => [e[1], e[2]].forEach(name => {
+      const p = parseAuxName(name);
+      if (!p) return;
+      if (!map.has(p.base)) map.set(p.base, new Set());
+      if (p.num !== null) map.get(p.base).add(p.num);
+    }));
+    return map;
+  }
 
-  // NEW HORIZONの教科書に入っていたら他教科書由来の疑いがある用語
-  const FOREIGN_TERM_RE = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson|Project\s*\d|基本文|Unit Activity)/i;
+  // NEW HORIZONの教科書に入っていたら確実に他教科書由来と言える用語
+  const FOREIGN_SURE_RE  = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson)/i;
+  // 他教科書の疑いはあるが断定できない用語
+  const FOREIGN_MAYBE_RE = /(基本文|Unit Activity|Project\s*\d)/i;
 
   function scanBookAnomalies(bookId) {
     const book  = bookById(bookId);
@@ -1226,46 +1253,67 @@
     const isNH    = isNHBook(bookId);
     const firstPage     = table[0][0];
     const appendixStart = table.find(e => !e[1])?.[0] || Infinity;
-    const aux     = auxSectionsOf(bookId);
-    const gramMap = isNH ? GRAMMAR_UNIT_MAPS[gradeN] : null;
+    const auxHere = auxMapOf(bookId);
+    const otherNHBooks = ['default_c1','default_c2','default_c3'].filter(b => b !== bookId);
 
     const found = [];
     items.forEach((it, idx) => {
-      const label  = `${it.unit || ''} ${it.lesson || ''}`.trim();
+      const label   = `${it.unit || ''} ${it.lesson || ''}`.trim();
+      const lesson  = (it.lesson || '').trim();
       const reasons = [];
 
-      // ① ページが本編の外（確実）
-      if (it.page > 0 && (it.page < firstPage || it.page >= appendixStart)) {
-        reasons.push({ level:'確実', text:`本編にないページ（本編は p.${firstPage}〜p.${appendixStart - 1}）` });
+      // ① ページが本編より前（巻頭・目次由来の疑い）
+      if (it.page > 0 && it.page < firstPage) {
+        reasons.push({ level:'疑い', text:`本編が始まる p.${firstPage} より前のページ` });
+      }
+      // ①' 資料編のページなのに単元が資料編になっていない（ラベルのずれ）
+      //     資料編の単語リスト等は正しいデータなので、資料編と書かれていれば異物ではない
+      if (it.page >= appendixStart && it.unit !== '資料編' && !/資料編|巻末/.test(label)) {
+        reasons.push({ level:'疑い', text:`資料編のページ（p.${appendixStart}以降）なのに単元が「${it.unit || '空'}」` });
       }
 
-      // ② その学年に存在しない補助セクション名（確実）
-      const lesson = (it.lesson || '').trim();
-      if (lesson && AUX_NAME_RE.test(lesson) && !aux.has(lesson)) {
-        reasons.push({ level:'確実', text:`この学年に「${lesson}」は存在しない` });
-      }
-
-      // ③ 他教科書の用語（確実に近い）
-      if (isNH && FOREIGN_TERM_RE.test(label)) {
-        reasons.push({ level:'確実', text:'NEW HORIZONにない呼び方（他教科書由来の疑い）' });
-      }
-
-      // ④ その学年で習わない文法（凌央さんが作った文法対応表で判定）
-      if (gramMap && it.type === '文法' && (it.content || '').trim()) {
-        if (!grammarToUnit(gradeN, it.content)) {
-          reasons.push({ level:'疑い', text:'この学年の文法対応表にない文法名' });
+      // ② その学年に存在しない補助セクション（基本の名前と番号の両方で照合）
+      const aux = parseAuxName(lesson);
+      if (aux) {
+        if (!auxHere.has(aux.base)) {
+          reasons.push({ level:'確実', text:`この学年に「${aux.base}」は存在しない` });
+        } else if (aux.num !== null) {
+          const nums = auxHere.get(aux.base);
+          if (nums.size && !nums.has(aux.num)) {
+            reasons.push({ level:'確実', text:`この学年の「${aux.base}」は ${[...nums].sort((a,b)=>a-b).join('・')} まで（${aux.num}はない）` });
+          }
         }
-      }
-
-      // ⑤ 他学年のページ構成と一致する（強い疑い）
-      if (lesson && AUX_NAME_RE.test(lesson) && !aux.has(lesson)) {
-        ['default_c1','default_c2','default_c3'].forEach(other => {
-          if (other === bookId) return;
-          if (auxSectionsOf(other).has(lesson) && unitFromPage(other, it.page) === lesson) {
-            const g = other.slice(-1);
-            reasons.push({ level:'確実', text:`中${g}の p.${it.page} が「${lesson}」と一致（中${g}のデータの疑い）` });
+        // ③ 他学年のページ構成とぴったり一致する
+        //    ただし自分の学年でもそのページが同じセクションなら、正しいデータなので照合しない
+        //    （中1のp.28も中3のp.28もGrammar for Communication 1のため、偶然一致してしまう）
+        const here = parseAuxName(unitFromPage(bookId, it.page) || '');
+        const okHere = here && here.base === aux.base && (aux.num === null || here.num === aux.num);
+        if (!okHere) otherNHBooks.forEach(other => {
+          const om = auxMapOf(other);
+          if (!om.has(aux.base)) return;
+          const there = parseAuxName(unitFromPage(other, it.page) || '');
+          if (there && there.base === aux.base && (aux.num === null || there.num === aux.num)) {
+            reasons.push({ level:'確実', text:`中${other.slice(-1)}の p.${it.page} が「${aux.base}${aux.num ?? ''}」と一致（中${other.slice(-1)}のデータの疑い）` });
           }
         });
+      }
+
+      // ④ 他教科書の呼び方
+      if (isNH && FOREIGN_SURE_RE.test(label)) {
+        reasons.push({ level:'確実', text:'NEW HORIZONにない呼び方（他教科書由来）' });
+      } else if (isNH && FOREIGN_MAYBE_RE.test(label)) {
+        reasons.push({ level:'疑い', text:'NEW HORIZONで使うか確認したい呼び方' });
+      }
+
+      // ⑤ 他学年で習う文法（凌央さんが作った文法対応表で照合）
+      //    この学年の表になくても、他学年の表にもなければ何の証拠にもならないので対象外
+      if (isNH && it.type === '文法' && (it.content || '').trim() && gradeN) {
+        if (!grammarToUnit(gradeN, it.content)) {
+          const otherGrades = [1,2,3].filter(g => g !== gradeN && grammarToUnit(g, it.content));
+          if (otherGrades.length) {
+            reasons.push({ level:'確実', text:`中${otherGrades.join('・中')}で習う文法（他学年のデータ）` });
+          }
+        }
       }
 
       if (reasons.length) {
