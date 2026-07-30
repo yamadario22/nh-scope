@@ -401,6 +401,7 @@
       <div class="card-title">
         <span>📋 Unit別データ編集</span>
         <span style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="fixAppendixSectionNames()" title="巻末（資料編）のセクション名が「Lesson 1」などと誤記録されているものを、正しい名前に自動で直します">🏷 巻末の名前を自動で直す</button>
           <button class="btn btn-secondary btn-sm" onclick="deduplicateData()" title="同じ内容の項目をまとめます（早いページの方を残します）">🔁 重複削除</button>
           <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
           <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
@@ -1517,9 +1518,76 @@
     el.textContent = n ? `${n}件を選択中` : '選択なし';
   }
 
-  // 選んだ項目のセクション名だけを書き換える。
+  // ── 巻末（資料編）のセクション構成 ──────────────────────────────
+  // AIが巻末を解析したとき、セクション名を「Lesson 1」のように誤って記録することがある。
+  // 中身は本物なので、削除せず名前だけ直すために使う対応表。
+  // [開始ページ, 正しいセクション名]。次の開始ページの手前までがその名前になる。
+  // ※中3は実物で確認済み：p.132に文法のまとめ、p.144に語の成り立ち、p.150に英語の音と文字。
+  //   その間のページ（133〜143など）は「続いている」という推測。実行前に一覧で確認する。
+  //   中1・中2は未確認のため空。対応がないページは、誤った名前を消すだけにする。
+  const APPENDIX_SECTIONS = {
+    default_c3: [[132, '文法のまとめ'], [144, '語の成り立ち・つなぎ言葉'], [150, '英語の音と文字']],
+    default_c2: [],
+    default_c1: [],
+  };
+
+  function appendixSectionOf(bookId, page) {
+    const table = APPENDIX_SECTIONS[bookId] || [];
+    let name = '';
+    for (const [p, n] of table) { if (page >= p) name = n; else break; }
+    return name;
+  }
+
+  // 巻末の誤ったセクション名を直す。本編のページは触らない（本編の変な名前は本物の異物のため）。
+  async function fixAppendixSectionNames() {
+    const book  = bookById(activeId);
+    const table = PAGE_UNIT_TABLES[activeId];
+    if (!book || !table) { alert('この教科書には対応表がありません。'); return; }
+    const appendixStart = table.find(e => !e[1])?.[0];
+    if (!appendixStart) { alert('この教科書の資料編の開始ページが分かりません。'); return; }
+
+    const targets = [];
+    (book.items || []).forEach((it, i) => {
+      if (!(it.page >= appendixStart)) return;                 // 巻末のページだけ
+      if (!FOREIGN_NAME_RE.test(it.lesson || '')) return;      // 誤った名前が付いているものだけ
+      const newName = appendixSectionOf(activeId, it.page);
+      if ((it.lesson || '') === newName) return;
+      targets.push({ i, page: it.page, from: it.lesson || '', to: newName });
+    });
+
+    if (!targets.length) {
+      alert(`巻末（p.${appendixStart}以降）に、直す必要のあるセクション名は見つかりませんでした。`);
+      return;
+    }
+
+    // 「ページ範囲 → 新しい名前」ごとにまとめて見せる
+    const groups = new Map();
+    targets.forEach(t => {
+      const key = `${t.to || '（名前を消す）'}`;
+      if (!groups.has(key)) groups.set(key, { count: 0, pages: new Set(), froms: new Set() });
+      const g = groups.get(key);
+      g.count++; g.pages.add(t.page); g.froms.add(t.from);
+    });
+    const lines = [...groups.entries()].map(([to, g]) => {
+      const ps = [...g.pages].sort((a,b)=>a-b);
+      const range = ps.length > 1 ? `p.${ps[0]}〜p.${ps[ps.length-1]}` : `p.${ps[0]}`;
+      return `・${range}（${g.count}件）「${[...g.froms].slice(0,3).join('／')}」→「${to}」`;
+    });
+
+    const ok = await showConfirm(
+      `巻末のセクション名を直します。中身は消しません。\n\n${lines.join('\n')}\n\n合計${targets.length}件。よろしいですか。`,
+      '直す');
+    if (!ok) return;
+
+    targets.forEach(t => { book.items[t.i].lesson = t.to; });
+    saveBackup();
+    renderUnitView();
+    renderPreview();
+    alert(`${targets.length}件のセクション名を直しました。`);
+  }
   // 中身は正しいのにセクション名が誤記録されている項目（中3巻末の「Lesson 1」など）を、
   // 削除せずに直すために使う。
+  // 選んだ項目のセクション名だけを手で書き換える（自動修正で直らないものを個別に直す用）。
   async function renameCheckedAnomalies() {
     const chks = [...document.querySelectorAll('#anomalyBody .anomChk')].filter(c => c.checked);
     if (!chks.length) { alert('書き換える項目が選ばれていません。'); return; }
