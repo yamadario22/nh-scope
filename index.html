@@ -1246,18 +1246,21 @@
   // ※「Unit Activity」「Key Sentences」はNEW HORIZONの本文に実際に使われている見出しなので対象外
   const FOREIGN_MAYBE_RE = /(基本文|Project\s*\d)/i;
 
-  // 他学年のNH教科書にある項目を {内容+ページ → その学年とセクション} で引ける形にする。
-  // 同じ内容が同じページで別学年にもあるなら、それは片方が他方のコピー（＝混入）である。
-  // 普通のセクション名（Part 1 等）が付いていて名前では見分けられない混入を、これで見つける。
+  // 他の教科書にある項目を {内容+ページ → その教科書とセクション} で引ける形にする。
+  // 同じ内容が同じページで別の本にもあるなら、片方がもう片方のコピー（＝混入）である。
+  // NEW HORIZONの3冊だけでなくNEW CROWNも対象にする。
+  // （中3の巻末にNEW CROWNのデータが入り込んでいる疑いがあり、NHだけ見ていては分からない）
   function otherGradeItemIndex(bookId) {
     const idx = new Map();
     (library || []).forEach(b => {
-      if (b.id === bookId || !isNHBook(b.id)) return;
+      if (b.id === bookId) return;
+      if (!isNHBook(b.id) && !isNCBook(b.id)) return;
+      const label = `${isNCBook(b.id) ? 'NEW CROWN ' : ''}${bookGrade(b) || b.name}`;
       (b.items || []).forEach(it => {
         if (!it.page || !(it.content || '').trim()) return;
         const key = `${(it.content || '').trim().toLowerCase()}|${it.page}`;
         if (!idx.has(key)) idx.set(key, []);
-        idx.get(key).push({ grade: bookGrade(b) || b.name, lesson: it.lesson || '', type: it.type || '' });
+        idx.get(key).push({ label, isNC: isNCBook(b.id), grade: bookGrade(b) || b.name, lesson: it.lesson || '', type: it.type || '' });
       });
     });
     return idx;
@@ -1331,13 +1334,35 @@
       //      文中の wants to が他学年のパターンに偶然引っかかるため、短い文法名だけを対象にする
       //    ・文法用語は学年をまたいで重なる（中1 Unit 8の want to は形式上は不定詞の名詞的用法）
       //      ため、断定はせず「疑い」にとどめる
+      // 例文（基本文）は文法照合に使えないので除く。
+      // ただし「未来を表す表現 (will / be going to ...)」のようにカッコで例を添えた
+      // 正しい文法名は対象に残す必要があるため、長さだけで切らない。
+      // 除外するのは「文として終わっているもの」と「複数の文が並ぶもの」と「極端に長いもの」。
       const gname = (it.content || '').trim();
-      const looksLikeGrammarName = gname && gname.length <= 24 && !/[.?!]/.test(gname);
+      const looksLikeGrammarName = gname
+        && gname.length <= 40
+        && !/[.!?]\s*$/.test(gname)
+        && !/[.!?]\s+[A-Z]/.test(gname);
       if (isNH && it.type === '文法' && looksLikeGrammarName && gradeN) {
         if (!grammarToUnit(gradeN, gname)) {
           const otherGrades = [1,2,3].filter(g => g !== gradeN && grammarToUnit(g, gname));
           if (otherGrades.length) {
-            reasons.push({ level:'疑い', text:`中${otherGrades.join('・中')}で習う文法名（他学年のデータの疑い）` });
+            // ⑦ その文法が他学年のUnit Xで習うもので、かつこのページも
+            //    その学年ではUnit Xに入るなら、その学年のデータだと確定できる。
+            //    例：「未来を表す表現」は中2 Unit 1、p.12は中2でもUnit 1の中 → 中2のデータ
+            let confirmed = null;
+            otherGrades.forEach(g => {
+              const gm = grammarToUnit(g, gname);
+              const otherBookId = `default_c${g}`;
+              const pageUnit = rangeUnitFromPage(otherBookId, it.page);
+              if (gm && pageUnit && pageUnit === gm.unit) confirmed = { g, unit: gm.unit };
+            });
+            if (confirmed) {
+              reasons.push({ level:'確実', text:`中${confirmed.g}の${confirmed.unit}で習う文法で、p.${it.page}も中${confirmed.g}では${confirmed.unit}の中（中${confirmed.g}のデータ）` });
+              foreignFrom[String(confirmed.g)] = (foreignFrom[String(confirmed.g)] || 0) + 1;
+            } else {
+              reasons.push({ level:'疑い', text:`中${otherGrades.join('・中')}で習う文法名（他学年のデータの疑い）` });
+            }
           }
         }
       }
@@ -1356,13 +1381,19 @@
     const contaminatedFrom = new Set(
       Object.keys(foreignFrom).filter(g => foreignFrom[g] >= CONTAMINATION_MIN)
     );
-    if (isNH && contaminatedFrom.size) {
+    if (isNH && dupIndex.size) {
       perItem.forEach(p => {
         const it = p.item;
         if (!(it.page > 0) || !(it.content || '').trim()) return;
         const hits = dupIndex.get(`${(it.content || '').trim().toLowerCase()}|${it.page}`);
         if (!hits || !hits.length) return;
-        const hit = hits.find(h => contaminatedFrom.has(String(gradeNumOf(h.grade))));
+        // NEW CROWN側にあるものは、教科書そのものが違うので混入の手がかりになる
+        const nc = hits.find(h => h.isNC);
+        if (nc) {
+          p.reasons.push({ level:'疑い', text:`${nc.label}の p.${it.page}${nc.lesson ? `「${nc.lesson}」` : ''}に同じ項目がある（NEW CROWNのデータの疑い）` });
+        }
+        // 同じNEW HORIZONの他学年で、かつその学年からの流れ込みが確認できている場合
+        const hit = hits.find(h => !h.isNC && contaminatedFrom.has(String(gradeNumOf(h.grade))));
         if (!hit) return;
         const sameSection = (hit.lesson || '') === (it.lesson || '');
         p.reasons.push({
