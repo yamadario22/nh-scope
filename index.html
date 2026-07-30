@@ -401,6 +401,7 @@
       <div class="card-title">
         <span>📋 Unit別データ編集</span>
         <span style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
           <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
           <button class="btn btn-green btn-sm" onclick="openEdit(-1)">＋ 項目を追加</button>
         </span>
@@ -751,6 +752,18 @@
     <div class="modal-foot">
       <button class="btn btn-primary btn-sm" onclick="closeSetupGuide()">設定に進む</button>
     </div>
+  </div>
+</div>
+
+<!-- 教科書データの異物チェック -->
+<div class="modal-ov" id="anomalyModal" style="display:none" onclick="if(event.target===this)closeAnomalyModal()">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-head">
+      <div class="modal-title">🧹 教科書データの異物チェック</div>
+      <button class="modal-close" onclick="closeAnomalyModal()">✕</button>
+    </div>
+    <div class="modal-body" id="anomalyBody" style="max-height:70vh;overflow:auto"></div>
+    <div class="modal-foot" id="anomalyFoot"></div>
   </div>
 </div>
 
@@ -1185,6 +1198,156 @@
   }
 
   // 編集タブのボタンから手動実行（既存データの一括補正）
+  // ── 教科書データの異物チェック ──────────────────────────────────
+  // 学年を選び間違えた解析やCSV取り込みで、別学年・別教科書の項目が混ざることがある。
+  // 混ざったデータは範囲判定を狂わせるだけでなく、AIへ渡す参考データも汚すため、
+  // 実害が大きい。ここでは「確実に異物と言えるもの」と「疑いがあるもの」を分けて出す。
+
+  // その学年の教科書に実在する補助セクション名の一覧（ページ→Unit対応表から作る）
+  function auxSectionsOf(bookId) {
+    const table = PAGE_UNIT_TABLES[bookId] || [];
+    const set = new Set();
+    table.forEach(e => { if (e[1]) set.add(e[1]); if (e[2]) set.add(e[2]); });
+    return set;
+  }
+
+  // 補助セクション名かどうか（Part / Read and Think はUnit内の小見出しなので対象外）
+  const AUX_NAME_RE = /^(Grammar for Communication|Real Life English|Sounds and Letters|Learning in English|Stage Activity|Let'?s Read|英語の歌|夏休み特集)(\s*\d+)?$/i;
+
+  // NEW HORIZONの教科書に入っていたら他教科書由来の疑いがある用語
+  const FOREIGN_TERM_RE = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson|Project\s*\d|基本文|Unit Activity)/i;
+
+  function scanBookAnomalies(bookId) {
+    const book  = bookById(bookId);
+    const table = PAGE_UNIT_TABLES[bookId];
+    if (!book || !table) return null;
+    const items   = book.items || [];
+    const gradeN  = gradeNumOf(bookGrade(book));
+    const isNH    = isNHBook(bookId);
+    const firstPage     = table[0][0];
+    const appendixStart = table.find(e => !e[1])?.[0] || Infinity;
+    const aux     = auxSectionsOf(bookId);
+    const gramMap = isNH ? GRAMMAR_UNIT_MAPS[gradeN] : null;
+
+    const found = [];
+    items.forEach((it, idx) => {
+      const label  = `${it.unit || ''} ${it.lesson || ''}`.trim();
+      const reasons = [];
+
+      // ① ページが本編の外（確実）
+      if (it.page > 0 && (it.page < firstPage || it.page >= appendixStart)) {
+        reasons.push({ level:'確実', text:`本編にないページ（本編は p.${firstPage}〜p.${appendixStart - 1}）` });
+      }
+
+      // ② その学年に存在しない補助セクション名（確実）
+      const lesson = (it.lesson || '').trim();
+      if (lesson && AUX_NAME_RE.test(lesson) && !aux.has(lesson)) {
+        reasons.push({ level:'確実', text:`この学年に「${lesson}」は存在しない` });
+      }
+
+      // ③ 他教科書の用語（確実に近い）
+      if (isNH && FOREIGN_TERM_RE.test(label)) {
+        reasons.push({ level:'確実', text:'NEW HORIZONにない呼び方（他教科書由来の疑い）' });
+      }
+
+      // ④ その学年で習わない文法（凌央さんが作った文法対応表で判定）
+      if (gramMap && it.type === '文法' && (it.content || '').trim()) {
+        if (!grammarToUnit(gradeN, it.content)) {
+          reasons.push({ level:'疑い', text:'この学年の文法対応表にない文法名' });
+        }
+      }
+
+      // ⑤ 他学年のページ構成と一致する（強い疑い）
+      if (lesson && AUX_NAME_RE.test(lesson) && !aux.has(lesson)) {
+        ['default_c1','default_c2','default_c3'].forEach(other => {
+          if (other === bookId) return;
+          if (auxSectionsOf(other).has(lesson) && unitFromPage(other, it.page) === lesson) {
+            const g = other.slice(-1);
+            reasons.push({ level:'確実', text:`中${g}の p.${it.page} が「${lesson}」と一致（中${g}のデータの疑い）` });
+          }
+        });
+      }
+
+      if (reasons.length) {
+        const level = reasons.some(r => r.level === '確実') ? '確実' : '疑い';
+        found.push({ idx, item: it, level, reasons: reasons.map(r => r.text) });
+      }
+    });
+    return { book, total: items.length, found };
+  }
+
+  function closeAnomalyModal() {
+    const m = document.getElementById('anomalyModal');
+    if (m) m.style.display = 'none';
+  }
+
+  function runAnomalyScan() {
+    const res = scanBookAnomalies(activeId);
+    if (!res) { alert('この教科書には対応表がないため検査できません（NEW HORIZON・NEW CROWN各学年のみ）。'); return; }
+    const { book, total, found } = res;
+    const sure   = found.filter(f => f.level === '確実');
+    const maybe  = found.filter(f => f.level === '疑い');
+
+    const rows = list => list.map(f => `<tr>
+        <td style="text-align:center"><input type="checkbox" class="anomChk" data-idx="${f.idx}"></td>
+        <td style="font-size:11px">${esc(f.item.type || '')}</td>
+        <td style="font-size:11px">${esc(f.item.content || '')}</td>
+        <td style="font-size:11px">${f.item.page || ''}</td>
+        <td style="font-size:11px">${esc(f.item.unit || '')} ${esc(f.item.lesson || '')}</td>
+        <td style="font-size:11px;color:#DC2626">${f.reasons.map(esc).join('<br>')}</td>
+      </tr>`).join('');
+
+    const tbl = (title, list, note) => list.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;font-size:13px;color:var(--navy);margin-bottom:2px">${title}（${list.length}件）</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${note}
+          <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 6px;margin-left:6px"
+            onclick="document.querySelectorAll('#anomTbl${list===sure?'A':'B'} .anomChk').forEach(c=>c.checked=true)">この分類を全部選ぶ</button>
+        </div>
+        <div class="tbl-wrap" id="anomTbl${list===sure?'A':'B'}"><table>
+          <thead><tr><th style="width:34px">削除</th><th>種類</th><th>内容</th><th>ページ</th><th>Unit</th><th>理由</th></tr></thead>
+          <tbody>${rows(list)}</tbody>
+        </table></div>
+      </div>` : '';
+
+    document.getElementById('anomalyBody').innerHTML =
+      `<div style="font-size:13px;margin-bottom:10px">
+         <b>${esc(book.name || '')}</b>（全${total}件）から、${found.length}件の異物候補が見つかりました。
+       </div>
+       ${found.length ? '' : '<div style="color:var(--muted);font-size:13px">異物は見つかりませんでした。</div>'}
+       ${tbl('確実に異物と言えるもの', sure, 'ページ構成や他教科書の用語から、この学年のデータではないと判断できるものです。')}
+       ${tbl('疑いがあるもの', maybe, '文法対応表に載っていない文法名です。対応表の書き方が違うだけの可能性もあるので、内容を見て判断してください。')}
+       ${found.length ? `<div style="background:#FEF3C7;padding:8px;border-radius:6px;font-size:12px;margin-top:8px">
+         チェックを入れた項目だけを削除します。削除は元に戻せないので、迷ったら残してください。</div>` : ''}`;
+
+    document.getElementById('anomalyFoot').innerHTML = found.length
+      ? `<button class="btn btn-ghost btn-sm" onclick="closeAnomalyModal()">閉じる</button>
+         <button class="btn btn-danger btn-sm" onclick="deleteCheckedAnomalies()">選んだ項目を削除</button>`
+      : `<button class="btn btn-primary btn-sm" onclick="closeAnomalyModal()">閉じる</button>`;
+
+    document.getElementById('anomalyModal').style.display = 'flex';
+  }
+
+  async function deleteCheckedAnomalies() {
+    const idxs = [...document.querySelectorAll('#anomalyBody .anomChk')]
+      .filter(c => c.checked).map(c => parseInt(c.dataset.idx))
+      .filter(n => !isNaN(n));
+    if (!idxs.length) { alert('削除する項目が選ばれていません。'); return; }
+    const ok = await showConfirm(`${idxs.length}件を削除します。元に戻せません。よろしいですか。`, '削除する');
+    if (!ok) return;
+    const book = bookById(activeId);
+    if (!book) return;
+    const del = new Set(idxs);
+    const before = (book.items || []).length;
+    book.items = (book.items || []).filter((_, i) => !del.has(i));
+    const removed = before - book.items.length;
+    saveBackup();
+    renderUnitView();
+    renderPreview();
+    closeAnomalyModal();
+    alert(`${removed}件を削除しました。`);
+  }
+
   function runUnitFix() {
     if (!PAGE_UNIT_TABLES[activeId]) {
       alert('この教科書にはページ→Unit対応表がありません（デフォルトのNEW HORIZON・NEW CROWN各学年のみ対応）。');
