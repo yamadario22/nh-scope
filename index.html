@@ -4299,17 +4299,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 終わりを伸ばしていた。しかし実際のテストでは、長文に未習の語が注釈つきで出てくる。
     // 実例：長文に出てきた energy が教科書のLet's Read 2（p.93）に一致し、終わりがUnit 6まで飛んだ。
     // 単語は「範囲がどこから始まるか」を絞るためだけに使う。
+    // 回数で判断できるのは「小問ごとに文法が記録されていて、同じ文法が何度も出る」データだけ。
+    // 古い分析データは大問ごとに文法が1つずつしか入っておらず、全部が「1回だけ」になるため、
+    // この規則を当てると本当の終わりまで捨ててしまう（実際に83件の範囲が軒並み狭くなった）。
+    // そこで、文法の数が十分あるとき（＝小問まで拾えているとき）だけ回数で判断する。
+    const DENSE_GRAM_MIN = 8;
     const posCount = new Map();
     gramHits.forEach(h => posCount.set(h.pos, (posCount.get(h.pos) || 0) + 1));
-    const repeatedGram = gramHits.filter(h => posCount.get(h.pos) >= 2);
-    const onceOnly = gramHits.filter(h => posCount.get(h.pos) === 1);
+    const useCount     = gramHits.length >= DENSE_GRAM_MIN;
+    const repeatedGram = useCount ? gramHits.filter(h => posCount.get(h.pos) >= 2) : [];
+    const onceOnly     = useCount ? gramHits.filter(h => posCount.get(h.pos) === 1) : [];
     diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}）`))];
+    diag.gramDense     = useCount;
     const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
     const endUnit = Math.floor(endHit.pos);
     diag.decidedBy = gramHits.length
-      ? (repeatedGram.length ? '文法（2回以上出たもの）' : '文法（1回しか出ないものしかないため確度低め）')
+      ? (repeatedGram.length ? '文法（2回以上出たもの）'
+         : (useCount ? '文法（2回以上出たものがないため全部使用）'
+                     : `文法（${gramHits.length}件と少ないため回数では絞らず全部使用）`))
       : '単語・熟語（文法が1つも拾えなかったため）';
     diag.endUnit   = endUnit;
     diag.endTerm   = endHit.term || '';
