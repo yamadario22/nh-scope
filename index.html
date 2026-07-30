@@ -1639,6 +1639,15 @@
     } catch(e) { console.warn('Firestore test delete error:', e); }
   }
 
+  // テスト1件の一部項目だけをFirestoreで書き換える（範囲の再判定などで使用）
+  async function updateTestInFirestore(firestoreId, patch) {
+    if (!FIREBASE_READY || !db || !firestoreId || !patch) return false;
+    try {
+      await db.collection(FB_TESTS_COL).doc(firestoreId).update(patch);
+      return true;
+    } catch(e) { console.warn('Firestore test update error:', e); return false; }
+  }
+
   // 後方互換（旧コードから呼ばれる場合のダミー）
   function saveTestHistoryToFirestore() {}
 
@@ -2633,6 +2642,9 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
           school: extractSchoolName(name),
           teacher: extractTeacherName(name),
           question_types: r.question_types||[],
+          // 範囲の再判定用に材料を保存（対応表を直したとき、Geminiを呼ばずに範囲だけ作り直せる）
+          tested_vocab: (r.tested_vocab||[]).slice(0,60),
+          key_items:    (r.key_items||[]).slice(0,60),
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
           year: new Date().getFullYear().toString()
@@ -2747,7 +2759,11 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         <div class="card" style="margin-top:16px">
           <div class="card-title">
             <span>📋 テスト分析履歴</span>
-            <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
+            <span style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="rejudgeTestRanges()"
+                title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
+              <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
+            </span>
           </div>
           ${yearTabs}
           <div class="tbl-wrap"><table>
@@ -2773,7 +2789,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
               return `<tr>
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
                 <td style="font-size:12px">${esc(h.grade||'')}</td>
-                <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}</td>
+                <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}${h.rangePrev&&h.rangePrev!==h.range?`<br><span style="font-weight:400;color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</span>`:''}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
                 <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${realIdx})" style="padding:2px 8px;font-size:11px">✕</button></td>
@@ -2783,6 +2799,106 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
           </table></div>
         </div>`;
     } catch(e) { console.error('renderTestHistory error:', e); }
+  }
+
+  // ── 保存済みテストの範囲を再判定 ────────────────────────────────
+  // ページ→Unit対応表や教科書データを直したあと、Geminiを呼ばずに範囲だけ作り直す。
+  // 判定材料（出題文法・出題語）は履歴に保存済みのものを使うため、API料金はかからない。
+  // 変更前の範囲は rangePrev に残すので、あとで見比べられる。
+
+  // 「Unit 3 Part 2」のような範囲テキストをUnit名とセクション名に分ける
+  function splitRangeSide(s) {
+    const t = (s||'').trim();
+    if (!t) return { unit:'', lesson:'' };
+    const m = t.match(/^((?:[Uu]nit|[Ll]esson)\s*\d+|Let'?s\s*Read(?:\s*\d+)?|Starter)\s*(.*)$/);
+    if (m) return { unit: m[1].trim(), lesson: (m[2]||'').trim() };
+    return { unit: t, lesson: '' };
+  }
+
+  // 保存されている範囲テキストを from/to に戻す
+  function parseRangeText(str) {
+    const s = (str||'').trim();
+    if (!s || s === '範囲不明') return { from_unit:'', from_lesson:'', to_unit:'', to_lesson:'' };
+    const parts = s.split(/\s*[〜~]\s*/);
+    const a = splitRangeSide(parts[0]);
+    const b = splitRangeSide(parts[1] !== undefined ? parts[1] : parts[0]);
+    return { from_unit:a.unit, from_lesson:a.lesson, to_unit:b.unit, to_lesson:b.lesson };
+  }
+
+  // from/to から表示用の範囲テキストを組み立てる（分析時と同じ書式）
+  function buildRangeText(r) {
+    const f = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
+    const t = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
+    return f && t ? (f === t ? f : `${f} 〜 ${t}`) : (f || t || '範囲不明');
+  }
+
+  async function rejudgeTestRanges() {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    if (!hist.length) { alert('保存されているテストがありません。'); return; }
+    if (!getNHItems().length) {
+      alert('教科書データが読み込まれていません。範囲の判定には教科書データが必要です。');
+      return;
+    }
+
+    const changes = [];   // {idx, before, after, name}
+    let skipped = 0;      // 判定材料がなく計算できなかった件数
+
+    hist.forEach((h, idx) => {
+      // 2025年度より前のテストは今の教科書と別版のため範囲判定の対象外
+      const y = parseInt(h.year || (h.date||'').split('/')[0] || '0');
+      if (y && y < 2025) { skipped++; return; }
+      const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
+      if (!hasMaterial) { skipped++; return; }
+
+      const r = {
+        grade: h.grade || '',
+        question_types: h.question_types || [],
+        tested_vocab: h.tested_vocab || [],
+        key_items: h.key_items || [],
+        ...parseRangeText(h.range)
+      };
+      refineRangeFromLibrary(r);
+      const after = buildRangeText(r);
+      const before = h.range || '範囲不明';
+      if (after && after !== before) changes.push({ idx, before, after, name: h.name || '' });
+    });
+
+    if (!changes.length) {
+      alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件）`);
+      return;
+    }
+
+    const preview = changes.slice(0, 15)
+      .map(c => `・${c.name}\n　　${c.before} → ${c.after}`).join('\n');
+    const more = changes.length > 15 ? `\n\nほか${changes.length - 15}件` : '';
+    const ok = await showConfirm(
+      `${changes.length}件の範囲が変わります。書き換えますか？\n\n${preview}${more}\n\n（判定できなかったもの：${skipped}件。変更前の範囲は残しておくので、あとで見比べられます）`,
+      '書き換える'
+    );
+    if (!ok) return;
+
+    // 適用（変更前の範囲を rangePrev に残す）
+    changes.forEach(c => {
+      hist[c.idx].rangePrev = hist[c.idx].range || '';
+      hist[c.idx].range     = c.after;
+    });
+    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    catch { alert('ブラウザへの保存に失敗しました（容量オーバーの可能性）。'); return; }
+
+    // Firestore側も書き換え
+    let synced = 0, failed = 0;
+    for (const c of changes) {
+      const h = hist[c.idx];
+      if (!h.firestoreId) continue;
+      const okFs = await updateTestInFirestore(h.firestoreId, { range: h.range, rangePrev: h.rangePrev });
+      if (okFs) synced++; else failed++;
+    }
+
+    renderTestHistory();
+    alert(`${changes.length}件の範囲を書き換えました。`
+        + (synced ? `\nクラウドにも${synced}件を反映しました。` : '')
+        + (failed ? `\n${failed}件はクラウドへの反映に失敗しました（この端末には保存済み）。` : ''));
   }
 
   async function clearTestHistory() {
@@ -3371,6 +3487,9 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         school: extractSchoolName(name),
         teacher: extractTeacherName(name),
         question_types: r.question_types||[],
+        // 範囲の再判定用に材料を保存
+        tested_vocab: (r.tested_vocab||[]).slice(0,60),
+        key_items:    (r.key_items||[]).slice(0,60),
           notes: r.cross_grade_notes||'',
         date: new Date().toLocaleDateString('ja-JP'),
         year: new Date().getFullYear().toString(),
