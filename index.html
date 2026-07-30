@@ -2522,6 +2522,34 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   }
 
   // ── TEST ANALYSIS ──────────────────────────────────────────────────
+  // ── テスト分析の共通ルール文 ────────────────────────────────────
+  // 単発分析とバッチ分析で同じ指示を使う（片方だけ古くなってズレるのを防ぐ）。
+  // ここの表記が GRAMMAR_UNIT_MAPS の照合前提になっているので、両者は必ずセットで直す。
+  const GRAMMAR_NOTATION_RULES =
+`【文法表記ルール】※範囲特定の照合に使うため、必ずこの表記で書くこと（全角カッコを使い、余分な空白を入れない）
+・現在完了は用法を明記：「現在完了（経験）」「現在完了（完了）」「現在完了（継続）」「現在完了進行形」
+・現在完了進行形（have been ～ing）は、現在完了とは別の文法として必ず区別する。
+  「ずっと～し続けている」の形を見つけたら、必ず「現在完了進行形」と書く（「現在完了（継続）」にまとめない）
+・SVOCは「make 人 形容詞」と表記（「SVOC」「SVOC構文」「make O C」は不可）
+・SVOOや授与動詞は「人物動詞」と表記
+・call O Cは「call A B」と表記
+・It is ... for ... to ... 構文は「It for to」と表記（It was ...形でも同じ）
+・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
+・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
+・分詞の後置修飾は「後置修飾」、間接疑問は「間接疑問文」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
+・1つの欄に複数の文法を書くときは「・」で区切る。カッコの中では区切らない
+  ✅「現在完了（経験）・現在完了（完了）」　❌「現在完了（経験・完了）」
+
+【小問ごとに文法を書くこと】
+・整序・適語選択・適文選択などは、小問（sub_questions）ごとに問われている文法を1つずつ書く
+・大問にまとめて1つだけ書かない。書き漏らすと出題範囲を実際より狭く判定してしまう
+・整序問題は文法を判断する材料として最も重要。必ず全問の文法を書く
+
+【絶対に含めない】
+・内容一致問題の答え・選択肢・解説
+・whatの関係代名詞（中学で習わない）
+・already/yet/just等の1語副詞、have to等の助動詞表現`;
+
   async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
@@ -2560,19 +2588,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・theme：長文・対話文・リスニング本文のみ→テーマを15文字以内
   例：「ボランティアの対話（教科書内）」「環境問題スピーチ（教科書外）」
 
-【文法表記ルール】範囲特定の照合に使うため、必ずこの表記で書くこと：
-・現在完了は用法を明記：「現在完了（経験）」「現在完了（完了）」「現在完了（継続）」「現在完了進行形」
-・SVOCは「make 人 形容詞」と表記（make O C不可）
-・SVOOや授与動詞は「人物動詞」と表記
-・call O Cは「call A B」と表記
-・It is ... for ... to ... 構文は「It for to」と表記（It was ...形でも同じ）
-・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
-・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
-・分詞の後置修飾は「後置修飾」、間接疑問は「間接疑問文」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
-
-【絶対に含めない】
-・内容一致問題の答え・選択肢・解説
-・whatの関係代名詞（中学で習わない）`
+${GRAMMAR_NOTATION_RULES}`
       });
 
       const r = await runWithProgressCard(stEl, 'test', imgs.length, 'テストをAIが分析中', () => callGeminiJSON(
@@ -3152,6 +3168,36 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     return 0;
   }
 
+  // ── 文法名の分解 ───────────────────────────────────────────────
+  // AIは「現在完了形（経験・完了）」のようにカッコの中に複数の用法を並べて書く。
+  // 単純に「・」で切ると「現在完了形（経験」と「完了）」に割れて、後者が判定不能になり
+  // 用法の情報が消える（中3なら「完了」＝Unit 2 の証拠が失われる）。
+  // そこでカッコの外の区切りだけで分け、カッコの中に並ぶ用法は
+  // 「現在完了形（経験）」「現在完了形（完了）」に展開して両方を証拠にする。
+  function splitGrammarTerms(str) {
+    const s = String(str || '');
+    const out = [];
+    let buf = '', depth = 0;
+    for (const ch of s) {
+      if ('（(「['.includes(ch)) { depth++; buf += ch; continue; }
+      if ('）)」]'.includes(ch)) { depth = Math.max(0, depth - 1); buf += ch; continue; }
+      if (depth === 0 && '・、,／/'.includes(ch)) { if (buf.trim()) out.push(buf.trim()); buf = ''; continue; }
+      buf += ch;
+    }
+    if (buf.trim()) out.push(buf.trim());
+
+    const expanded = [];
+    for (const t of out) {
+      const m = t.match(/^(.*?)[（(]([^）)]*)[)）](.*)$/);
+      if (m && /[・、,／/]/.test(m[2])) {
+        m[2].split(/[・、,／/]+/).forEach(u => { if (u.trim()) expanded.push(`${m[1]}（${u.trim()}）${m[3]}`); });
+      } else {
+        expanded.push(t);
+      }
+    }
+    return expanded;
+  }
+
   function refineRangeFromLibrary(r) {
     // diag：判定の途中経過。範囲がどう決まったかを画面で見るための記録。
     // 判定そのものには一切影響しない（記録するだけ）。
@@ -3165,14 +3211,22 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 
     // 教科書項目との一致判定。
     // 戻り値は「どう一致したか」。一致しないときは null。
-    // 判定結果（一致するかどうか）は従来とまったく同じ。内訳表示のために理由を返すだけ。
-    // weak=true は誤ヒットの疑いが強いもの（短い語が長い語句の一部に含まれただけ、など）。
+    // weak=true は誤ヒット（例：出題語 and が教科書の understand each other に含まれただけ）。
+    // 単語として区切られた位置で一致しているかどうかで見分ける。
+    const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordBoundaryHit = (haystack, needle) => {
+      if (!needle) return false;
+      try { return new RegExp(`(^|[^a-z0-9])${escRe(needle)}([^a-z0-9]|$)`, 'i').test(haystack); }
+      catch { return haystack.includes(needle); }
+    };
     const matchInfo = (item, v) => {
       const content = (item.content || '').toLowerCase().trim();
       const notes   = (item.notes || '').toLowerCase();
       if (item.type === '熟語' || item.type === '文法') {
         if (content === v)                                   return { how:'完全一致', weak:false };
-        if (content.includes(v))                             return { how:'出題語が教科書の語句の一部', weak: v.length <= 5 };
+        if (content.includes(v))                             return wordBoundaryHit(content, v)
+          ? { how:'出題語が教科書の語句の一部（語として一致）', weak:false }
+          : { how:'出題語が教科書の語句の文字列に含まれただけ', weak:true };
         if (v.includes(content) && content.length >= 5)       return { how:'教科書の語句が出題語の一部', weak:false };
         if (notes && notes.includes(v))                       return { how:'和訳・メモに一致', weak:true };
         if (notes && v.includes(notes) && notes.length >= 5)  return { how:'和訳・メモが出題語の一部', weak:true };
@@ -3198,14 +3252,16 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
       if (pos > 0) gramHits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
     };
     (r.question_types || []).forEach(qt => {
-      (qt.grammar || '').split(/[・、,\/]+/).forEach(addGram);
-      (qt.sub_questions || []).forEach(sq => (sq.grammar || '').split(/[・、,\/]+/).forEach(addGram));
+      splitGrammarTerms(qt.grammar).forEach(addGram);
+      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(addGram));
     });
 
     // ── ステップ2の材料：出題された「単語・熟語」を教科書のUnitに照合（初出位置） ──
     const vocab = new Set();
     (r.tested_vocab || []).forEach(v => { const t = v.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); });
-    (r.key_items || []).forEach(v => v.split(/[・、,\s]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); }));
+    // key_items は「take advantage of」のような複数語の語句が入るため、空白では分割しない。
+    // 空白で切ると熟語として照合できなくなり、さらに単語1個での誤ヒットも増える。
+    (r.key_items || []).forEach(v => String(v).split(/[・、,／/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); }));
     (r.question_types || []).forEach(qt => {
       (qt.phrases || '').split(/[・、,\/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); });
       (qt.sub_questions || []).forEach(sq => (sq.phrases || '').split(/[・、,\/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); }));
@@ -3245,20 +3301,32 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     if (!allHits.length) { diag.reason = '手がかりが1つも見つからなかった（AIの範囲をそのまま使用）'; return diag; }
 
     // ── ステップ1：範囲の「終わり」を決める ──
-    // 文法ヒットがあれば最も後ろの文法Unitを終端に（信頼度が高い）。無ければ単語の最後尾。
-    const endSource = gramHits.length ? gramHits : wordHits;
+    // 文法は「習う前には出せない」ので最も確実な根拠。
+    // 教科書の語句と完全に一致した単語・熟語も同じ理屈で確実な根拠になるため、
+    // それらが文法より後ろを示すときは終わりを伸ばす（先生が範囲の最後の文法を
+    // 出題しないことは珍しくないため、文法だけでは終わりが手前で止まってしまう）。
+    const solidWordHits = wordHits.filter(h => h.how === '完全一致');
+    const endSource = (gramHits.length || solidWordHits.length)
+      ? [...gramHits, ...solidWordHits]
+      : wordHits;
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
     const endUnit = Math.floor(endHit.pos);
-    diag.decidedBy = gramHits.length ? '文法（信頼度高）' : '単語・熟語';
+    diag.decidedBy = gramHits.length
+      ? (endHit.matched ? '完全一致した語（文法より後ろを示したため）' : '文法（信頼度高）')
+      : (solidWordHits.length ? '完全一致した語' : '単語・熟語');
     diag.endUnit   = endUnit;
     diag.endTerm   = endHit.term || '';
 
     // ── ステップ2：開始を「終わりから最大3Unit分」の窓の中で決める ──
     // 終端を含めて3つ前まで（例：終端Unit6ならUnit4まで）。それより前は復習として無視。
     const MAX_SPAN = 3; // 範囲の最大の幅（Unit数）。2でも3でもよいが、それ以上は広げない。
-    const minUnit  = endUnit - (MAX_SPAN - 1);
-    const inWindow = allHits.filter(h => { const u = Math.floor(h.pos); return u >= minUnit && u <= endUnit; });
+    const minUnit  = Math.max(0, endUnit - (MAX_SPAN - 1)); // 0未満にならないようにする
+    const inWindow = allHits.filter(h => {
+      if (h.weak) return false;               // 誤ヒットは開始の根拠にしない
+      const u = Math.floor(h.pos);
+      return u >= minUnit && u <= endUnit;
+    });
     diag.minUnit = minUnit;
 
     // 窓の中の手がかりが乏しいときは無理に縮めない（AIの終端より後ろを示すときだけ伸ばす）。
@@ -3566,7 +3634,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・Unit内の順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication → Real Life English → Stage Activity
 ・特殊セクション（教科書に実在）: A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
 ・長文・リスニング本文のタイトルで終端を判定する（最も信頼性が高い）
-・文法だけで終端を決めない（前学年の復習が含まれる場合があるため）
+・出題文法がどのUnitで習うかからも逆算する。ただし前学年の復習は範囲の根拠にしない
 ・教科書データがある場合は必ず活用する
 
 【絶対ルール】
@@ -3576,9 +3644,11 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・tested_vocab：テストに登場する文法パターン・熟語・特徴的な単語（5文字以上）を配列で列挙。ライブラリと照合してテスト範囲の終端を特定するために使用。例：["want O to do", "May I help you", "hundreds of", "volunteer", "traditional"]。一般的な短い単語（go/be/the/have等）は含めない
 ・typeフィールド：「リスニング」「単語」「整序」など日本語
 ・detailsフィールド：最大30文字。繰り返し禁止
-・grammar・phrasesは英語混在可。phrasesは複数語の熟語・イディオム（be linked to / more and more / in addition 等、新出かどうかは問わない）。already/yet等の1語副詞・have to等の助動詞は除外
+・grammar・phrasesは英語混在可。phrasesは複数語の熟語・イディオム（be linked to / more and more / in addition 等、新出かどうかは問わない）
 ・全大問を漏れなく列挙（5個以下は不完全）
-・phrases：問われた熟語のみ（本文テキスト列挙禁止）` });
+・phrases：問われた熟語のみ（本文テキスト列挙禁止）
+
+${GRAMMAR_NOTATION_RULES}` });
 
     const r = await callGeminiJSON(parts, '問題形式名は日本語。テスト分析専門家。', {
       type:'OBJECT', properties:{
