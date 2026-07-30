@@ -699,7 +699,7 @@
         どちらも <code>index.html</code> のソースコード内にある定数です。コードを編集できる人（開発担当）が直します。
       </p>
       <ul style="font-size:13px;line-height:1.9;padding-left:20px">
-        <li><b>PAGE_UNIT_TABLES</b>：学年ごとに「このページからこのUnit」というページ→Unitの対応表。資料編の開始ページ、Let's Read の独立ページもここで指定。</li>
+        <li><b>PAGE_UNIT_TABLES</b>：学年ごとに「このページからこのUnit」というページ→Unitの対応表。資料編の開始ページ、Let's Read の独立ページもここで指定。1行は <code>[開始ページ, 表示名, 範囲判定用Unit]</code> の3つ。Real Life English・Sounds and Letters・Grammar for Communication などUnitでないページは、3つめに<b>直前のUnit名</b>を書く（表示は正確な名前のまま、テスト範囲の判定ではそのUnitとして数える）。</li>
         <li><b>GRAMMAR_UNIT_MAPS</b>：文法事項がどの学年・Unitで学習するかの対応表。文法の並びや名称が変わったときに直す。</li>
       </ul>
     </div>
@@ -708,7 +708,7 @@
       <div class="card-title">📝 更新の手順</div>
       <ol style="font-size:13px;line-height:2;padding-left:22px">
         <li>新しい教科書の<b>目次を写真で撮る</b>（各学年）。</li>
-        <li>各Unitの<b>開始ページ</b>を書き出して一覧にする。資料編が始まるページ、Let's Read のページも忘れずに。</li>
+        <li>各Unitの<b>開始ページ</b>を書き出して一覧にする。資料編が始まるページ、Let's Read のページも忘れずに。目次の右側の欄にある <b>Real Life English・Sounds and Letters・英語の歌・Learning in English</b> の開始ページも書き出す（ここが抜けると、そのページの語句が手前のUnit扱いになってズレる）。</li>
         <li><code>index.html</code> 内の <b>PAGE_UNIT_TABLES</b> を、その学年の新しいページ構成に書き換える。</li>
         <li>文法の<b>学習順や呼び方が変わっていたら</b>、<b>GRAMMAR_UNIT_MAPS</b> も合わせて直す。</li>
         <li>既に取り込み済みのデータは、教科書データ編集タブの「📐 Unit表記を一括補正」を押して、<b>新しい対応表に合わせ直す</b>。</li>
@@ -902,30 +902,67 @@
     return '';
   }
   function getNHItems()  {
-    return library.filter(b=>isNHBook(b.id)).flatMap(b=>(b.items||[]).map(it=>({ ...it, grade: bookGrade(b) })));
+    return library.filter(b=>isNHBook(b.id)).flatMap(b=>(b.items||[]).map(it=>({ ...it, grade: bookGrade(b), bookId: b.id })));
   }
   function getNCItems()  {
     return library.filter(b=>isNCBook(b.id)).flatMap(b=>(b.items||[]).map(it=>({ ...it, grade: bookGrade(b) })));
   }
 
   // ── ページ→Unit対応表（目次から作成） ─────────────────────────────
-  // 各エントリは [開始ページ, Unit/Lesson名]。名前が空のエントリ以降は巻末資料（補正対象外）
-  // 間に挟まるGrammar for Communication・Language Focus・Stage Activity・Project・
-  // Reading Lesson・Take Action・Let's Read等は直前のUnit/Lessonに帰属させる
+  // 各エントリは [開始ページ, 表示名, 範囲判定用Unit(省略時は表示名そのもの)]
+  // 名前が空のエントリ以降は巻末資料（補正対象外）
+  // NEW HORIZONは1Unitが本文8ページで、その後ろに Real Life English /
+  // Sounds and Letters / Grammar for Communication / Stage Activity /
+  // Learning in English / 英語の歌 が1〜4ページずつ挟まる。
+  // これらは「表示は正確な名前・テスト範囲の判定では直前のUnit扱い」とする（第3要素）。
+  // ※令和7年度版（2025〜）の目次で全ページ連続を確認済み
   const PAGE_UNIT_TABLES = {
     // ══ NEW HORIZON ══（Let's Readは定期テスト範囲の切れ目になるため独立単元として扱う）
     // 中1：Unit 0(p.6) Unit 1(11) … Unit 10(113) Let's Read=Gon, the Fox(126) 資料編(129)
-    default_c1: [[6,'Unit 0'],[11,'Unit 1'],[19,'Unit 2'],[31,'Unit 3'],[41,'Unit 4'],[61,'Unit 5'],
-                 [71,'Unit 6'],[81,'Unit 7'],[91,'Unit 8'],[103,'Unit 9'],[113,'Unit 10'],
+    default_c1: [[6,'Unit 0'],[8,'Sounds and Letters 0','Unit 0'],[10,'Grammar for Communication 0','Unit 0'],
+                 [11,'Unit 1'],[18,'Sounds and Letters 1','Unit 1'],
+                 [19,'Unit 2'],[26,'Sounds and Letters 2','Unit 2'],[28,'Grammar for Communication 1','Unit 2'],
+                 [31,'Unit 3'],[38,'Sounds and Letters 3','Unit 3'],[40,'Grammar for Communication 2','Unit 3'],
+                 [42,'英語の歌 1','Unit 3'],
+                 [43,'Unit 4'],[50,'Sounds and Letters 4','Unit 4'],[52,'Grammar for Communication 3','Unit 4'],
+                 [54,'Stage Activity 1','Unit 4'],[56,'英語の歌 2','Unit 4'],[57,'夏休み特集','Unit 4'],
+                 [61,'Unit 5'],[69,'Real Life English 1','Unit 5'],[70,'Grammar for Communication 4','Unit 5'],
+                 [71,'Unit 6'],[79,'Real Life English 2','Unit 6'],[80,'Grammar for Communication 5','Unit 6'],
+                 [81,'Unit 7'],[89,'Real Life English 3','Unit 7'],[90,'Grammar for Communication 6','Unit 7'],
+                 [91,'Unit 8'],[99,'Real Life English 4','Unit 8'],[100,'Stage Activity 2','Unit 8'],
+                 [103,'Unit 9'],[111,'Real Life English 5','Unit 9'],[112,'Grammar for Communication 7','Unit 9'],
+                 [113,'Unit 10'],[121,'Real Life English 6','Unit 10'],[122,'Grammar for Communication 8','Unit 10'],
+                 [123,'Learning in English','Unit 10'],[124,'Stage Activity 3','Unit 10'],
                  [126,"Let's Read"],[129,'']],
     // 中2：Unit 0(6) … LR1(44) … LR2(84) … LR3(104) 資料編(109)
-    default_c2: [[6,'Unit 0'],[9,'Unit 1'],[19,'Unit 2'],[29,'Unit 3'],[44,"Let's Read 1"],
-                 [49,'Unit 4'],[59,'Unit 5'],[69,'Unit 6'],[84,"Let's Read 2"],[89,'Unit 7'],
+    default_c2: [[6,'Unit 0'],
+                 [9,'Unit 1'],[17,'Real Life English 1','Unit 1'],[18,'Grammar for Communication 1','Unit 1'],
+                 [19,'Unit 2'],[27,'Real Life English 2','Unit 2'],[28,'Grammar for Communication 2','Unit 2'],
+                 [29,'Unit 3'],[37,'Real Life English 3','Unit 3'],[38,'Learning in English 1','Unit 3'],
+                 [39,'Grammar for Communication 3','Unit 3'],[40,'Stage Activity 1','Unit 3'],
+                 [44,"Let's Read 1"],[48,'英語の歌 1',"Let's Read 1"],
+                 [49,'Unit 4'],[57,'Real Life English 4','Unit 4'],[58,'Grammar for Communication 4','Unit 4'],
+                 [59,'Unit 5'],[67,'Real Life English 5','Unit 5'],[68,'Learning in English 2','Unit 5'],
+                 [69,'Unit 6'],[77,'Real Life English 6','Unit 6'],[78,'Grammar for Communication 5','Unit 6'],
+                 [80,'Stage Activity 2','Unit 6'],
+                 [84,"Let's Read 2"],[88,'英語の歌 2',"Let's Read 2"],
+                 [89,'Unit 7'],[97,'Real Life English 7','Unit 7'],[98,'Grammar for Communication 6','Unit 7'],
+                 [99,'英語の歌 3','Unit 7'],[100,'Stage Activity 3','Unit 7'],
                  [104,"Let's Read 3"],[109,'']],
     // 中3：Unit 0(6) … LR1(46) … LR2(92) LR3(96) 資料編(101)
-    default_c3: [[6,'Unit 0'],[9,'Unit 1'],[19,'Unit 2'],[31,'Unit 3'],[46,"Let's Read 1"],
-                 [51,'Unit 4'],[61,'Unit 5'],[77,'Unit 6'],[92,"Let's Read 2"],[96,"Let's Read 3"],
-                 [101,'']],
+    default_c3: [[6,'Unit 0'],
+                 [9,'Unit 1'],[17,'Real Life English 1','Unit 1'],[18,'Learning in English 1','Unit 1'],
+                 [19,'Unit 2'],[27,'Real Life English 2','Unit 2'],[28,'Grammar for Communication 1','Unit 2'],
+                 [30,'英語の歌 1','Unit 2'],
+                 [31,'Unit 3'],[39,'Real Life English 3','Unit 3'],[40,'Learning in English 2','Unit 3'],
+                 [41,'Grammar for Communication 2','Unit 3'],[42,'Stage Activity 1','Unit 3'],
+                 [46,"Let's Read 1"],[50,'英語の歌 2',"Let's Read 1"],
+                 [51,'Unit 4'],[59,'Real Life English 4','Unit 4'],[60,'Learning in English 3','Unit 4'],
+                 [61,'Unit 5'],[69,'Real Life English 5','Unit 5'],[70,'Grammar for Communication 3','Unit 5'],
+                 [72,'Stage Activity 2','Unit 5'],[76,'英語の歌 3','Unit 5'],
+                 [77,'Unit 6'],[85,'Real Life English 6','Unit 6'],[86,'Learning in English 4','Unit 6'],
+                 [87,'Grammar for Communication 4','Unit 6'],[88,'Stage Activity 3','Unit 6'],
+                 [92,"Let's Read 2"],[96,"Let's Read 3"],[101,'']],
     // ══ NEW CROWN ══（普段使わないテキストのため、特殊セクションは直前Lesson帰属のまま）
     // 資料編の開始ページは実物で確認済み：中1=p.133 / 中2=p.145 / 中3=p.113
     nc_c1: [[7,'Starter'],[25,'Lesson 1'],[35,'Lesson 2'],[43,'Lesson 3'],[55,'Lesson 4'],[67,'Lesson 5'],
@@ -1038,6 +1075,21 @@
       if (page >= p) result = u; else break;
     }
     return result || null;
+  }
+
+  // テスト範囲の判定に使うUnitを返す。
+  // Real Life English・Sounds and Letters・Grammar for Communication などUnitでないページは
+  // 直前のUnit扱い（対応表の第3要素）にして、範囲の手がかりとして数えられるようにする。
+  // 表示名（it.unit）は正確な名前のまま変えない。
+  function rangeUnitFromPage(bookId, page) {
+    const table = PAGE_UNIT_TABLES[bookId];
+    if (!table || !page) return null;
+    let entry = null;
+    for (const e of table) {
+      if (page >= e[0]) entry = e; else break;
+    }
+    if (!entry || !entry[1]) return null;   // 巻末資料・範囲外
+    return entry[2] || entry[1];
   }
 
   // ── ページ番号の補完（同じ写真内＝配列上の前後項目から推定） ──────────
@@ -2940,8 +2992,10 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         if (!otherGradeItem) otherGradeItem = item;
       }
       if (sameGradeItem) {
-        const pos = rangePos([sameGradeItem.unit, sameGradeItem.lesson].filter(Boolean).join(' '));
-        if (pos > 0) wordHits.push({ pos, unit: sameGradeItem.unit, lesson: sameGradeItem.lesson || '', term: v });
+        // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
+        const ru = rangeUnitFromPage(sameGradeItem.bookId, sameGradeItem.page) || sameGradeItem.unit;
+        const pos = rangePos([ru, sameGradeItem.lesson].filter(Boolean).join(' '));
+        if (pos > 0) wordHits.push({ pos, unit: ru, lesson: sameGradeItem.lesson || '', term: v });
       } else if (otherGradeItem) {
         otherGradeHits.push(`${v}（${otherGradeItem.grade || '他学年'}）`);
       }
