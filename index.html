@@ -1245,6 +1245,23 @@
   // ※「Unit Activity」「Key Sentences」はNEW HORIZONの本文に実際に使われている見出しなので対象外
   const FOREIGN_MAYBE_RE = /(基本文|Project\s*\d)/i;
 
+  // 他学年のNH教科書にある項目を {内容+ページ → その学年とセクション} で引ける形にする。
+  // 同じ内容が同じページで別学年にもあるなら、それは片方が他方のコピー（＝混入）である。
+  // 普通のセクション名（Part 1 等）が付いていて名前では見分けられない混入を、これで見つける。
+  function otherGradeItemIndex(bookId) {
+    const idx = new Map();
+    (library || []).forEach(b => {
+      if (b.id === bookId || !isNHBook(b.id)) return;
+      (b.items || []).forEach(it => {
+        if (!it.page || !(it.content || '').trim()) return;
+        const key = `${(it.content || '').trim().toLowerCase()}|${it.page}`;
+        if (!idx.has(key)) idx.set(key, []);
+        idx.get(key).push({ grade: bookGrade(b) || b.name, lesson: it.lesson || '', type: it.type || '' });
+      });
+    });
+    return idx;
+  }
+
   function scanBookAnomalies(bookId) {
     const book  = bookById(bookId);
     const table = PAGE_UNIT_TABLES[bookId];
@@ -1255,8 +1272,11 @@
     const firstPage     = table[0][0];
     const auxHere = auxMapOf(bookId);
     const otherNHBooks = ['default_c1','default_c2','default_c3'].filter(b => b !== bookId);
+    const dupIndex = isNH ? otherGradeItemIndex(bookId) : new Map();
 
     const found = [];
+    const foreignFrom = {};   // 構造から判明した混入元の学年ごとの件数
+    const perItem = [];       // 1件ごとの判定結果（あとで⑥を足す）
     items.forEach((it, idx) => {
       const label   = `${it.unit || ''} ${it.lesson || ''}`.trim();
       const lesson  = (it.lesson || '').trim();
@@ -1292,6 +1312,7 @@
           const there = parseAuxName(unitFromPage(other, it.page) || '');
           if (there && there.base === aux.base && (aux.num === null || there.num === aux.num)) {
             reasons.push({ level:'確実', text:`中${other.slice(-1)}の p.${it.page} が「${aux.base}${aux.num ?? ''}」と一致（中${other.slice(-1)}のデータの疑い）` });
+            foreignFrom[other.slice(-1)] = (foreignFrom[other.slice(-1)] || 0) + 1;
           }
         });
       }
@@ -1320,12 +1341,42 @@
         }
       }
 
-      if (reasons.length) {
-        const level = reasons.some(r => r.level === '確実') ? '確実' : '疑い';
-        found.push({ idx, item: it, level, reasons: reasons.map(r => r.text) });
-      }
+      // ⑥は後で判定する（この本がどの学年から汚染されているかを先に数える必要がある）
+
+      perItem.push({ idx, item: it, reasons });
     });
-    return { book, total: items.length, found };
+
+    // ── ⑥ 他学年の本と同じ内容・同じページの項目（＝どちらかのコピー） ──
+    // 同じものが2冊にあるとき、どちらが本物かを決める必要がある。
+    // 構造から「この学年のものではない」と分かった項目が一定数見つかった本は、
+    // その学年から流れ込んでいると判断できるので、この本の側をコピーとみなす。
+    // 汚染の証拠がない本では重複を報告しない（本物のデータを消させないため）。
+    const CONTAMINATION_MIN = 3;
+    const contaminatedFrom = new Set(
+      Object.keys(foreignFrom).filter(g => foreignFrom[g] >= CONTAMINATION_MIN)
+    );
+    if (isNH && contaminatedFrom.size) {
+      perItem.forEach(p => {
+        const it = p.item;
+        if (!(it.page > 0) || !(it.content || '').trim()) return;
+        const hits = dupIndex.get(`${(it.content || '').trim().toLowerCase()}|${it.page}`);
+        if (!hits || !hits.length) return;
+        const hit = hits.find(h => contaminatedFrom.has(String(gradeNumOf(h.grade))));
+        if (!hit) return;
+        const sameSection = (hit.lesson || '') === (it.lesson || '');
+        p.reasons.push({
+          level: sameSection ? '確実' : '疑い',
+          text: `${hit.grade}の p.${it.page}${sameSection ? `「${hit.lesson || 'セクションなし'}」` : ''}に同じ項目がある（${hit.grade}から流れ込んだデータ）`
+        });
+      });
+    }
+
+    perItem.forEach(p => {
+      if (!p.reasons.length) return;
+      const level = p.reasons.some(r => r.level === '確実') ? '確実' : '疑い';
+      found.push({ idx: p.idx, item: p.item, level, reasons: p.reasons.map(r => r.text) });
+    });
+    return { book, total: items.length, found, foreignFrom: { ...foreignFrom } };
   }
 
   function closeAnomalyModal() {
@@ -1362,9 +1413,17 @@
         </table></div>
       </div>` : '';
 
+    const counts = ['default_c1','default_c2','default_c3']
+      .map(id => { const b = bookById(id); return b ? `${bookGrade(b) || id}：${(b.items||[]).length}件` : null; })
+      .filter(Boolean).join(' ／ ');
+
     document.getElementById('anomalyBody').innerHTML =
-      `<div style="font-size:13px;margin-bottom:10px">
+      `<div style="font-size:13px;margin-bottom:6px">
          <b>${esc(book.name || '')}</b>（全${total}件）から、${found.length}件の異物候補が見つかりました。
+       </div>
+       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+         3冊の項目数：${esc(counts)}<br>
+         学年ごとの件数が大きく違う場合は、どこかに他学年のデータが流れ込んでいる可能性があります。
        </div>
        ${found.length ? '' : '<div style="color:var(--muted);font-size:13px">異物は見つかりませんでした。</div>'}
        ${tbl('確実に異物と言えるもの', sure, 'この学年に存在しないセクション名、他学年のページ構成との一致、他教科書の呼び方から、この学年のデータではないと判断できるものです。')}
