@@ -3211,8 +3211,16 @@ ${GRAMMAR_NOTATION_RULES}`
 
     // 教科書項目との一致判定。
     // 戻り値は「どう一致したか」。一致しないときは null。
-    // weak=true は誤ヒット（例：出題語 and が教科書の understand each other に含まれただけ）。
-    // 単語として区切られた位置で一致しているかどうかで見分ける。
+    //
+    // 【文法（type==='文法'）の項目は照合しない】
+    //   文法がどのUnitで習うかは GRAMMAR_UNIT_MAPS（凌央さんが作った正しい対応表）で決める。
+    //   教科書データの文法項目は、ページが例文の掲載位置になっていたり他学年ぶんが
+    //   混ざっていたりして位置が信頼できないため、範囲判定の根拠にしてはいけない。
+    //
+    // 【和訳・メモは照合しない】
+    //   文法項目のメモには例文が入っているため、そこに含まれる英単語と一致してしまい
+    //   （例：出題語 minutes が「現在完了進行形 have been + -ing」の例文に一致）、
+    //   まったく無関係なUnitのヒットが大量に発生していた。
     const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const wordBoundaryHit = (haystack, needle) => {
       if (!needle) return false;
@@ -3221,22 +3229,19 @@ ${GRAMMAR_NOTATION_RULES}`
     };
     const matchInfo = (item, v) => {
       const content = (item.content || '').toLowerCase().trim();
-      const notes   = (item.notes || '').toLowerCase();
-      if (item.type === '熟語' || item.type === '文法') {
-        if (content === v)                                   return { how:'完全一致', weak:false };
-        if (content.includes(v))                             return wordBoundaryHit(content, v)
-          ? { how:'出題語が教科書の語句の一部（語として一致）', weak:false }
-          : { how:'出題語が教科書の語句の文字列に含まれただけ', weak:true };
-        if (v.includes(content) && content.length >= 5)       return { how:'教科書の語句が出題語の一部', weak:false };
-        if (notes && notes.includes(v))                       return { how:'和訳・メモに一致', weak:true };
-        if (notes && v.includes(notes) && notes.length >= 5)  return { how:'和訳・メモが出題語の一部', weak:true };
+      if (item.type === '熟語') {
+        if (content === v)                              return { how:'完全一致', weak:false };
+        if (content.includes(v))                        return wordBoundaryHit(content, v)
+          ? { how:'出題語が教科書の熟語の一部（語として一致）', weak:false }
+          : { how:'出題語が教科書の熟語の文字列に含まれただけ', weak:true };
+        if (v.includes(content) && content.length >= 5) return { how:'教科書の熟語が出題語の一部', weak:false };
         return null;
       }
       if (item.type === '単語') {
         if (v === content && content.length >= 5) return { how:'完全一致', weak:false };
         return null;
       }
-      return null;
+      return null; // 文法・その他は照合しない
     };
 
     // ── ステップ1の材料：出題された「文法」を文法対応表でUnitに変換 ──
@@ -3269,29 +3274,35 @@ ${GRAMMAR_NOTATION_RULES}`
     const wordHits = [];        // {pos, unit, lesson, term} 同学年で初出した位置
     const otherGradeHits = [];  // 他学年でのみ見つかった語（復習表示用）
     for (const v of vocab) {
-      let sameGradeItem = null, otherGradeItem = null, sameGradeInfo = null;
+      // その語が「教科書で最初に登場する場所」を全学年から探す。
+      // 習っていない語はテストに出せないので、初出Unitはその範囲まで進んだ証拠になる。
+      // ただし前の学年で習っている語は、今回どこまで進んだかの証拠にならない（ただの復習）。
+      // 以前は「同じ学年で最初に見つかったもの」を採用していたため、中1で習った children が
+      // 中3 Unit 6 の語彙欄に再登場しただけで「Unit 6まで進んだ証拠」にされていた。
+      let first = null, firstInfo = null, firstKey = null;
       for (const item of items) {
         if (!item.unit || item.unit === '資料編') continue; // 巻末・ラベルなしは根拠にしない
         const mi = matchInfo(item, v);
         if (!mi) continue;
-        const sameGrade = !gradeNum || gradeNumOf(item.grade) === gradeNum;
-        if (sameGrade) { sameGradeItem = item; sameGradeInfo = mi; break; } // 教科書はページ順なので最初＝初出
-        if (!otherGradeItem) otherGradeItem = item;
+        const key = (gradeNumOf(item.grade) || 9) * 10000 + (item.page > 0 ? item.page : 9999);
+        if (first === null || key < firstKey) { first = item; firstInfo = mi; firstKey = key; }
       }
-      if (sameGradeItem) {
-        // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
-        const ru = rangeUnitFromPage(sameGradeItem.bookId, sameGradeItem.page) || sameGradeItem.unit;
-        const pos = rangePos([ru, sameGradeItem.lesson].filter(Boolean).join(' '));
-        if (pos > 0) wordHits.push({
-          pos, unit: ru, lesson: sameGradeItem.lesson || '', term: v,
-          // ここから下は内訳表示のための記録（判定には使わない）
-          matched: sameGradeItem.content || '', matchedType: sameGradeItem.type || '',
-          matchedPage: sameGradeItem.page || 0, matchedUnit: sameGradeItem.unit || '',
-          how: sameGradeInfo.how, weak: !!sameGradeInfo.weak
-        });
-      } else if (otherGradeItem) {
-        otherGradeHits.push(`${v}（${otherGradeItem.grade || '他学年'}）`);
+      if (!first) continue;
+      const firstGrade = gradeNumOf(first.grade) || 0;
+      if (gradeNum && firstGrade && firstGrade !== gradeNum) {
+        otherGradeHits.push(`${v}（${first.grade || '他学年'}）`);
+        continue;
       }
+      // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
+      const ru = rangeUnitFromPage(first.bookId, first.page) || first.unit;
+      const pos = rangePos([ru, first.lesson].filter(Boolean).join(' '), firstGrade);
+      if (pos > 0) wordHits.push({
+        pos, unit: ru, lesson: first.lesson || '', term: v,
+        // ここから下は内訳表示のための記録（判定には使わない）
+        matched: first.content || '', matchedType: first.type || '',
+        matchedPage: first.page || 0, matchedUnit: first.unit || '',
+        how: firstInfo.how, weak: !!firstInfo.weak
+      });
     }
 
     const allHits = [...gramHits, ...wordHits];
@@ -3331,7 +3342,7 @@ ${GRAMMAR_NOTATION_RULES}`
 
     // 窓の中の手がかりが乏しいときは無理に縮めない（AIの終端より後ろを示すときだけ伸ばす）。
     if (inWindow.length < 2 && !gramHits.length) {
-      const curEndPos = rangePos([r.to_unit, r.to_lesson].filter(Boolean).join(' '));
+      const curEndPos = rangePos([r.to_unit, r.to_lesson].filter(Boolean).join(' '), gradeNum);
       if (endHit.pos > curEndPos + 0.001) { r.to_unit = endHit.unit; r.to_lesson = endHit.lesson || ''; }
       diag.reason = '窓の中の手がかりが1つ以下で文法もなし → 終わりだけ調整';
       diag.after  = buildRangeText(r);
@@ -4553,16 +4564,21 @@ ${GRAMMAR_NOTATION_RULES}` });
 
   // Unit + Part/Lesson を小数値に変換（範囲の精密比較用）
   // 例: "Unit 2 Part 1" → 2.1, "Unit 2 Read and Think 1" → 2.3
-  function rangePos(str) {
+  function rangePos(str, gradeN) {
     const s = (str||'');
     const um = s.match(/[Uu]nit\s*(\d+)/);
     // Let's Read は独立単元（定期テスト範囲の切れ目）。Unit番号がない場合は教科書上の位置を返す
-    // 中2・中3共通：Let's Read 1はUnit 3の直後(3.9)、2はUnit 6の直後(6.9)、3は終盤(7.9)
-    // 無番号（中1のGon, the Fox）はUnit 10の後(10.9)
+    // 中2：LR1はUnit 3の直後(3.9)、LR2はUnit 6の直後(6.9)、LR3はUnit 7の直後(7.9)
+    // 中3：Unitは6までしかなく、LR3はLR2の直後（p.92→p.96）なので6.95とする
+    //      （以前は学年を見ずに7.9としていたため、中3で存在しないUnit 7が終端になっていた）
+    // 中1：無番号のLet's Read（Gon, the Fox）はUnit 10の後(10.9)
     if (!um && /Let'?s\s*Read/i.test(s)) {
       const lr = s.match(/Let'?s\s*Read\s*(\d+)/i);
       const n = lr ? parseInt(lr[1]) : 0;
-      return n === 1 ? 3.9 : n === 2 ? 6.9 : n === 3 ? 7.9 : 10.9;
+      if (n === 1) return 3.9;
+      if (n === 2) return 6.9;
+      if (n === 3) return gradeN === 3 ? 6.95 : 7.9;
+      return 10.9;
     }
     const unit = um ? parseInt(um[1]) : (s.match(/(\d+)/) ? parseInt(s.match(/(\d+)/)[1]) : 0);
     let sub = 0;
@@ -4644,10 +4660,11 @@ ${GRAMMAR_NOTATION_RULES}` });
 
     // 指定範囲を精密な小数位置に変換（Unit 2 Part 1 = 2.1 等）
     // 開始：Unit指定があるときのみ有効（Part単独指定は範囲条件にしない）
-    const fromPos = fromUnit ? rangePos(`${fromUnit} ${fromPart}`.trim()) : 0;
+    const filterGradeN = gradeNumOf(gradeFilter);
+    const fromPos = fromUnit ? rangePos(`${fromUnit} ${fromPart}`.trim(), filterGradeN) : 0;
     // 終わり：Part未指定なら「そのUnitの最後まで」（+0.99）
     const toPos = toUnit
-      ? (toPart ? rangePos(`${toUnit} ${toPart}`.trim()) : rangePos(toUnit) + 0.99)
+      ? (toPart ? rangePos(`${toUnit} ${toPart}`.trim(), filterGradeN) : rangePos(toUnit, filterGradeN) + 0.99)
       : 999;
     // Partのみ指定でUnit未指定の場合は範囲指定なしとして扱う
     const hasRangeFilter = !!(fromUnit || toUnit);
@@ -4655,8 +4672,9 @@ ${GRAMMAR_NOTATION_RULES}` });
     const results = hist.filter(h => {
       const rangeStr = h.range || '';
       const parts = rangeStr.split('〜');
-      const hFromPos = rangePos(parts[0]);
-      const hToPos   = rangePos(parts[parts.length-1]);
+      const hGradeN  = gradeNumOf(h.grade);
+      const hFromPos = rangePos(parts[0], hGradeN);
+      const hToPos   = rangePos(parts[parts.length-1], hGradeN);
       const gradeOk   = !gradeFilter || h.grade === gradeFilter;
       const schoolOk  = !tsSchool  || extractSchoolName(h.name||'').toLowerCase().includes(tsSchool) || (h.name||'').toLowerCase().includes(tsSchool);
       const teacherOk = !tsTeacher || teacherMatches(h.name||'', tsTeacher);
