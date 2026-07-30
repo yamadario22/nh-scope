@@ -885,9 +885,10 @@
   // テスト用紙は教科書より字が細かい（整序の語句カード、小さな選択肢、注釈）。
   // 以前は1.1で読み込んでいたため文字がつぶれ、大問を読み落としていた（11大問中4件しか取れない例があった）。
   const TEST_SCALE = 1.9;
-  // 1回のAI呼び出しに渡すページ数。多くのページを一度に渡すと、AIは全部を列挙せず要約に逃げる。
-  // 少しずつ渡して結果を合体させることで、どの大問にも目が届くようにする。
-  const TEST_PAGES_PER_CALL = 3;
+  // 1回のAI呼び出しに渡すページ数。複数ページを一度に渡すと、AIは全部を列挙せず要約に逃げる。
+  // 1ページに3〜4大問ある密なテストでは、3ページ渡すと13大問中4件しか取れなかった。
+  // 1ページずつ渡せば、そのページに全神経が向く。
+  const TEST_PAGES_PER_CALL = 1;
   const QUAL  = 0.88; // JPEG品質
 
   // ── STATE ──────────────────────────────────────────────────────────
@@ -1050,9 +1051,13 @@
       [/\bwhen\b/i,                         'Unit 2','Part 1'],
       [/\bif\b/i,                           'Unit 2','Part 2'],
       [/形容詞的用法/,                      'Unit 3','Read and Think 1'],
-      [/名詞的用法|it\s*(is|was).*\bto\b/i, 'Unit 3','Read and Think 2'],
+      // 中2で習うのは「It is 形容詞 to ～」（forなし）。
+      // 「It is 形容詞 for O to ～」（forあり）は中3なので、forが入っていたら中2にしない。
+      // 「形式主語」という語だけでも中2だが、forが書かれていれば中3の形なので除外する。
+      [/^(?!.*\bfor\b)(?:.*(?:名詞的用法|形式主語)|.*it\s*(?:is|was)\b.*\bto\b|.*\bit\s*to\b)/i, 'Unit 3','Read and Think 2'],
       [/感情/,                              'Unit 3','Part 2'],
-      [/副詞的用法|不定詞/,                 'Unit 3','Part 1'],
+      // 「不定詞」だけの表記も中2だが、forが書かれていれば中3の形（It is 形容詞 for O to ～）
+      [/^(?!.*\bfor\b).*(副詞的用法|不定詞)/,  'Unit 3','Part 1'],
       [/have\s*to/i,                        'Unit 4','Part 1'],
       [/\bmust\b/i,                         'Unit 4','Part 2'],
       [/動名詞.*主語|主語.*動名詞/,         'Unit 4','Read and Think 2'],
@@ -1075,9 +1080,11 @@
       // 「The story shows me that ...」＝Unit 1。SVOO・人物動詞という書き方でも拾えるようにする
       [/(show|tell|teach).*(人|me|us).*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
       // 「It is important for us to understand ....」＝Unit 3 Part 1。
+      // 中3で習うのは「It is 形容詞 for O to ～」で、for が入るのが中2との違い。
       // AIは「It is + (for + (人など)) + to + 動詞の原形」のように記号を挟んで書くため、
-      // for と to が離れていても拾えるようにする（以前は拾えず、中2のデータと誤判定していた）
-      [/it\s*(is|was)?\b.*\bfor\b.*\bto\b|it\s*for\s*to|形式主語/i, 'Unit 3','Part 1'],
+      // for と to が離れていても拾えるようにする。
+      // 「形式主語」だけの表記は中2（It is 形容詞 to ～）にもあたるため、ここでは判定しない。
+      [/it\s*(is|was)?\b.*\bfor\b.*\bto\b|it\s*for\s*to/i, 'Unit 3','Part 1'],
       // 「I know where the local shelter is / Tell me what you have done」＝Unit 4（間接疑問）。
       // 「動詞 + (人) + whatなどで始まる節」という書き方でも拾う
       [/間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節/, 'Unit 4','Part 1'],
@@ -3022,7 +3029,9 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・SVOCは「make 人 形容詞」と表記（「SVOC」「SVOC構文」「make O C」は不可）
 ・SVOOや授与動詞は「人物動詞」と表記
 ・call O Cは「call A B」と表記
-・It is ... for ... to ... 構文は「It for to」と表記（It was ...形でも同じ）
+・形式主語のitは、forの有無で必ず書き分ける（学年が変わるため）
+  「It is 形容詞 to ～」（forなし）→「It to」と表記
+  「It is 形容詞 for O to ～」（forあり）→「It for to」と表記
 ・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
 ・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
 ・分詞の後置修飾は「後置修飾」、間接疑問は「間接疑問文」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
@@ -3115,6 +3124,56 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     return merged;
   }
 
+  // 拾った文法から学年を推測する。
+  // 習っていない文法はテストに出せないので、出題文法のうち最も上の学年が、そのテストの学年になる。
+  //
+  // 【その学年でしか習わない文法を優先する】
+  // 学年の初めのテストは、その学年の新出文法が少なく、復習の文法のほうが多い。
+  // 例：中3の5月のテスト（Unit 0〜Unit 2 Part 1）は現在完了が2〜3問、残りは中1・中2の復習。
+  //     単純な多数決だと中1になってしまう。
+  // 現在完了は中3にしかないので、1件でも出ていればそれは中3のテストである。
+  // 逆に「It is ... for ... to」のように複数学年にまたがる文法は、学年の決め手にしない。
+  //
+  // 戻り値：{ grade:'中３', votes:{1:5,2:0,3:1}, basis:'現在完了（経験）', strong:true } または null
+  function inferGradeFromGrammar(r) {
+    const terms = [];
+    (r.question_types || []).forEach(qt => {
+      splitGrammarTerms(qt.grammar).forEach(t => terms.push(t));
+      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(t => terms.push(t)));
+    });
+    if (!terms.length) return null;
+
+    const votes     = { 1:0, 2:0, 3:0 };  // その学年の表にあたった件数
+    const exclusive = { 1:0, 2:0, 3:0 };  // その学年にしかない文法の件数
+    const sample    = { 1:'', 2:'', 3:'' };
+    const exSample  = { 1:'', 2:'', 3:'' };
+    terms.forEach(t => {
+      const hit = [1,2,3].filter(g => grammarToUnit(g, t));
+      hit.forEach(g => { votes[g]++; if (!sample[g]) sample[g] = t; });
+      if (hit.length === 1) {
+        const g = hit[0];
+        exclusive[g]++; if (!exSample[g]) exSample[g] = t;
+      }
+    });
+
+    // ① その学年にしかない文法が出ていれば、いちばん上の学年を採る（最も確実）
+    for (const g of [3,2,1]) {
+      if (exclusive[g] >= 1) {
+        return { grade: normalizeGrade('中' + g), votes, basis: exSample[g],
+                 strong: exclusive[g] >= 2 };
+      }
+    }
+    // ② 学年をまたぐ文法しかない場合は、2件以上あたった学年のうちいちばん上
+    for (const g of [3,2,1]) {
+      if (votes[g] >= 2) return { grade: normalizeGrade('中' + g), votes, basis: sample[g], strong: false };
+    }
+    // ③ 最後の手段（1件だけ）
+    for (const g of [3,2,1]) {
+      if (votes[g] >= 1) return { grade: normalizeGrade('中' + g), votes, basis: sample[g], strong: false };
+    }
+    return null;
+  }
+
   async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
@@ -3122,15 +3181,14 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     try {
       setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
 
-      // テスト分析はNH専用でlibCtxを生成
-      const nhItemsForCtx = getNHItems();
-      const libCtx = nhItemsForCtx.length
-        ? '\n\n【NEW HORIZON教科書データ（Unit・ページ特定の参考）】\n'
-          + nhItemsForCtx.map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,4000)
-        : '';
+      // 教科書データはAIに渡さない。
+      // 出題範囲はアプリ側（refineRangeFromLibrary）で判定するため、AIに渡す必要がない。
+      // むしろ渡すと、AIが教科書の版や単元を推測しはじめて出力が乱れる
+      // （範囲欄に「2021 edition では…」という説明文が入り込む事故が起きた）。
+      // 1ページずつ読ませる方式では指示文が毎回送られるため、外すと費用も大きく下がる。
 
       const promptText =
-`このテストを研究目的で分析。渡された画像に写っている大問を1つ残らず列挙する。${libCtx}
+`このテストを研究目的で分析。渡された画像に写っている大問を1つ残らず列挙する。
 
 【Unit内順序】Part 1→Part 2→Read and Think 1→Read and Think 2→Grammar for Communication→Real Life English→Stage Activity
 特殊セクション：A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
@@ -3235,6 +3293,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       setSt(stEl,'ok','✅ 分析完了');
       if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
+      // AIが学年を出せなかった場合は、拾った文法から推測する
+      let gradeInfer = null;
+      if (!r.grade) {
+        gradeInfer = inferGradeFromGrammar(r);
+        if (gradeInfer) r.grade = gradeInfer.grade;
+      }
       // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
       const droppedFields = sanitizeRangeFields(r);
       // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
@@ -3259,23 +3323,35 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         return;
       }
 
-      // 学年の判定が割れた場合は警告する。学年を間違えると範囲がまるごと外れるため。
+      // 学年の判定が割れた場合・推測した場合・分からない場合は警告する。
+      // 学年を間違えると範囲がまるごと外れるため。
       const votes = r.gradeVotes || {};
       const voteKeys = Object.keys(votes);
-      const gradeWarn = voteKeys.length > 1
-        ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+      let gradeWarn = '';
+      if (voteKeys.length > 1) {
+        gradeWarn = `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
              <div class="card-title" style="color:#DC2626">⚠️ 学年の判定が割れました</div>
              <p style="font-size:13px;color:var(--muted)">
-               読み取ったまとまりごとに学年の判断が違いました（${esc(voteKeys.map(k=>`${k}：${votes[k]}票`).join('／'))}）。
+               ページごとに学年の判断が違いました（${esc(voteKeys.map(k=>`${k}：${votes[k]}票`).join('／'))}）。
                多いほうの<b>${esc(r.grade||'不明')}</b>を採用しています。
                <b>学年が違うと出題範囲はまるごと外れます。</b>合っているか必ず確認してください。</p>
-           </div>`
-        : (!r.grade
-            ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
-                 <div class="card-title" style="color:#DC2626">⚠️ 学年が判定できませんでした</div>
-                 <p style="font-size:13px;color:var(--muted)">学年が分からないため、出題範囲は正しく判定できません。</p>
-               </div>`
-            : '');
+           </div>`;
+      } else if (gradeInfer) {
+        gradeWarn = `<div class="card" style="border-color:#FCD34D;background:#FFFBEB">
+             <div class="card-title" style="color:#B45309">学年は出題文法から推測しました</div>
+             <p style="font-size:13px;color:var(--muted)">
+               AIが学年を読み取れなかったため、出題された文法から<b>${esc(r.grade)}</b>と推測しました
+               （根拠：${esc(gradeInfer.basis)}${gradeInfer.strong ? '' : '／根拠が1件だけなので確度は低めです'}）。
+               違っていたら、履歴の学年欄の「直す」で変更できます。料金はかかりません。</p>
+           </div>`;
+      } else if (!r.grade) {
+        gradeWarn = `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+             <div class="card-title" style="color:#DC2626">⚠️ 学年が判定できませんでした</div>
+             <p style="font-size:13px;color:var(--muted)">
+               学年が分からないため、出題範囲は判定していません（間違った範囲を出さないためです）。
+               履歴の学年欄の「直す」で学年を入れれば、その場で範囲を計算します。料金はかかりません。</p>
+           </div>`;
+      }
 
       // 読み取りが不十分なときは警告する（範囲判定の材料が足りず、範囲が手前で止まるため）
       // 目安はページ数から出す。1ページに大問1つ以上、出題語3語以上は取れているのが普通。
@@ -3522,10 +3598,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         key_items: h.key_items || [],
         ...parseRangeText(h.range)
       };
+      // 学年が入っていないものは、出題文法から推測してから判定する
+      let inferredGrade = '';
+      if (!r.grade) {
+        const gi = inferGradeFromGrammar(r);
+        if (gi) { r.grade = gi.grade; inferredGrade = gi.grade; }
+      }
       refineRangeFromLibrary(r);
       const after = buildRangeText(r);
       const before = h.range || '範囲不明';
-      if (after && after !== before) changes.push({ idx, before, after, name: h.name || '' });
+      if ((after && after !== before) || inferredGrade) {
+        changes.push({ idx, before, after, name: h.name || '', inferredGrade });
+      }
     });
 
     if (!changes.length) {
@@ -3534,7 +3618,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
 
     const preview = changes.slice(0, 15)
-      .map(c => `・${c.name}\n　　${c.before} → ${c.after}`).join('\n');
+      .map(c => `・${c.name}\n　　${c.before} → ${c.after}${c.inferredGrade ? `（学年を文法から${c.inferredGrade}と推測）` : ''}`).join('\n');
     const more = changes.length > 15 ? `\n\nほか${changes.length - 15}件` : '';
     const ok = await showConfirm(
       `${changes.length}件の範囲が変わります。書き換えますか？\n\n${preview}${more}\n\n（判定できなかったもの：${skipped}件。変更前の範囲は残しておくので、あとで見比べられます）`,
@@ -3546,6 +3630,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     changes.forEach(c => {
       hist[c.idx].rangePrev = hist[c.idx].range || '';
       hist[c.idx].range     = c.after;
+      if (c.inferredGrade) { hist[c.idx].gradePrev = hist[c.idx].grade || ''; hist[c.idx].grade = c.inferredGrade; }
     });
     try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
     catch { alert('ブラウザへの保存に失敗しました（容量オーバーの可能性）。'); return; }
@@ -3555,7 +3640,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     for (const c of changes) {
       const h = hist[c.idx];
       if (!h.firestoreId) continue;
-      const okFs = await updateTestInFirestore(h.firestoreId, { range: h.range, rangePrev: h.rangePrev });
+      const okFs = await updateTestInFirestore(h.firestoreId, { range: h.range, rangePrev: h.rangePrev, grade: h.grade });
       if (okFs) synced++; else failed++;
     }
 
@@ -3941,6 +4026,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!items.length) { diag.reason = '教科書データが読み込まれていない'; return diag; }
     const gradeNum = gradeNumOf(r.grade);
     diag.grade = r.grade || '';
+    // 学年が分からないときは範囲を判定しない。
+    // 学年不明だと全学年の教科書から語を探すことになり、
+    // 「doctor が中1のp.121にある」といった無関係な一致で範囲が飛ぶ（実際にそうなった）。
+    // 何も出さないほうが、間違った範囲を出すより害が小さい。
+    if (!gradeNum) {
+      r.from_unit = ''; r.from_lesson = ''; r.to_unit = ''; r.to_lesson = '';
+      diag.reason = '学年が分からないため範囲を判定していません（学年を指定すれば計算できます）';
+      diag.after  = buildRangeText(r);
+      return diag;
+    }
 
     // 教科書項目との一致判定。
     // 戻り値は「どう一致したか」。一致しないときは null。
@@ -4373,16 +4468,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
-    // バッチ分析もNH専用
-    const nhBatchItems = getNHItems();
-    const libCtx = nhBatchItems.length
-      ? '\n【NEW HORIZON教科書データ（Unit・ページ特定の参考）】\n'
-        + nhBatchItems.map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,3000)
-      : '';
-
+    // 教科書データはAIに渡さない（出題範囲はアプリ側で判定するため。単発分析と同じ理由）
     const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
     parts.push({ text:
-`このテストを分析してください。${libCtx}
+`このテストを分析してください。
 
 【Unit範囲の判定方法】
 ・Unit内の順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication → Real Life English → Stage Activity
