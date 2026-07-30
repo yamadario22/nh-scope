@@ -5243,17 +5243,25 @@ ${dataText}
   }
 
   // ── 重複削除 ─────────────────────────────────────────────────────
-  // 同一内容・同一種類の項目をまとめる。ページ番号やUnitを持つ方を優先的に残す
-  // （写真解析でページが読めた版と読めなかった版が両方あるとき、読めた版を残す）
+  // 同一内容・同一種類の項目をまとめる。
+  // 残す基準は「情報量が多い方」→ 同じなら「ページが早い方」。
+  // ページが早い方を残すのは、テスト範囲の判定が「その語が最初に出てくるUnit」を
+  // 根拠にしているため。あとのページの版を残すと初出が後ろにずれ、範囲が狂う。
   function dedupItems(items) {
     const best = new Map();
     items.forEach(it => {
       const key = `${(it.content||'').trim().toLowerCase()}|${it.type||''}`;
       const prev = best.get(key);
       if (!prev) { best.set(key, it); return; }
-      // 情報量スコア：ページあり+2、Unitあり+1、訳あり+1。高い方を残す
+      // 情報量スコア：ページあり+2、Unitあり+1、訳あり+1
       const score = x => (x.page>0?2:0) + (x.unit?1:0) + (x.translation?1:0);
-      if (score(it) > score(prev)) best.set(key, it);
+      const s1 = score(it), s2 = score(prev);
+      if (s1 > s2) { best.set(key, it); return; }
+      if (s1 < s2) return;
+      // 情報量が同じなら、ページが早い方（初出）を残す
+      const p1 = it.page > 0 ? it.page : Infinity;
+      const p2 = prev.page > 0 ? prev.page : Infinity;
+      if (p1 < p2) best.set(key, it);
     });
     return [...best.values()];
   }
