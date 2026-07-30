@@ -440,6 +440,10 @@
         <input type="checkbox" id="fastMode" style="cursor:pointer">
         ⚡ 高速モード — AIの思考量を制限して分析時間を短縮します（複雑なテストでは精度が下がる可能性あり）
       </label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--muted);cursor:pointer">
+        <input type="checkbox" id="hiResMode" style="cursor:pointer">
+        📷 高画質で読み込む — 文字がつぶれて読み取れないPDF用。時間と料金が2倍前後になります
+      </label>
       <div id="testStatus"></div>
     </div>
 
@@ -885,6 +889,12 @@
   // テスト用紙は教科書より字が細かい（整序の語句カード、小さな選択肢、注釈）。
   // 以前は1.1で読み込んでいたため文字がつぶれ、大問を読み落としていた（11大問中4件しか取れない例があった）。
   const TEST_SCALE = 1.9;
+  // 高画質モード。スキャンしたPDFは、通常の解像度だと元の画質より粗く変換され情報が失われる。
+  // 文字がつぶれて読めないPDF専用（時間と料金が上がるため既定では使わない）。
+  const TEST_SCALE_HI = 3.0;
+  function testScale() {
+    return (document.getElementById('hiResMode')||{}).checked ? TEST_SCALE_HI : TEST_SCALE;
+  }
   // 1回のAI呼び出しに渡すページ数。複数ページを一度に渡すと、AIは全部を列挙せず要約に逃げる。
   // 1ページに3〜4大問ある密なテストでは、3ページ渡すと13大問中4件しか取れなかった。
   // 1ページずつ渡せば、そのページに全神経が向く。
@@ -3016,7 +3026,14 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・入れるもの：長文や対話文の特徴的な単語（5文字以上）、問われた熟語、選択肢の語
 ・入れないもの：go / be / the / have / and のような、どの学年でも使う短い語
 ・この語がテスト範囲の判定に直接使われる。少ないと範囲が正しく出せない
-・例：["environment", "ethical", "essay", "message", "take advantage of", "have been to"]`;
+・例：["environment", "ethical", "essay", "message", "take advantage of", "have been to"]
+
+【読み取れないときは、推測で埋めないこと】
+・画像がぼやけている、文字がつぶれている等で読み取れない場合は unreadable を true にする
+・unreadable_reason に、何が読み取れなかったかを1文で書く
+・読み取れた分だけを書く。読み取れなかった大問・文法・単語を推測で補わない
+・「〜と推測しました」「〜と思われます」と書かない。実際に見えたものだけを書く
+・推測で文法を書くと、出題範囲がまるごと間違って計算される。空欄のほうがはるかにましである`;
 
   // ── テスト分析の共通ルール文 ────────────────────────────────────
   // 単発分析とバッチ分析で同じ指示を使う（片方だけ古くなってズレるのを防ぐ）。
@@ -3061,7 +3078,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   // 大問がページの境目をまたぐと同じ大問が2回出てくるため、大問番号でまとめ直す。
   function mergeTestResults(list) {
     const merged = { grade:'', from_unit:'', from_lesson:'', to_unit:'', to_lesson:'',
-                     summary:'', question_types:[], tested_vocab:[], key_items:[], gradeVotes:{} };
+                     summary:'', question_types:[], tested_vocab:[], key_items:[], gradeVotes:{},
+                     unreadablePages:0, totalPages:0, unreadableReasons:[] };
     const qtMap = new Map();   // 大問番号+形式 → 大問
     const vocab = new Map();   // 小文字 → 元の表記（重複を除きつつ表記は最初のものを残す）
     const keys  = new Map();
@@ -3070,6 +3088,14 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 
     (list || []).forEach(r => {
       if (!r) return;
+      merged.totalPages++;
+      // 「読み取れなかった」とAIが申告したページを数える。
+      // 読めていないのに推測で埋められると、ありもしない文法が範囲を押し上げる。
+      if (r.unreadable) {
+        merged.unreadablePages++;
+        const why = String(r.unreadable_reason || '').trim();
+        if (why && !merged.unreadableReasons.includes(why)) merged.unreadableReasons.push(why);
+      }
       // 学年は「最初に出たもの」ではなく多数決で決める。
       // 3ページずつに分けて読ませているため、表紙や注意書きしか写っていないまとまりが
       // 当てずっぽうの学年を返すことがある。それが先頭だと全部が狂う（実際に中3のテストが
@@ -3280,7 +3306,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               }
             },
             key_items:    { type: 'ARRAY', items: { type: 'STRING' } },
-            tested_vocab: { type: 'ARRAY', items: { type: 'STRING' } }
+            tested_vocab: { type: 'ARRAY', items: { type: 'STRING' } },
+            unreadable:        { type: 'BOOLEAN' },
+            unreadable_reason: { type: 'STRING' }
           }
         },
             20000,
@@ -3299,10 +3327,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         gradeInfer = inferGradeFromGrammar(r);
         if (gradeInfer) r.grade = gradeInfer.grade;
       }
+      // AIが「読み取れなかった」と申告したページが多いときは、範囲を判定しない。
+      // 読めていないのに推測で書かれた文法が範囲を押し上げるため（実例：中3の5月のテストで
+      // ありもしない「間接疑問文」が出てきて、範囲がUnit 4まで飛んだ）。
+      const unreadableRatio = r.totalPages ? (r.unreadablePages || 0) / r.totalPages : 0;
+      const tooBlurry = unreadableRatio >= 0.4;
+      if (tooBlurry) { r.from_unit=''; r.from_lesson=''; r.to_unit=''; r.to_lesson=''; }
+
       // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
       const droppedFields = sanitizeRangeFields(r);
       // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
-      refineRangeFromLibrary(r);
+      if (!tooBlurry) refineRangeFromLibrary(r);
 
 
       // 範囲テキストを組み立て
@@ -3322,6 +3357,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           </div>`;
         return;
       }
+
+      // 画質が悪くて読み取れなかった場合の警告（範囲を出していないことを伝える）
+      const blurWarn = (r.unreadablePages || 0) > 0
+        ? `<div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+             <div class="card-title" style="color:#DC2626">⚠️ 画質が悪く、読み取れなかったページがあります</div>
+             <p style="font-size:13px;color:var(--muted)">
+               ${r.totalPages}ページ中${r.unreadablePages}ページで、AIが「文字が読み取れない」と申告しました。
+               ${r.unreadableReasons.length ? `<br>理由：${esc(r.unreadableReasons.slice(0,3).join(' ／ '))}` : ''}
+               ${tooBlurry
+                 ? '<br><b>読み取れた内容が信用できないため、出題範囲は判定していません。</b>推測で書かれた文法が混ざると、範囲がまるごと間違うためです。'
+                 : '<br>読み取れたページの内容だけで判定しています。範囲が実際と合っているか確認してください。'}
+               <br><b>「📷 高画質で読み込む」にチェックを入れて、もう一度分析してみてください。</b></p>
+           </div>`
+        : '';
 
       // 学年の判定が割れた場合・推測した場合・分からない場合は警告する。
       // 学年を間違えると範囲がまるごと外れるため。
@@ -3454,6 +3503,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <div class="result-grade">${esc(r.grade||'')}</div>
           <div class="result-range">${esc(rangeStr)}</div>
         </div>
+        ${blurWarn}
         ${gradeWarn}
         ${thinWarn}
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
@@ -4252,7 +4302,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const pdf = await pdfjsLib.getDocument({data:buf}).promise;
         const remain = MAX_TOTAL - allImgs.length;
         for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
-          allImgs.push(await toBase64(await pdf.getPage(i), TEST_SCALE));
+          allImgs.push(await toBase64(await pdf.getPage(i), testScale()));
         }
         setSt(stEl,'load',`${fi+1}/${fileArr.length}ファイル処理済み（${allImgs.length}ページ）...`);
       }
@@ -4729,7 +4779,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
         const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
         const remain = MAX-allImgs.length;
         for (let i=1; i<=Math.min(pdfDoc.numPages,remain); i++) {
-          allImgs.push(await toBase64(await pdfDoc.getPage(i), TEST_SCALE));
+          allImgs.push(await toBase64(await pdfDoc.getPage(i), testScale()));
         }
       }
       pendingExamData = { imgs:allImgs, name:targets.map(f=>f.name).join('・') };
