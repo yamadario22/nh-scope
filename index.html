@@ -401,6 +401,7 @@
       <div class="card-title">
         <span>📋 Unit別データ編集</span>
         <span style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="deduplicateData()" title="同じ内容の項目をまとめます（早いページの方を残します）">🔁 重複削除</button>
           <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
           <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
           <button class="btn btn-green btn-sm" onclick="openEdit(-1)">＋ 項目を追加</button>
