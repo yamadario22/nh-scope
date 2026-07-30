@@ -3042,6 +3042,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   // ここの表記が GRAMMAR_UNIT_MAPS の照合前提になっているので、両者は必ずセットで直す。
   const GRAMMAR_NOTATION_RULES =
 `【文法表記ルール】※範囲特定の照合に使うため、必ずこの表記で書くこと（全角カッコを使い、余分な空白を入れない）
+・文法名は日本語で書く。英語の文法用語（Relative clause / Present perfect / Passive voice 等）で書かない
+　（英語で書かれると照合できず、学年や出題範囲を誤って判定する）
 ・現在完了は用法を明記：「現在完了（経験）」「現在完了（完了）」「現在完了（継続）」「現在完了進行形」
 ・現在完了進行形（have been ～ing）は、現在完了とは別の文法として必ず区別する。
   「ずっと～し続けている」の形を見つけたら、必ず「現在完了進行形」と書く（「現在完了（継続）」にまとめない）
@@ -3583,13 +3585,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
                      onclick="var d=document.getElementById('qt-d-${realIdx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
                 : '';
-              // 出題文法から推測した学年と保存された学年が食い違う場合は印を出す
+              // 保存された学年より上の学年の文法が出ている場合だけ印を出す。
+              // 習っていない文法は出せないので、それは学年の間違いを示す。
+              // 下の学年の文法が出るのは復習なので正常（印を出さない）。
               let gradeFlag = '';
               try {
                 if (h.grade && (h.question_types||[]).length) {
                   const gi = inferGradeFromGrammar(h);
-                  if (gi && gi.strong && gi.grade !== h.grade) {
-                    gradeFlag = `<div style="font-size:10px;color:#DC2626;font-weight:600" title="出題文法からは${esc(gi.grade)}に見えます（根拠：${esc(gi.basis)}）">⚠️${esc(gi.grade)}かも</div>`;
+                  if (gi && gi.strong && gradeNumOf(gi.grade) > gradeNumOf(h.grade)) {
+                    gradeFlag = `<div style="font-size:10px;color:#DC2626;font-weight:600" title="${esc(gi.basis)}は${esc(gi.grade)}で習う文法です。この学年では出題できません">⚠️${esc(gi.grade)}かも</div>`;
                   }
                 }
               } catch {}
@@ -3673,11 +3677,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const gi = inferGradeFromGrammar(r);
         if (gi) { r.grade = gi.grade; inferredGrade = gi.grade; }
       } else {
-        // 学年が入っていても、出題文法から推測した学年と食い違うなら怪しい。
-        // 学年を間違えると範囲はまるごと外れる（中3のテストが中1と保存され、
-        // 中1にしかないUnit 9が範囲に出た実例がある）。
+        // 学年が入っていても、出題文法がその学年より上のものを含むなら矛盾している。
+        // 習っていない文法は出せないので、これは学年の間違いを示す。
+        //
+        // 逆に「推測のほうが下」は正常。中3のテストに動名詞や不定詞（中2）が復習で出るのは
+        // 当たり前で、学年の間違いを意味しない。ここを区別せずに印を出したら、
+        // 31件中の大半が誤検出になった。
         const gi = inferGradeFromGrammar(r);
-        if (gi && gi.strong && gi.grade !== r.grade) {
+        if (gi && gi.strong && gradeNumOf(gi.grade) > gradeNumOf(r.grade)) {
           gradeSuspect.push({ name: h.name || '', saved: r.grade, guess: gi.grade, basis: gi.basis });
         }
       }
