@@ -754,6 +754,20 @@
   </div>
 </div>
 
+<!-- 範囲判定の内訳モーダル -->
+<div class="modal-ov" id="rangeDiagModal" style="display:none" onclick="if(event.target===this)closeRangeDiag()">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title">🔍 範囲判定の内訳</div>
+      <button class="modal-close" onclick="closeRangeDiag()">✕</button>
+    </div>
+    <div class="modal-body" id="rangeDiagBody" style="max-height:70vh;overflow:auto"></div>
+    <div class="modal-foot">
+      <button class="btn btn-primary btn-sm" onclick="closeRangeDiag()">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- CONFIRM MODAL -->
 <div class="modal-ov" id="confirmModal" style="display:none">
   <div class="modal" style="max-width:340px">
@@ -2792,7 +2806,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
                 <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}${h.rangePrev&&h.rangePrev!==h.range?`<br><span style="font-weight:400;color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</span>`:''}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
-                <td><button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${realIdx})" style="padding:2px 8px;font-size:11px">✕</button></td>
+                <td><button class="btn btn-ghost btn-sm" onclick="showRangeDiag(${realIdx})" style="padding:2px 6px;font-size:11px" title="この範囲がどう決まったかを見る">🔍</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${realIdx})" style="padding:2px 8px;font-size:11px">✕</button></td>
               </tr>`;
             }).join('')}
             </tbody>
@@ -2899,6 +2914,89 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     alert(`${changes.length}件の範囲を書き換えました。`
         + (synced ? `\nクラウドにも${synced}件を反映しました。` : '')
         + (failed ? `\n${failed}件はクラウドへの反映に失敗しました（この端末には保存済み）。` : ''));
+  }
+
+  // ── 範囲判定の内訳表示 ─────────────────────────────────────────
+  // テスト1件について「どの語がどのUnitに一致して、範囲がどう決まったか」を全部出す。
+  // 実物と見比べて、判定のどこが間違っているかを特定するための画面。Geminiは使わない。
+  function closeRangeDiag() {
+    const m = document.getElementById('rangeDiagModal');
+    if (m) m.style.display = 'none';
+  }
+
+  function showRangeDiag(idx) {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const h = hist[idx];
+    if (!h) { alert('このテストのデータが見つかりません。'); return; }
+    if (!getNHItems().length) { alert('教科書データが読み込まれていません。'); return; }
+
+    const r = {
+      grade: h.grade || '',
+      question_types: h.question_types || [],
+      tested_vocab: h.tested_vocab || [],
+      key_items: h.key_items || [],
+      ...parseRangeText(h.range)
+    };
+    const d = refineRangeFromLibrary(r) || {};
+
+    const box = (title, inner) => `<div style="margin-bottom:14px">
+      <div style="font-weight:600;font-size:13px;color:var(--navy);margin-bottom:4px">${title}</div>
+      <div style="font-size:12px;line-height:1.8">${inner}</div></div>`;
+
+    // 材料が保存されているか（古い履歴には出題単語が入っていない）
+    const material = [];
+    material.push(`問題形式：${(h.question_types||[]).length}件`);
+    material.push(`出題単語：${(h.tested_vocab||[]).length}件${(h.tested_vocab||[]).length?'':'（この履歴には保存されていません）'}`);
+    material.push(`重要項目：${(h.key_items||[]).length}件`);
+
+    const gramRows = (d.gram||[]).length
+      ? (d.gram||[]).map(g=>`<div>・${esc(g.term)} → <b>${esc(g.unit)}</b>${g.lesson?' '+esc(g.lesson):''}</div>`).join('')
+      : '<div style="color:var(--muted)">なし（この学年の文法対応表に載っている文法が拾えていません）</div>';
+
+    const sorted = (d.words||[]).slice().sort((a,b)=>a.pos-b.pos);
+    const wordRows = sorted.length
+      ? `<div class="tbl-wrap"><table><thead><tr>
+          <th>出題語</th><th>一致した教科書の語句</th><th>種類</th><th>ページ</th><th>Unit</th><th>一致のしかた</th>
+        </tr></thead><tbody>${sorted.map(w=>`<tr${w.weak?' style="background:#FEF2F2"':''}>
+          <td style="font-size:11px">${esc(w.term)}</td>
+          <td style="font-size:11px">${esc(w.matched||'')}</td>
+          <td style="font-size:11px">${esc(w.matchedType||'')}</td>
+          <td style="font-size:11px">${w.matchedPage||''}</td>
+          <td style="font-size:11px;font-weight:600">${esc(w.unit)}${w.lesson?' '+esc(w.lesson):''}</td>
+          <td style="font-size:11px${w.weak?';color:#DC2626;font-weight:600':''}">${esc(w.how||'')}${w.weak?' ⚠️':''}</td>
+        </tr>`).join('')}</tbody></table></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">⚠️ の行は誤ヒットの疑いが強いものです（短い語が長い語句の一部に含まれただけ、など）。</div>`
+      : '<div style="color:var(--muted)">なし</div>';
+
+    const decision = [];
+    decision.push(`終わりの決め手：${esc(d.decidedBy||'—')}`);
+    if (d.endUnit !== null && d.endUnit !== undefined) decision.push(`終わり＝<b>Unit ${d.endUnit}</b>（根拠：${esc(d.endTerm||'')}）`);
+    if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
+    if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
+    if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
+    if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
+    if ((d.otherGrade||[]).length) decision.push(`他学年でのみ見つかった語：${esc((d.otherGrade||[]).slice(0,12).join('・'))}`);
+
+    const weakCount = sorted.filter(w=>w.weak).length;
+    const warn = weakCount
+      ? `<div style="background:#FEF3C7;padding:8px;border-radius:6px;font-size:12px;margin-bottom:12px">
+           ⚠️ 誤ヒットの疑いが <b>${weakCount}件</b> あります。これが範囲の始まりを前に引っぱっている可能性があります。</div>`
+      : '';
+
+    document.getElementById('rangeDiagBody').innerHTML =
+      `<div style="font-size:13px;font-weight:600;margin-bottom:2px">${esc(h.name||'')}</div>
+       <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+         ${esc(h.school||'')} ${esc(h.teacher||'')} ／ ${esc(h.grade||'学年不明')} ／ 保存されている範囲：<b>${esc(h.range||'')}</b>
+         ${d.after && d.after !== h.range ? `<br>いま計算し直すと：<b style="color:#DC2626">${esc(d.after)}</b>` : ''}
+       </div>
+       ${warn}
+       ${box('① 判定に使えた材料', material.map(m=>`・${esc(m)}`).join('<br>'))}
+       ${box('② 拾った文法とそのUnit', gramRows)}
+       ${box('③ 拾った単語・熟語と一致先', wordRows)}
+       ${box('④ 範囲の決め方', decision.map(x=>`・${x}`).join('<br>'))}`;
+
+    document.getElementById('rangeDiagModal').style.display = 'flex';
   }
 
   async function clearTestHistory() {
@@ -3055,20 +3153,36 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   }
 
   function refineRangeFromLibrary(r) {
+    // diag：判定の途中経過。範囲がどう決まったかを画面で見るための記録。
+    // 判定そのものには一切影響しない（記録するだけ）。
+    const diag = { grade:'', gram:[], words:[], otherGrade:[], endUnit:null, minUnit:null,
+                   startUnit:null, decidedBy:'', applied:false, reason:'', before:'', after:'' };
+    diag.before = buildRangeText(r);
     const items = getNHItems(); // テスト分析は常にNH専用
-    if (!items.length) return;
+    if (!items.length) { diag.reason = '教科書データが読み込まれていない'; return diag; }
     const gradeNum = gradeNumOf(r.grade);
+    diag.grade = r.grade || '';
 
-    // 教科書項目との一致判定
-    const matchItem = (item, v) => {
+    // 教科書項目との一致判定。
+    // 戻り値は「どう一致したか」。一致しないときは null。
+    // 判定結果（一致するかどうか）は従来とまったく同じ。内訳表示のために理由を返すだけ。
+    // weak=true は誤ヒットの疑いが強いもの（短い語が長い語句の一部に含まれただけ、など）。
+    const matchInfo = (item, v) => {
       const content = (item.content || '').toLowerCase().trim();
       const notes   = (item.notes || '').toLowerCase();
       if (item.type === '熟語' || item.type === '文法') {
-        return content.includes(v) || (v.includes(content) && content.length >= 5)
-            || notes.includes(v)   || (v.includes(notes) && notes.length >= 5);
+        if (content === v)                                   return { how:'完全一致', weak:false };
+        if (content.includes(v))                             return { how:'出題語が教科書の語句の一部', weak: v.length <= 5 };
+        if (v.includes(content) && content.length >= 5)       return { how:'教科書の語句が出題語の一部', weak:false };
+        if (notes && notes.includes(v))                       return { how:'和訳・メモに一致', weak:true };
+        if (notes && v.includes(notes) && notes.length >= 5)  return { how:'和訳・メモが出題語の一部', weak:true };
+        return null;
       }
-      if (item.type === '単語') return v === content && content.length >= 5;
-      return false;
+      if (item.type === '単語') {
+        if (v === content && content.length >= 5) return { how:'完全一致', weak:false };
+        return null;
+      }
+      return null;
     };
 
     // ── ステップ1の材料：出題された「文法」を文法対応表でUnitに変換 ──
@@ -3099,26 +3213,36 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     const wordHits = [];        // {pos, unit, lesson, term} 同学年で初出した位置
     const otherGradeHits = [];  // 他学年でのみ見つかった語（復習表示用）
     for (const v of vocab) {
-      let sameGradeItem = null, otherGradeItem = null;
+      let sameGradeItem = null, otherGradeItem = null, sameGradeInfo = null;
       for (const item of items) {
         if (!item.unit || item.unit === '資料編') continue; // 巻末・ラベルなしは根拠にしない
-        if (!matchItem(item, v)) continue;
+        const mi = matchInfo(item, v);
+        if (!mi) continue;
         const sameGrade = !gradeNum || gradeNumOf(item.grade) === gradeNum;
-        if (sameGrade) { sameGradeItem = item; break; } // 教科書はページ順なので最初＝初出
+        if (sameGrade) { sameGradeItem = item; sameGradeInfo = mi; break; } // 教科書はページ順なので最初＝初出
         if (!otherGradeItem) otherGradeItem = item;
       }
       if (sameGradeItem) {
         // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
         const ru = rangeUnitFromPage(sameGradeItem.bookId, sameGradeItem.page) || sameGradeItem.unit;
         const pos = rangePos([ru, sameGradeItem.lesson].filter(Boolean).join(' '));
-        if (pos > 0) wordHits.push({ pos, unit: ru, lesson: sameGradeItem.lesson || '', term: v });
+        if (pos > 0) wordHits.push({
+          pos, unit: ru, lesson: sameGradeItem.lesson || '', term: v,
+          // ここから下は内訳表示のための記録（判定には使わない）
+          matched: sameGradeItem.content || '', matchedType: sameGradeItem.type || '',
+          matchedPage: sameGradeItem.page || 0, matchedUnit: sameGradeItem.unit || '',
+          how: sameGradeInfo.how, weak: !!sameGradeInfo.weak
+        });
       } else if (otherGradeItem) {
         otherGradeHits.push(`${v}（${otherGradeItem.grade || '他学年'}）`);
       }
     }
 
     const allHits = [...gramHits, ...wordHits];
-    if (!allHits.length) return; // 手がかりなし。AIが出した範囲をそのまま使う。
+    diag.gram       = gramHits.slice();
+    diag.words      = wordHits.slice();
+    diag.otherGrade = otherGradeHits.slice();
+    if (!allHits.length) { diag.reason = '手がかりが1つも見つからなかった（AIの範囲をそのまま使用）'; return diag; }
 
     // ── ステップ1：範囲の「終わり」を決める ──
     // 文法ヒットがあれば最も後ろの文法Unitを終端に（信頼度が高い）。無ければ単語の最後尾。
@@ -3126,24 +3250,32 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
     const endUnit = Math.floor(endHit.pos);
+    diag.decidedBy = gramHits.length ? '文法（信頼度高）' : '単語・熟語';
+    diag.endUnit   = endUnit;
+    diag.endTerm   = endHit.term || '';
 
     // ── ステップ2：開始を「終わりから最大3Unit分」の窓の中で決める ──
     // 終端を含めて3つ前まで（例：終端Unit6ならUnit4まで）。それより前は復習として無視。
     const MAX_SPAN = 3; // 範囲の最大の幅（Unit数）。2でも3でもよいが、それ以上は広げない。
     const minUnit  = endUnit - (MAX_SPAN - 1);
     const inWindow = allHits.filter(h => { const u = Math.floor(h.pos); return u >= minUnit && u <= endUnit; });
+    diag.minUnit = minUnit;
 
     // 窓の中の手がかりが乏しいときは無理に縮めない（AIの終端より後ろを示すときだけ伸ばす）。
     if (inWindow.length < 2 && !gramHits.length) {
       const curEndPos = rangePos([r.to_unit, r.to_lesson].filter(Boolean).join(' '));
       if (endHit.pos > curEndPos + 0.001) { r.to_unit = endHit.unit; r.to_lesson = endHit.lesson || ''; }
-      return;
+      diag.reason = '窓の中の手がかりが1つ以下で文法もなし → 終わりだけ調整';
+      diag.after  = buildRangeText(r);
+      return diag;
     }
-    if (!inWindow.length) return;
+    if (!inWindow.length) { diag.reason = '窓の中に手がかりがなかった'; diag.after = buildRangeText(r); return diag; }
 
     // 窓の中で最も前にある手がかり＝開始
     let startHit = inWindow[0];
     for (const h of inWindow) if (h.pos < startHit.pos) startHit = h;
+    diag.startUnit = Math.floor(startHit.pos);
+    diag.startTerm = startHit.term || '';
 
     // 範囲を確定
     r.from_unit   = startHit.unit;
@@ -3157,6 +3289,11 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     if (excludedTerms.length)  notes.push(`範囲より前からの出題（復習として除外）: ${[...new Set(excludedTerms)].slice(0,6).join('・')}`);
     if (otherGradeHits.length) notes.push(`他学年範囲からの出題: ${otherGradeHits.slice(0,6).join('・')}`);
     if (notes.length) r.cross_grade_notes = [r.cross_grade_notes, notes.join(' ／ ')].filter(Boolean).join(' ／ ');
+
+    diag.applied  = true;
+    diag.excluded = [...new Set(excludedTerms)];
+    diag.after    = buildRangeText(r);
+    return diag;
   }
 
   // ── テスト分析 手動開始 ──────────────────────────────────────────
