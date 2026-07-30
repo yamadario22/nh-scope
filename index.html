@@ -3583,9 +3583,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
                      onclick="var d=document.getElementById('qt-d-${realIdx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
                 : '';
+              // 出題文法から推測した学年と保存された学年が食い違う場合は印を出す
+              let gradeFlag = '';
+              try {
+                if (h.grade && (h.question_types||[]).length) {
+                  const gi = inferGradeFromGrammar(h);
+                  if (gi && gi.strong && gi.grade !== h.grade) {
+                    gradeFlag = `<div style="font-size:10px;color:#DC2626;font-weight:600" title="出題文法からは${esc(gi.grade)}に見えます（根拠：${esc(gi.basis)}）">⚠️${esc(gi.grade)}かも</div>`;
+                  }
+                }
+              } catch {}
               return `<tr>
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
-                <td style="font-size:12px">${esc(h.grade||'')}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
+                <td style="font-size:12px">${esc(h.grade||'')}${gradeFlag}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
                 <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}${h.rangePrev&&h.rangePrev!==h.range?`<br><span style="font-weight:400;color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</span>`:''}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
@@ -3640,6 +3650,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
 
     const changes = [];   // {idx, before, after, name}
+    const gradeSuspect = []; // 保存された学年と、文法から推測した学年が食い違うもの
     let skipped = 0;      // 判定材料がなく計算できなかった件数
 
     hist.forEach((h, idx) => {
@@ -3661,6 +3672,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (!r.grade) {
         const gi = inferGradeFromGrammar(r);
         if (gi) { r.grade = gi.grade; inferredGrade = gi.grade; }
+      } else {
+        // 学年が入っていても、出題文法から推測した学年と食い違うなら怪しい。
+        // 学年を間違えると範囲はまるごと外れる（中3のテストが中1と保存され、
+        // 中1にしかないUnit 9が範囲に出た実例がある）。
+        const gi = inferGradeFromGrammar(r);
+        if (gi && gi.strong && gi.grade !== r.grade) {
+          gradeSuspect.push({ name: h.name || '', saved: r.grade, guess: gi.grade, basis: gi.basis });
+        }
       }
       refineRangeFromLibrary(r);
       const after = buildRangeText(r);
@@ -3670,8 +3689,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
     });
 
+    const suspectNote = gradeSuspect.length
+      ? `\n\n【学年が怪しいもの：${gradeSuspect.length}件】\n`
+        + gradeSuspect.slice(0, 8).map(s => `・${s.name}\n　　保存：${s.saved} ／ 出題文法からは${s.guess}（根拠：${s.basis}）`).join('\n')
+        + (gradeSuspect.length > 8 ? `\nほか${gradeSuspect.length - 8}件` : '')
+        + '\n学年が違うと範囲はまるごと外れます。履歴の学年欄の「直す」で変更できます（料金0円）。'
+      : '';
+
     if (!changes.length) {
-      alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件）`);
+      alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件）${suspectNote}`);
       return;
     }
 
@@ -3679,7 +3705,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       .map(c => `・${c.name}\n　　${c.before} → ${c.after}${c.inferredGrade ? `（学年を文法から${c.inferredGrade}と推測）` : ''}`).join('\n');
     const more = changes.length > 15 ? `\n\nほか${changes.length - 15}件` : '';
     const ok = await showConfirm(
-      `${changes.length}件の範囲が変わります。書き換えますか？\n\n${preview}${more}\n\n（判定できなかったもの：${skipped}件。変更前の範囲は残しておくので、あとで見比べられます）`,
+      `${changes.length}件の範囲が変わります。書き換えますか？\n\n${preview}${more}\n\n（判定できなかったもの：${skipped}件。変更前の範囲は残しておくので、あとで見比べられます）${suspectNote}`,
       '書き換える'
     );
     if (!ok) return;
