@@ -882,6 +882,12 @@
   const PAR   = 3;    // 並列バッチ数（有料Tier1では3並列で安全）
   const ROUND_DELAY = 3000;  // ラウンド間の待機時間(ms)：有料Tier1では3秒で十分
   const SCALE = 1.8;  // レンダリング解像度（誤読防止とトークン節約のバランス。元は2.2）
+  // テスト用紙は教科書より字が細かい（整序の語句カード、小さな選択肢、注釈）。
+  // 以前は1.1で読み込んでいたため文字がつぶれ、大問を読み落としていた（11大問中4件しか取れない例があった）。
+  const TEST_SCALE = 1.9;
+  // 1回のAI呼び出しに渡すページ数。多くのページを一度に渡すと、AIは全部を列挙せず要約に逃げる。
+  // 少しずつ渡して結果を合体させることで、どの大問にも目が届くようにする。
+  const TEST_PAGES_PER_CALL = 3;
   const QUAL  = 0.88; // JPEG品質
 
   // ── STATE ──────────────────────────────────────────────────────────
@@ -2987,6 +2993,24 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   }
 
   // ── TEST ANALYSIS ──────────────────────────────────────────────────
+  // 抽出の網羅性ルール。単発分析とバッチ分析で共通に使う。
+  // 大問の見落としと出題単語の未記入が、テスト範囲の判定精度を大きく下げていたため明文化する。
+  const EXTRACTION_COMPLETENESS_RULES =
+`【必ず全部書くこと】
+・question_types は、渡された画像に写っている大問を1つ残らず列挙する
+・大問の数は決まっていない。10個以上あるテストもある。数を勝手に見積もらず、実際に写っているものを全て書く
+・リスニングの大問も同じように列挙する
+・整序・適語選択・適文選択・内容一致は、小問（sub_questions）を1問ずつ列挙する
+・小問を大問にまとめない。整序の小問が3問あれば sub_questions も3件になる
+・大問番号（section）は、テストに印刷されている番号をそのまま書く（例：1、2、大問3）
+
+【tested_vocab（出題語）は必ず埋めること】
+・渡された画像に出てくる単語・熟語を、できるだけ多く配列で列挙する。空配列で返してはいけない
+・入れるもの：長文や対話文の特徴的な単語（5文字以上）、問われた熟語、選択肢の語
+・入れないもの：go / be / the / have / and のような、どの学年でも使う短い語
+・この語がテスト範囲の判定に直接使われる。少ないと範囲が正しく出せない
+・例：["environment", "ethical", "essay", "message", "take advantage of", "have been to"]`;
+
   // ── テスト分析の共通ルール文 ────────────────────────────────────
   // 単発分析とバッチ分析で同じ指示を使う（片方だけ古くなってズレるのを防ぐ）。
   // ここの表記が GRAMMAR_UNIT_MAPS の照合前提になっているので、両者は必ずセットで直す。
@@ -3024,6 +3048,61 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・判断に迷った場合も、欄には最も可能性が高い単元名だけを書く。説明は書かない
 ・全大問の question_types を必ず埋める。1つも書けない場合は読み取り失敗なので、無理に範囲を推測しない`;
 
+  // ページを分けて分析した結果を1つにまとめる。
+  // 大問がページの境目をまたぐと同じ大問が2回出てくるため、大問番号でまとめ直す。
+  function mergeTestResults(list) {
+    const merged = { grade:'', from_unit:'', from_lesson:'', to_unit:'', to_lesson:'',
+                     summary:'', question_types:[], tested_vocab:[], key_items:[] };
+    const qtMap = new Map();   // 大問番号+形式 → 大問
+    const vocab = new Map();   // 小文字 → 元の表記（重複を除きつつ表記は最初のものを残す）
+    const keys  = new Map();
+    const summaries = [];
+
+    (list || []).forEach(r => {
+      if (!r) return;
+      if (!merged.grade && r.grade) merged.grade = r.grade;
+      ['from_unit','from_lesson','to_unit','to_lesson'].forEach(k => {
+        if (!merged[k] && r[k]) merged[k] = r[k];
+      });
+      if (r.summary) summaries.push(String(r.summary).trim());
+
+      (r.question_types || []).forEach(qt => {
+        const key = `${String(qt.section||'').trim()}|${String(qt.type||'').trim()}`;
+        const prev = qtMap.get(key);
+        if (!prev) { qtMap.set(key, { ...qt, sub_questions: [...(qt.sub_questions||[])] }); return; }
+        // 同じ大問が複数ページに分かれて出てきた場合はまとめる
+        prev.count = Math.max(prev.count || 0, qt.count || 0);
+        if (!prev.grammar && qt.grammar) prev.grammar = qt.grammar;
+        else if (qt.grammar && prev.grammar && !prev.grammar.includes(qt.grammar)) prev.grammar += '・' + qt.grammar;
+        if (!prev.phrases && qt.phrases) prev.phrases = qt.phrases;
+        else if (qt.phrases && prev.phrases && !prev.phrases.includes(qt.phrases)) prev.phrases += '・' + qt.phrases;
+        if (!prev.theme && qt.theme) prev.theme = qt.theme;
+        (qt.sub_questions || []).forEach(sq => {
+          const same = (prev.sub_questions || []).some(x =>
+            (x.type||'') === (sq.type||'') && (x.grammar||'') === (sq.grammar||''));
+          if (!same) (prev.sub_questions = prev.sub_questions || []).push(sq);
+        });
+      });
+
+      (r.tested_vocab || []).forEach(v => {
+        const t = String(v || '').trim(); if (!t) return;
+        if (!vocab.has(t.toLowerCase())) vocab.set(t.toLowerCase(), t);
+      });
+      (r.key_items || []).forEach(v => {
+        const t = String(v || '').trim(); if (!t) return;
+        if (!keys.has(t.toLowerCase())) keys.set(t.toLowerCase(), t);
+      });
+    });
+
+    // 大問番号順に並べる
+    const secOrder = s => { const m = String(s||'').match(/(\d+)/); return m ? parseInt(m[1]) : 999; };
+    merged.question_types = [...qtMap.values()].sort((a,b) => secOrder(a.section) - secOrder(b.section));
+    merged.tested_vocab   = [...vocab.values()];
+    merged.key_items      = [...keys.values()];
+    merged.summary        = summaries.join(' ').slice(0, 400);
+    return merged;
+  }
+
   async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
@@ -3031,7 +3110,6 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     try {
       setSt(stEl,'load',`${imgs.length}ページをAIが分析中...`);
 
-      const parts = imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
       // テスト分析はNH専用でlibCtxを生成
       const nhItemsForCtx = getNHItems();
       const libCtx = nhItemsForCtx.length
@@ -3039,8 +3117,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
           + nhItemsForCtx.map(i=>`${i.unit}${i.lesson?' '+i.lesson:''} p.${i.page} ${i.content}`).join('\n').substring(0,4000)
         : '';
 
-      parts.push({text:
-`このテストを研究目的で分析。全大問を漏れなく列挙（5個以下は不完全）。${libCtx}
+      const promptText =
+`このテストを研究目的で分析。渡された画像に写っている大問を1つ残らず列挙する。${libCtx}
 
 【Unit内順序】Part 1→Part 2→Read and Think 1→Read and Think 2→Grammar for Communication→Real Life English→Stage Activity
 特殊セクション：A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
@@ -3062,14 +3140,34 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・theme：長文・対話文・リスニング本文のみ→テーマを15文字以内
   例：「ボランティアの対話（教科書内）」「環境問題スピーチ（教科書外）」
 
-${GRAMMAR_NOTATION_RULES}`
-      });
+${GRAMMAR_NOTATION_RULES}
 
-      const r = await runWithProgressCard(stEl, 'test', imgs.length, 'テストをAIが分析中', () => callGeminiJSON(
-        parts,
-        `定期テスト分析の専門家。研究目的で以下の4点のみ抽出：
-①問題形式と問題数 ②出題文法パターン ③出題熟語 ④長文・対話文・リスニングのテーマ
-不要な情報（内容一致の答え・解説・選択肢の内容）は一切含めない。全大問を漏れなく列挙。`,
+${EXTRACTION_COMPLETENESS_RULES}`;
+
+      // ページをまとめて渡すとAIが全部を列挙せず要約に逃げるため、少しずつ分けて読ませて合体させる
+      const chunks = [];
+      for (let i = 0; i < imgs.length; i += TEST_PAGES_PER_CALL) {
+        chunks.push({ imgs: imgs.slice(i, i + TEST_PAGES_PER_CALL), from: i + 1, to: Math.min(i + TEST_PAGES_PER_CALL, imgs.length) });
+      }
+
+      const r = await runWithProgressCard(stEl, 'test', imgs.length, 'テストをAIが分析中', async () => {
+        const results = [];
+        for (let c = 0; c < chunks.length; c++) {
+          if (testAnalysisStopped) break;
+          const ch = chunks[c];
+          const parts = ch.imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
+          parts.push({ text:
+`${promptText}
+
+【いま渡されている範囲】全${imgs.length}ページのうち ${ch.from}〜${ch.to}ページ目です。
+この画像に写っている大問だけを書いてください。写っていない大問を想像で補わないでください。
+大問が前のページから続いている場合も、この画像に見えている内容を書いてください。` });
+          results.push(await callGeminiJSON(
+            parts,
+        `定期テスト分析の専門家。研究目的で次を抽出：
+①問題形式と問題数（全大問・全小問） ②出題文法パターン ③出題熟語 ④長文・対話文・リスニングのテーマ
+⑤テストに出てきた単語・熟語の一覧（tested_vocab。範囲判定に使うため必ず埋める）
+不要な情報（内容一致の答え・解説・選択肢の内容）は一切含めない。大問・小問を1つも飛ばさない。`,
         {
           type: 'OBJECT',
           properties: {
@@ -3110,9 +3208,13 @@ ${GRAMMAR_NOTATION_RULES}`
             tested_vocab: { type: 'ARRAY', items: { type: 'STRING' } }
           }
         },
-        20000,
-        getFastModeOpts()
-      ));
+            20000,
+            getFastModeOpts()
+          ));
+          setSt(stEl, 'load', `${c+1}/${chunks.length}まとまり読み取り済み（${ch.to}/${imgs.length}ページ）...`);
+        }
+        return mergeTestResults(results);
+      });
       setSt(stEl,'ok','✅ 分析完了');
       if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
@@ -3139,6 +3241,23 @@ ${GRAMMAR_NOTATION_RULES}`
           </div>`;
         return;
       }
+
+      // 読み取りが不十分なときは警告する（範囲判定の材料が足りず、範囲が手前で止まるため）
+      // 目安はページ数から出す。1ページに大問1つ以上、出題語3語以上は取れているのが普通。
+      const qtCount = (r.question_types||[]).length;
+      const tvCount = (r.tested_vocab||[]).length;
+      const pageCount = imgs.length;
+      const thin = qtCount < Math.max(2, Math.floor(pageCount / 2)) || tvCount < Math.max(5, pageCount * 2);
+      const thinWarn = thin
+        ? `<div class="card" style="border-color:#FCD34D;background:#FFFBEB">
+             <div class="card-title" style="color:#B45309">⚠️ 読み取りが不十分かもしれません</div>
+             <p style="font-size:13px;color:var(--muted)">
+               ${pageCount}ページから、大問${qtCount}件／出題語${tvCount}語しか取れていません。
+               材料が少ないと、出題範囲が実際より手前で止まります。
+               ⚡高速モードを使っていれば外して、もう一度分析してみてください。
+               それでも変わらない場合は、PDFの画質が低い可能性があります。</p>
+           </div>`
+        : '';
 
       // 履歴に保存
       try {
@@ -3224,6 +3343,7 @@ ${GRAMMAR_NOTATION_RULES}`
           <div class="result-grade">${esc(r.grade||'')}</div>
           <div class="result-range">${esc(rangeStr)}</div>
         </div>
+        ${thinWarn}
         <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
         ${crossNote}
         ${qtHtml}
@@ -3950,7 +4070,7 @@ ${GRAMMAR_NOTATION_RULES}`
         const pdf = await pdfjsLib.getDocument({data:buf}).promise;
         const remain = MAX_TOTAL - allImgs.length;
         for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
-          allImgs.push(await toBase64(await pdf.getPage(i), 1.1));
+          allImgs.push(await toBase64(await pdf.getPage(i), TEST_SCALE));
         }
         setSt(stEl,'load',`${fi+1}/${fileArr.length}ファイル処理済み（${allImgs.length}ページ）...`);
       }
@@ -4195,7 +4315,9 @@ ${GRAMMAR_NOTATION_RULES}`
 ・全大問を漏れなく列挙（5個以下は不完全）
 ・phrases：問われた熟語のみ（本文テキスト列挙禁止）
 
-${GRAMMAR_NOTATION_RULES}` });
+${GRAMMAR_NOTATION_RULES}
+
+${EXTRACTION_COMPLETENESS_RULES}` });
 
     const r = await callGeminiJSON(parts, '問題形式名は日本語。テスト分析専門家。', {
       type:'OBJECT', properties:{
@@ -4431,7 +4553,7 @@ ${GRAMMAR_NOTATION_RULES}` });
         const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
         const remain = MAX-allImgs.length;
         for (let i=1; i<=Math.min(pdfDoc.numPages,remain); i++) {
-          allImgs.push(await toBase64(await pdfDoc.getPage(i),1.1));
+          allImgs.push(await toBase64(await pdfDoc.getPage(i), TEST_SCALE));
         }
       }
       pendingExamData = { imgs:allImgs, name:targets.map(f=>f.name).join('・') };
