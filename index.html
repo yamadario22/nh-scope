@@ -1096,8 +1096,10 @@
       // 「形式主語」だけの表記は中2（It is 形容詞 to ～）にもあたるため、ここでは判定しない。
       [/it\s*(is|was)?\b.*\bfor\b.*\bto\b|it\s*for\s*to/i, 'Unit 3','Part 1'],
       // 「I know where the local shelter is / Tell me what you have done」＝Unit 4（間接疑問）。
-      // 「動詞 + (人) + whatなどで始まる節」という書き方でも拾う
-      [/間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節/, 'Unit 4','Part 1'],
+      // ただし「how to ～」は疑問詞＋不定詞（中2 Unit 5）であって間接疑問文ではない。
+      // AIが「I know how to make a cake.」を間接疑問文と誤ラベルした実例があるため、
+      // 疑問詞のあとに to が続く形が書かれていたら、ここでは判定しない。
+      [/^(?!.*(how|what|where|when|who)\s*to\b)(?!.*疑問詞\s*[+＋]\s*(to|不定詞)).*(間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節)/i, 'Unit 4','Part 1'],
       [/let\s*(人|[a-z]+)?\s*(原形)?/i,     'Unit 3','Read and Think 1'],
       [/help\s*(人|[a-z]+)?\s*(原形)?/i,    'Unit 3','Read and Think 2'],
       // 「I want everyone to know ....」＝Unit 3 Part 2。「動詞 + 目的語 + to不定詞」でも拾う
@@ -3051,7 +3053,11 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   「It is 形容詞 for O to ～」（forあり）→「It for to」と表記
 ・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
 ・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
-・分詞の後置修飾は「後置修飾」、間接疑問は「間接疑問文」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
+・分詞の後置修飾は「後置修飾」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
+・間接疑問文と「疑問詞＋不定詞」は別の文法。学年が変わるので必ず区別する
+  「I know how to make a cake.」＝疑問詞のあとが〈to＋動詞の原形〉→「疑問詞+不定詞」と表記
+  「I know where he is.」＝疑問詞のあとが〈主語＋動詞〉→「間接疑問文」と表記
+  how to / what to / where to / when to を見たら、それは間接疑問文ではない
 ・1つの欄に複数の文法を書くときは「・」で区切る。カッコの中では区切らない
   ✅「現在完了（経験）・現在完了（完了）」　❌「現在完了（経験・完了）」
 
@@ -3097,10 +3103,12 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         if (why && !merged.unreadableReasons.includes(why)) merged.unreadableReasons.push(why);
       }
       // 学年は「最初に出たもの」ではなく多数決で決める。
-      // 3ページずつに分けて読ませているため、表紙や注意書きしか写っていないまとまりが
+      // 1ページずつ読ませているため、表紙や注意書きしか写っていないページが
       // 当てずっぽうの学年を返すことがある。それが先頭だと全部が狂う（実際に中3のテストが
       // 中1と判定され、範囲がまるごと外れた）。
-      const g = String(r.grade || '').trim();
+      // 「3年生」「中学3年生」「中3」はすべて同じなので、表記を揃えてから数える
+      // （揃えずに数えて、同じ学年が3つに割れて警告が出た）。
+      const g = normalizeGrade(String(r.grade || '').trim());
       if (g) gradeVotes[g] = (gradeVotes[g] || 0) + 1;
 
       ['from_unit','from_lesson','to_unit','to_lesson'].forEach(k => {
@@ -3800,6 +3808,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
     if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
+    if ((d.onceOnlyTerms||[]).length) decision.push(`1回しか出ていないため終わりの根拠にしなかった文法：${esc((d.onceOnlyTerms||[]).slice(0,8).join('・'))}`);
     if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
     if ((d.otherGrade||[]).length) decision.push(`他学年でのみ見つかった語：${esc((d.otherGrade||[]).slice(0,12).join('・'))}`);
 
@@ -4132,7 +4141,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const gm = grammarToUnit(gradeNum, t);
       if (!gm) return;
       const pos = rangePos(`${gm.unit} ${gm.lesson || ''}`.trim());
-      if (pos > 0) gramHits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
+      if (pos >= 0) gramHits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
     };
     (r.question_types || []).forEach(qt => {
       splitGrammarTerms(qt.grammar).forEach(addGram);
@@ -4174,7 +4183,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // Unitでないページ（Real Life English等）は直前のUnitに読み替えて数える
       const ru = rangeUnitFromPage(first.bookId, first.page) || first.unit;
       const pos = rangePos([ru, first.lesson].filter(Boolean).join(' '), firstGrade);
-      if (pos > 0) wordHits.push({
+      if (pos >= 0) wordHits.push({
         pos, unit: ru, lesson: first.lesson || '', term: v,
         // ここから下は内訳表示のための記録（判定には使わない）
         matched: first.content || '', matchedType: first.type || '',
@@ -4192,18 +4201,32 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // ── ステップ1：範囲の「終わり」を決める ──
     // 文法だけを根拠にする。文法は「習う前には出せない」ので確実。
     //
+    // 【1回しか出ていない文法は終わりの根拠にしない】
+    // 読み間違いや推測で書かれた文法は、たいてい1回しか出てこない。
+    // 逆に本当の範囲の終わりは、必ず複数問で問われる。
+    // 実例（中3の5月・正解はUnit 2 Part 1まで）：
+    //   現在完了（経験）8回 → Unit 1 ／ 現在完了（完了）5回 → Unit 2 Part 1
+    //   間接疑問文 1回 → Unit 4 ← これだけで範囲がUnit 4まで飛んでいた
+    // 実際の3本のテストで、2回以上出た文法だけを見ると全部正解になった。
+    // ただし1回しか出ない文法しかない場合は、それを使う（材料がないよりまし）。
+    //
     // 【単語を根拠にしない理由】
     // 以前は「習っていない語はテストに出せない」と考えて、教科書と完全一致した単語でも
     // 終わりを伸ばしていた。しかし実際のテストでは、長文に未習の語が注釈つきで出てくる。
-    // 実例：中3の6月のテスト（正解はUnit 3 Part 1まで）で、長文に出てきた energy が
-    //       教科書のLet's Read 2（p.93）に一致し、終わりがUnit 6まで飛んだ。
-    // 同じ2本のテストで、文法だけで判定すると両方とも正解になった。
+    // 実例：長文に出てきた energy が教科書のLet's Read 2（p.93）に一致し、終わりがUnit 6まで飛んだ。
     // 単語は「範囲がどこから始まるか」を絞るためだけに使う。
-    const endSource = gramHits.length ? gramHits : wordHits;
+    const posCount = new Map();
+    gramHits.forEach(h => posCount.set(h.pos, (posCount.get(h.pos) || 0) + 1));
+    const repeatedGram = gramHits.filter(h => posCount.get(h.pos) >= 2);
+    const onceOnly = gramHits.filter(h => posCount.get(h.pos) === 1);
+    diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}）`))];
+    const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
     const endUnit = Math.floor(endHit.pos);
-    diag.decidedBy = gramHits.length ? '文法（信頼度高）' : '単語・熟語（文法が1つも拾えなかったため）';
+    diag.decidedBy = gramHits.length
+      ? (repeatedGram.length ? '文法（2回以上出たもの）' : '文法（1回しか出ないものしかないため確度低め）')
+      : '単語・熟語（文法が1つも拾えなかったため）';
     diag.endUnit   = endUnit;
     diag.endTerm   = endHit.term || '';
 
@@ -5460,6 +5483,10 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
   // 例: "Unit 2 Part 1" → 2.1, "Unit 2 Read and Think 1" → 2.3
   function rangePos(str, gradeN) {
     const s = (str||'');
+    // 位置が判定できない文字列は -1 を返す。
+    // 以前は0を返していたため、「Unit 0」（位置0）と「判定不能」（位置0）が区別できず、
+    // Unit 0 の手がかりが常に捨てられていた（各学年最初のテストはUnit 0が範囲に入る）。
+    if (!/\d/.test(s) && !/Let'?s\s*Read|Starter/i.test(s)) return -1;
     const um = s.match(/[Uu]nit\s*(\d+)/);
     // Let's Read は独立単元（定期テスト範囲の切れ目）。Unit番号がない場合は教科書上の位置を返す
     // 中2：LR1はUnit 3の直後(3.9)、LR2はUnit 6の直後(6.9)、LR3はUnit 7の直後(7.9)
