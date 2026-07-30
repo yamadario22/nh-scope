@@ -1377,28 +1377,39 @@
     // 構造から「この学年のものではない」と分かった項目が一定数見つかった本は、
     // その学年から流れ込んでいると判断できるので、この本の側をコピーとみなす。
     // 汚染の証拠がない本では重複を報告しない（本物のデータを消させないため）。
-    const CONTAMINATION_MIN = 3;
-    const contaminatedFrom = new Set(
-      Object.keys(foreignFrom).filter(g => foreignFrom[g] >= CONTAMINATION_MIN)
-    );
+    // ── ⑥ 他の本と同じ内容・同じページの項目（＝どちらかのコピー） ──
+    // 1語だけの一致は偶然に起こる。「English」が別の教科書の同じページにあるのは
+    // 単なる偶然で、証拠にならない（実際にそれで大量の誤検出を出した）。
+    // そこで【ページ単位】で数え、そのページの項目がまとまって一致したときだけ報告する。
+    // またこの検査単独では「確実」にしない。他の証拠（Lesson N 等）と重なったときだけ確実になる。
+    const DUP_MIN_COUNT = 5;    // そのページで一致した最低件数
+    const DUP_MIN_RATIO = 0.5;  // そのページの項目のうち一致した割合
     if (isNH && dupIndex.size) {
+      // ページごとに、どの本と何件一致したかを数える
+      const byPage = new Map();  // page → { total, books: Map(label → [perItem...]) }
       perItem.forEach(p => {
         const it = p.item;
         if (!(it.page > 0) || !(it.content || '').trim()) return;
-        const hits = dupIndex.get(`${(it.content || '').trim().toLowerCase()}|${it.page}`);
-        if (!hits || !hits.length) return;
-        // NEW CROWN側にあるものは、教科書そのものが違うので混入の手がかりになる
-        const nc = hits.find(h => h.isNC);
-        if (nc) {
-          p.reasons.push({ level:'疑い', text:`${nc.label}の p.${it.page}${nc.lesson ? `「${nc.lesson}」` : ''}に同じ項目がある（NEW CROWNのデータの疑い）` });
-        }
-        // 同じNEW HORIZONの他学年で、かつその学年からの流れ込みが確認できている場合
-        const hit = hits.find(h => !h.isNC && contaminatedFrom.has(String(gradeNumOf(h.grade))));
-        if (!hit) return;
-        const sameSection = (hit.lesson || '') === (it.lesson || '');
-        p.reasons.push({
-          level: sameSection ? '確実' : '疑い',
-          text: `${hit.grade}の p.${it.page}${sameSection ? `「${hit.lesson || 'セクションなし'}」` : ''}に同じ項目がある（${hit.grade}から流れ込んだデータ）`
+        if (!byPage.has(it.page)) byPage.set(it.page, { total: 0, books: new Map() });
+        const rec = byPage.get(it.page);
+        rec.total++;
+        const hits = dupIndex.get(`${(it.content || '').trim().toLowerCase()}|${it.page}`) || [];
+        const seen = new Set();
+        hits.forEach(h => {
+          if (seen.has(h.label)) return;
+          seen.add(h.label);
+          if (!rec.books.has(h.label)) rec.books.set(h.label, []);
+          rec.books.get(h.label).push(p);
+        });
+      });
+      byPage.forEach((rec, page) => {
+        rec.books.forEach((list, label) => {
+          if (list.length < DUP_MIN_COUNT) return;
+          if (list.length / rec.total < DUP_MIN_RATIO) return;
+          list.forEach(p => p.reasons.push({
+            level: '疑い',
+            text: `p.${page}の項目${rec.total}件のうち${list.length}件が「${label}」の同じページと一致（ページごと${label}のデータの疑い）`
+          }));
         });
       });
     }
