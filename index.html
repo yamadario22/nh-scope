@@ -1242,7 +1242,8 @@
   // NEW HORIZONの教科書に入っていたら確実に他教科書由来と言える用語
   const FOREIGN_SURE_RE  = /(Lesson\s*\d|Get\s*Plus|Take\s*Action|Reading\s*Lesson)/i;
   // 他教科書の疑いはあるが断定できない用語
-  const FOREIGN_MAYBE_RE = /(基本文|Unit Activity|Project\s*\d)/i;
+  // ※「Unit Activity」「Key Sentences」はNEW HORIZONの本文に実際に使われている見出しなので対象外
+  const FOREIGN_MAYBE_RE = /(基本文|Project\s*\d)/i;
 
   function scanBookAnomalies(bookId) {
     const book  = bookById(bookId);
@@ -1252,7 +1253,6 @@
     const gradeN  = gradeNumOf(bookGrade(book));
     const isNH    = isNHBook(bookId);
     const firstPage     = table[0][0];
-    const appendixStart = table.find(e => !e[1])?.[0] || Infinity;
     const auxHere = auxMapOf(bookId);
     const otherNHBooks = ['default_c1','default_c2','default_c3'].filter(b => b !== bookId);
 
@@ -1266,11 +1266,9 @@
       if (it.page > 0 && it.page < firstPage) {
         reasons.push({ level:'疑い', text:`本編が始まる p.${firstPage} より前のページ` });
       }
-      // ①' 資料編のページなのに単元が資料編になっていない（ラベルのずれ）
-      //     資料編の単語リスト等は正しいデータなので、資料編と書かれていれば異物ではない
-      if (it.page >= appendixStart && it.unit !== '資料編' && !/資料編|巻末/.test(label)) {
-        reasons.push({ level:'疑い', text:`資料編のページ（p.${appendixStart}以降）なのに単元が「${it.unit || '空'}」` });
-      }
+      // 【注】「資料編のページなのに単元がUnit 2」は検査しない。
+      //   巻末には各Unitの基本文まとめが載っているため、ページが巻末でも単元がUnitなのは正しい。
+      //   （中1のp.152〜153、中3のp.106などが該当。これを異物にすると正しいデータを消してしまう）
 
       // ② その学年に存在しない補助セクション（基本の名前と番号の両方で照合）
       const aux = parseAuxName(lesson);
@@ -1306,12 +1304,18 @@
       }
 
       // ⑤ 他学年で習う文法（凌央さんが作った文法対応表で照合）
-      //    この学年の表になくても、他学年の表にもなければ何の証拠にもならないので対象外
-      if (isNH && it.type === '文法' && (it.content || '').trim() && gradeN) {
-        if (!grammarToUnit(gradeN, it.content)) {
-          const otherGrades = [1,2,3].filter(g => g !== gradeN && grammarToUnit(g, it.content));
+      //    ・この学年の表になくても、他学年の表にもなければ何の証拠にもならないので対象外
+      //    ・例文には使えない。「She wants to help people in need.」のような基本文は
+      //      文中の wants to が他学年のパターンに偶然引っかかるため、短い文法名だけを対象にする
+      //    ・文法用語は学年をまたいで重なる（中1 Unit 8の want to は形式上は不定詞の名詞的用法）
+      //      ため、断定はせず「疑い」にとどめる
+      const gname = (it.content || '').trim();
+      const looksLikeGrammarName = gname && gname.length <= 24 && !/[.?!]/.test(gname);
+      if (isNH && it.type === '文法' && looksLikeGrammarName && gradeN) {
+        if (!grammarToUnit(gradeN, gname)) {
+          const otherGrades = [1,2,3].filter(g => g !== gradeN && grammarToUnit(g, gname));
           if (otherGrades.length) {
-            reasons.push({ level:'確実', text:`中${otherGrades.join('・中')}で習う文法（他学年のデータ）` });
+            reasons.push({ level:'疑い', text:`中${otherGrades.join('・中')}で習う文法名（他学年のデータの疑い）` });
           }
         }
       }
@@ -1363,8 +1367,8 @@
          <b>${esc(book.name || '')}</b>（全${total}件）から、${found.length}件の異物候補が見つかりました。
        </div>
        ${found.length ? '' : '<div style="color:var(--muted);font-size:13px">異物は見つかりませんでした。</div>'}
-       ${tbl('確実に異物と言えるもの', sure, 'ページ構成や他教科書の用語から、この学年のデータではないと判断できるものです。')}
-       ${tbl('疑いがあるもの', maybe, '文法対応表に載っていない文法名です。対応表の書き方が違うだけの可能性もあるので、内容を見て判断してください。')}
+       ${tbl('確実に異物と言えるもの', sure, 'この学年に存在しないセクション名、他学年のページ構成との一致、他教科書の呼び方から、この学年のデータではないと判断できるものです。')}
+       ${tbl('疑いがあるもの', maybe, '断定はできないものです。他学年で習う文法名（学年をまたいで重なる用語もあります）や、NEW HORIZONで使うか確認したい呼び方です。内容を見て判断してください。')}
        ${found.length ? `<div style="background:#FEF3C7;padding:8px;border-radius:6px;font-size:12px;margin-top:8px">
          チェックを入れた項目だけを削除します。削除は元に戻せないので、迷ったら残してください。</div>` : ''}`;
 
