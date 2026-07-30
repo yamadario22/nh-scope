@@ -1066,13 +1066,19 @@
       [/現在完了.*継続|継続.*現在完了|継続用法/, 'Unit 2','Part 2'],
       [/現在完了/,                          'Unit 1','Part 1'],
       [/make\s*(人|[OＯA])\s*(形容詞|[CＣB])|svoc/i, 'Unit 1','Read and Think 1'],
-      [/(show|tell|teach).*(人|me|us).*that/i, 'Unit 1','Read and Think 2'],
-      [/it\s*(is|was)?\s*(形容詞\s*)?for.*to|it\s*for\s*to/i, 'Unit 3','Part 1'],
-      [/人物動詞.*間接|間接.*人物動詞|(show|tell|teach).*間接疑問/i, 'Unit 4','Part 2'],
-      [/間接疑問/,                          'Unit 4','Part 1'],
+      // 「The story shows me that ...」＝Unit 1。SVOO・人物動詞という書き方でも拾えるようにする
+      [/(show|tell|teach).*(人|me|us).*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
+      // 「It is important for us to understand ....」＝Unit 3 Part 1。
+      // AIは「It is + (for + (人など)) + to + 動詞の原形」のように記号を挟んで書くため、
+      // for と to が離れていても拾えるようにする（以前は拾えず、中2のデータと誤判定していた）
+      [/it\s*(is|was)?\b.*\bfor\b.*\bto\b|it\s*for\s*to|形式主語/i, 'Unit 3','Part 1'],
+      // 「I know where the local shelter is / Tell me what you have done」＝Unit 4（間接疑問）。
+      // 「動詞 + (人) + whatなどで始まる節」という書き方でも拾う
+      [/間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節/, 'Unit 4','Part 1'],
       [/let\s*(人|[a-z]+)?\s*(原形)?/i,     'Unit 3','Read and Think 1'],
       [/help\s*(人|[a-z]+)?\s*(原形)?/i,    'Unit 3','Read and Think 2'],
-      [/(want|tell|ask)\s*(人|[a-z]+)?\s*(to|不定詞)/i, 'Unit 3','Part 2'],
+      // 「I want everyone to know ....」＝Unit 3 Part 2。「動詞 + 目的語 + to不定詞」でも拾う
+      [/(want|tell|ask)\s*(人|[a-z]+)?\s*(to|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
       [/後置修飾|分詞.*修飾|現在分詞|過去分詞.*(修飾|名詞)/, 'Unit 4','Read and Think 2'],
       [/接触節/,                            'Unit 5','Part 1'],
       [/関係代名詞.*who|who.*関係代名詞/i,  'Unit 5','Part 2'],
@@ -1368,6 +1374,17 @@
 
       // ⑥は後で判定する（この本がどの学年から汚染されているかを先に数える必要がある）
 
+      if (reasons.length) {
+        // 中身がこの学年で習う文法なら、セクション名やページの一致だけで異物と断定しない。
+        // 例：中3のGrammar for Communication 2（不定詞のまとめ）はp.41だが、ページが1つずれて
+        //     p.40と記録されると、中1のp.40（Grammar for Communication 2 疑問詞）と一致してしまう。
+        //     中身は中3の文法なので、名前の一致は決め手にならない。
+        const ownGrammar = it.type === '文法' && gradeN && looksLikeGrammarName && grammarToUnit(gradeN, gname);
+        if (ownGrammar) {
+          reasons.forEach(r => { if (r.level === '確実') r.level = '疑い'; });
+          reasons.push({ level:'疑い', text:`ただし「${gname}」は中${gradeN}の${ownGrammar.unit}で習う文法なので、中${gradeN}のデータの可能性が高い` });
+        }
+      }
       perItem.push({ idx, item: it, reasons });
     });
 
