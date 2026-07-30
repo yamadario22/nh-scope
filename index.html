@@ -3783,8 +3783,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     material.push(`出題単語：${(h.tested_vocab||[]).length}件${(h.tested_vocab||[]).length?'':'（この履歴には保存されていません）'}`);
     material.push(`重要項目：${(h.key_items||[]).length}件`);
 
-    const gramRows = (d.gram||[]).length
-      ? (d.gram||[]).map(g=>`<div>・${esc(g.term)} → <b>${esc(g.unit)}</b>${g.lesson?' '+esc(g.lesson):''}</div>`).join('')
+    // 文法は同じものが何度も出るので、まとめて回数を出す（39行が7行になり、判断しやすくなる）
+    const gramGroups = new Map();
+    (d.gram||[]).forEach(g => {
+      const key = `${g.term}|${g.unit}|${g.lesson||''}`;
+      if (!gramGroups.has(key)) gramGroups.set(key, { ...g, count: 0 });
+      gramGroups.get(key).count++;
+    });
+    const gramSorted = [...gramGroups.values()].sort((a,b) => b.count - a.count || a.pos - b.pos);
+    const gramRows = gramSorted.length
+      ? `<div class="tbl-wrap"><table>
+          <thead><tr><th>文法</th><th style="width:50px;text-align:right">回数</th><th>Unit</th><th>終わりの根拠</th></tr></thead>
+          <tbody>${gramSorted.map(g => `<tr${g.count === 1 ? ' style="background:#FEF2F2"' : ''}>
+            <td style="font-size:11px">${esc(g.term)}</td>
+            <td style="font-size:11px;text-align:right;font-weight:600">${g.count}</td>
+            <td style="font-size:11px">${esc(g.unit)}${g.lesson?' '+esc(g.lesson):''}</td>
+            <td style="font-size:11px;color:${g.count===1?'#DC2626':'var(--muted)'}">${g.count===1?'使わない（1回だけ）':'使う'}</td>
+          </tr>`).join('')}</tbody></table></div>
+         <div style="font-size:11px;color:var(--muted);margin-top:4px">1回しか出ていない文法は、読み間違いの可能性があるため終わりの根拠にしません。</div>`
       : '<div style="color:var(--muted)">なし（この学年の文法対応表に載っている文法が拾えていません）</div>';
 
     const sorted = (d.words||[]).slice().sort((a,b)=>a.pos-b.pos);
@@ -3812,6 +3828,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
     if ((d.otherGrade||[]).length) decision.push(`他学年でのみ見つかった語：${esc((d.otherGrade||[]).slice(0,12).join('・'))}`);
 
+    const noMatchRows = (d.noMatch||[]).length
+      ? `<div style="font-size:12px;line-height:1.9">
+           教科書のどこにも見つからなかった語（${(d.noMatch||[]).length}件）：<br>
+           <span style="color:var(--muted)">${esc((d.noMatch||[]).join('・'))}</span>
+           <div style="font-size:11px;color:var(--muted);margin-top:4px">
+             ここに教科書にあるはずの語が並んでいる場合、教科書データが足りないか、語の形が違って照合できていません。</div>
+         </div>`
+      : '<div style="color:var(--muted);font-size:12px">なし（拾った語はすべて教科書のどこかで見つかりました）</div>';
+
     const weakCount = sorted.filter(w=>w.weak).length;
     const warn = weakCount
       ? `<div style="background:#FEF3C7;padding:8px;border-radius:6px;font-size:12px;margin-bottom:12px">
@@ -3828,6 +3853,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
        ${box('① 判定に使えた材料', material.map(m=>`・${esc(m)}`).join('<br>'))}
        ${box('② 拾った文法とそのUnit', gramRows)}
        ${box('③ 拾った単語・熟語と一致先', wordRows)}
+       ${box('③-2 一致しなかった出題語', noMatchRows)}
        ${box('④ 範囲の決め方', decision.map(x=>`・${x}`).join('<br>'))}`;
 
     document.getElementById('rangeDiagModal').style.display = 'flex';
@@ -4108,6 +4134,62 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     //   文法項目のメモには例文が入っているため、そこに含まれる英単語と一致してしまい
     //   （例：出題語 minutes が「現在完了進行形 have been + -ing」の例文に一致）、
     //   まったく無関係なUnitのヒットが大量に発生していた。
+    // 語の活用形をそろえる。
+    // テストの出題語は文中の形（watched / lives / studying）で出てくるが、
+    // 教科書データは原形（watch / live / study）で入っているため、そのままでは一致しない。
+    // 実例：出題語60語のうち一致したのは5語だけだった。
+    // 単語は「範囲がどこから始まるか」を絞るためだけに使うので、多少ゆるくても害は小さい。
+    const IRREGULAR = { been:'be', was:'be', were:'be', am:'be', is:'be', are:'be',
+                        went:'go', gone:'go', got:'get', gotten:'get', made:'make',
+                        took:'take', taken:'take', saw:'see', seen:'see', said:'say',
+                        had:'have', has:'have', did:'do', done:'do', came:'come',
+                        knew:'know', known:'know', wrote:'write', written:'write',
+                        told:'tell', thought:'think', bought:'buy', brought:'bring',
+                        found:'find', gave:'give', given:'give', left:'leave',
+                        met:'meet', put:'put', read:'read', ran:'run', sang:'sing',
+                        spoke:'speak', spoken:'speak', stood:'stand', taught:'teach',
+                        heard:'hear', held:'hold', kept:'keep', lost:'lose', felt:'feel',
+                        children:'child', people:'person', men:'man', women:'woman', feet:'foot' };
+    function stemWord(w) {
+      const s = String(w || '').toLowerCase().trim();
+      if (!s || /\s/.test(s)) return s;         // 複数語（熟語）はそのまま
+      if (IRREGULAR[s]) return IRREGULAR[s];
+      if (/ies$/.test(s)      && s.length > 4) return s.slice(0, -3) + 'y';   // studies → study
+      if (/ied$/.test(s)      && s.length > 4) return s.slice(0, -3) + 'y';   // studied → study
+      if (/(ches|shes|sses|xes|zes)$/.test(s)) return s.slice(0, -2);          // watches → watch
+      if (/ing$/.test(s)      && s.length > 5) {
+        const b = s.slice(0, -3);
+        if (/([bdgklmnprt])\1$/.test(b)) return b.slice(0, -1);                // running → run
+        return b;                                                             // making → mak
+      }
+      if (/ed$/.test(s)       && s.length > 4) {
+        const b = s.slice(0, -2);
+        if (/([bdgklmnprt])\1$/.test(b)) return b.slice(0, -1);                // stopped → stop
+        return b;                                                             // watched → watch
+      }
+      // 「-s」は落とすが、直前がeなら e を残す（lives → live、sides → side）。
+      // eまで落とすと liv / sid になり、教科書の live / side と一致しなくなる。
+      if (/s$/.test(s) && s.length > 3 && !/ss$/.test(s)) return s.slice(0, -1);
+      return s;
+    }
+    // 語幹どうしが一致するか。
+    // 語幹が短すぎると偶然一致しやすいので、元の語のどちらかが5文字以上あることを条件にする。
+    const sameStem = (a, b) => {
+      if (a === b) return true;
+      // 不規則変化（been→be、children→child など）は表に載っているので、短くても信用できる
+      const irregular = !!(IRREGULAR[a] || IRREGULAR[b]);
+      if (!irregular && Math.max(a.length, b.length) < 5) return false;
+      const sa = stemWord(a), sb = stemWord(b);
+      if (sa.length < 2 || sb.length < 2) return false;
+      // 語幹が一致するか、片方の語幹がもう片方の原形と一致するか
+      // （introduced → introduc、making → mak に対して、教科書の introduce / make を拾えるよう末尾のeも見る）
+      // ただし元の語が短いときに末尾eを許すと be + e = bee のような誤一致が起きるため、
+      // 元の語のどちらかが5文字以上あるときに限る
+      const allowE = Math.max(a.length, b.length) >= 5;
+      const eq = (x, y) => x === y || (allowE && (x + 'e' === y || x === y + 'e'));
+      return eq(sa, sb) || eq(sa, b) || eq(a, sb);
+    };
+
     const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const wordBoundaryHit = (haystack, needle) => {
       if (!needle) return false;
@@ -4126,6 +4208,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
       if (item.type === '単語') {
         if (v === content && content.length >= 5) return { how:'完全一致', weak:false };
+        // 活用形の違いを吸収して照合（watched ↔ watch、lives ↔ live など）
+        if (content.length >= 4 && sameStem(v, content)) return { how:'活用形が一致', weak:false };
         return null;
       }
       return null; // 文法・その他は照合しない
@@ -4174,7 +4258,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const key = (gradeNumOf(item.grade) || 9) * 10000 + (item.page > 0 ? item.page : 9999);
         if (first === null || key < firstKey) { first = item; firstInfo = mi; firstKey = key; }
       }
-      if (!first) continue;
+      if (!first) { diag.noMatch = diag.noMatch || []; diag.noMatch.push(v); continue; }
       const firstGrade = gradeNumOf(first.grade) || 0;
       if (gradeNum && firstGrade && firstGrade !== gradeNum) {
         otherGradeHits.push(`${v}（${first.grade || '他学年'}）`);
