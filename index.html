@@ -4694,11 +4694,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     };
     const matchInfo = (item, v) => {
       const content = (item.content || '').toLowerCase().trim();
+      // 出題語が1語だけかどうか（熟語との部分一致の信用度を判断するのに使う）
+      const vIsSingleWord = !/\s/.test(v);
       if (item.type === '熟語') {
         if (content === v)                              return { how:'完全一致', weak:false };
-        if (content.includes(v))                        return wordBoundaryHit(content, v)
-          ? { how:'出題語が教科書の熟語の一部（語として一致）', weak:false }
-          : { how:'出題語が教科書の熟語の文字列に含まれただけ', weak:true };
+        if (content.includes(v)) {
+          if (!wordBoundaryHit(content, v))             return { how:'出題語が教科書の熟語の文字列に含まれただけ', weak:true };
+          // 1語だけの出題語が熟語の一部にたまたま一致するのは、偶然であることが多い。
+          // 実例：fan → turn off the fan、but → Sorry, but ....、anna → Love, Anna
+          //       これらがUnit 6〜9の裏づけとして数えられ、中1の5月のテストの範囲が
+          //       Unit 7まで伸びていた。本当の出題語はUnit 0〜2に13語集まっていた。
+          if (vIsSingleWord && /\s/.test(content))      return { how:'1語が熟語の一部に一致しただけ', weak:true };
+          return { how:'出題語が教科書の熟語の一部（語として一致）', weak:false };
+        }
         if (v.includes(content) && content.length >= 5) return { how:'教科書の熟語が出題語の一部', weak:false };
         return null;
       }
@@ -5027,6 +5035,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     });
   }
 
+  // すでに分析済みかどうかを見分ける。
+  // 数百件を数日に分けて流すため、毎回フォルダ全部を選んでも
+  // まだ分析していないものだけが処理されるようにする。
+  // 見分け方は「学校＋先生＋日付＋学年」。同じテストを二重に登録しないための鍵。
+  function analyzedKey(name, grade) {
+    const school  = extractSchoolName(name) || '';
+    const teacher = extractTeacherName(name) || '';
+    const date    = extractTestDate(name) || '';
+    const g       = normalizeGrade(grade || '');
+    return `${school}|${teacher}|${date}|${g}`;
+  }
+
+  // 履歴にある分析済みのテストの鍵を集める
+  function analyzedKeySet() {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const set = new Set();
+    hist.forEach(h => {
+      const k = analyzedKey(h.name || '', h.grade || '');
+      if (k) set.add(k);
+    });
+    return set;
+  }
+
   async function onTestFilesSelected(files) {
     if (!files || !files.length) return;
     const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
@@ -5045,6 +5077,33 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       alert(`次の${skipped.length}件は解答用紙だけなので分析しません。\n\n${skipped.map(g=>'・'+g.key).join('\n')}\n\n問題用紙も一緒に選べば分析できます。`);
     }
 
+    // すでに分析済みのテストを除く（数日に分けて流すとき、毎回フォルダ全部を選べるようにする）
+    const pickedGrade = normalizeGrade(((document.getElementById('testGradeSel')||{}).value || '').trim());
+    if (!/^中[１２３]$/.test(pickedGrade)) {
+      const ok = await showConfirm(
+        '学年が指定されていません。\n\n' +
+        '学年を指定すると、すでに分析済みのテストを自動で飛ばせます。\n' +
+        '指定しないと、同じテストを二重に分析してしまう可能性があります。\n\n' +
+        'このまま進めますか？', 'このまま進める');
+      if (!ok) { setSt(stEl, 'err', '取り消しました'); return; }
+    }
+    const doneSet = analyzedKeySet();
+    const already = usable.filter(g => doneSet.has(analyzedKey(g.name, pickedGrade)));
+    const fresh   = usable.filter(g => !doneSet.has(analyzedKey(g.name, pickedGrade)));
+    if (already.length) {
+      const ok = await showConfirm(
+        `選んだ${usable.length}件のうち、${already.length}件はすでに分析済みです。\n\n` +
+        `残りの${fresh.length}件だけを分析しますか？\n` +
+        `（分析済みのものをもう一度分析すると、同じテストが二重に登録されます）`,
+        `${fresh.length}件だけ分析する`);
+      if (!ok) { setSt(stEl, 'err', '取り消しました'); return; }
+    }
+    if (!fresh.length) {
+      alert('選んだテストはすべて分析済みです。');
+      setSt(stEl, 'ok', 'すべて分析済みです');
+      return;
+    }
+
     const stEl = document.getElementById('testStatus');
     const btn  = document.getElementById('testStartBtn');
     btn.disabled = true;
@@ -5052,7 +5111,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     // ファイル一覧を、テスト単位でまとめて表示
     const listEl = document.getElementById('testFileList');
-    const previewGroups = usable;
+    const previewGroups = fresh;
     listEl.innerHTML = previewGroups.map(g =>
       `<div style="margin-bottom:4px">
          <b>${esc(g.key)}</b>（${g.files.length}ファイル）<br>
@@ -5066,7 +5125,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('testResult').innerHTML = '';
     try { localStorage.removeItem('nhscope_test_result'); } catch {}
 
-    const groups = usable;
+    const groups = fresh;
     setSt(stEl,'load',`${groups.length}件のテスト（${fileArr.length}ファイル）を読み込み中...`);
     try {
       const MAX_PER_TEST = 30;   // テスト1件あたりの最大ページ数
