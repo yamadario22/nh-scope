@@ -3628,8 +3628,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             const prev = prevGrade ? rangeBothNotations(prevGrade.grade, prevGrade.range) : null;
             const row = (label, b) => `<div style="display:flex;gap:10px;align-items:baseline;justify-content:center;flex-wrap:wrap;font-size:13px;margin-top:3px">
                 <span style="opacity:0.75">${esc(label)}</span><span>${esc(b.unit)}</span>${b.page?`<span style="opacity:0.85">／ ${esc(b.page)}</span>`:''}</div>`;
-            return (prev ? row(prev.grade + '（前学年・推定なので要確認）', prev) : '')
-                 + (cur.page ? row(esc(r.grade||''), cur) : '');
+            return (cur.page ? row(esc(r.grade||''), cur) : '')
+                 + (gradeNumOf(r.grade) > 1
+                    ? `<div style="font-size:12px;opacity:0.8;margin-top:4px">
+                         前学年の内容も範囲に入る場合は、履歴の「範囲を直す」から入力してください</div>` : '');
           })()}
         </div>
         ${blurWarn}
@@ -3813,41 +3815,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return from === to ? `p.${from}` : `p.${from}〜${to}`;
   }
 
-  // 前学年ぶんの範囲を推定する。
-  // 学年最初のテストは「中1教科書 p.116〜126、中2教科書 p.15まで」のように
-  // 前学年の内容も範囲に入ることがある。
-  // 前学年の文法（過去進行形＝中1 Unit 10 など）が出ていれば、そこが前学年ぶんの範囲になる。
-  // 単語は学年をまたいで重なるため使わない。文法だけで判定する。
-  function estimatePrevGradeRange(r) {
-    const gradeN = gradeNumOf(r.grade);
-    if (gradeN <= 1) return null;
-    const prevG = gradeN - 1;
-    const terms = [];
-    (r.question_types || []).forEach(qt => {
-      splitGrammarTerms(qt.grammar).forEach(t => terms.push(t));
-      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(t => terms.push(t)));
-    });
-    const hits = [];
-    terms.forEach(t => {
-      if (grammarToUnit(gradeN, t)) return;          // 今の学年で説明できるものは前学年ぶんではない
-      const gm = grammarToUnit(prevG, t);
-      if (!gm) return;
-      const pos = rangePos(`${gm.unit} ${gm.lesson || ''}`.trim(), prevG);
-      if (pos >= 0) hits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
-    });
-    if (hits.length < 2) return null;                 // 1件だけでは推定しない
-    // 同じ位置が2回以上あるものを優先（1回だけの読み間違いを避ける）
-    const cnt = new Map();
-    hits.forEach(h => cnt.set(h.pos, (cnt.get(h.pos) || 0) + 1));
-    const solid = hits.filter(h => cnt.get(h.pos) >= 2);
-    const use = solid.length ? solid : hits;
-    let lo = use[0], hi = use[0];
-    use.forEach(h => { if (h.pos < lo.pos) lo = h; if (h.pos > hi.pos) hi = h; });
-    const from = [lo.unit, lo.lesson].filter(Boolean).join(' ');
-    const to   = [hi.unit, hi.lesson].filter(Boolean).join(' ');
-    return { grade: normalizeGrade('中' + prevG), range: from === to ? from : `${from} 〜 ${to}`,
-             terms: [...new Set(use.map(h => h.term))] };
-  }
+  // 前学年ぶんの範囲は推定しない。
+  //
+  // 【なぜやめたか】
+  // 前学年の文法はすべて復習として出しうるため、出題された文法から範囲を絞れない。
+  // 実例（中2の5月・正解は中1 p.106〜121, 124〜126）：
+  //   推定は Unit 9 Part 1 〜 Unit 10 Part 2（p.90〜116）で、始まりも終わりも外れた。
+  // 実例（中2の5月・正解は中1 p.116〜126）：
+  //   現在進行形（中1 Unit 7）が復習で出ていたため Unit 7 から始まってしまった。
+  // 範囲表には前学年ぶんも書いてあるので、「範囲を直す」から手で入れてもらう。
+  // 当たらない推定を出すと、間違った情報がそのまま残るほうが害が大きい。
+  function estimatePrevGradeRange() { return null; }
 
   // 範囲を「単元表記 ／ ページ表記」の形にそろえる（範囲表と見比べやすくするため）。
   // 手入力されたページ番号があれば、それをそのまま使う（計算し直すと数字が変わってしまうため）。
@@ -4219,12 +4197,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             <td style="font-size:11px">${esc(g.unit)}${g.lesson?' '+esc(g.lesson):''}</td>
             <td style="font-size:11px;color:${g.usedForEnd === false ? '#DC2626' : 'var(--muted)'}">${
               g.usedForEnd === false
-                ? `使わない（この位置は${g.posCount||g.count}回だけ）`
+                ? `使わない（${g.posCount||g.count}回／最多は${g.maxCount||'-'}回）`
                 : `使う（この位置は計${g.posCount||g.count}回）`}</td>
           </tr>`).join('')}</tbody></table></div>
          <div style="font-size:11px;color:var(--muted);margin-top:4px">
            同じUnit・同じセクションを指す文法はまとめて数えます（書き方が違っても同じ場所なら同じ根拠のため）。
-           2回以上ないものは、読み間違いの可能性があるため終わりの根拠にしません。</div>`
+           2回未満のもの、いちばん多い位置の3分の1に満たないものは、読み間違いの可能性があるため終わりの根拠にしません。</div>`
       : '<div style="color:var(--muted)">なし（この学年の文法対応表に載っている文法が拾えていません）</div>';
 
     const sorted = (d.words||[]).slice().sort((a,b)=>a.pos-b.pos);
@@ -4761,29 +4739,42 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const posCount = new Map();
     gramHits.forEach(h => posCount.set(h.pos, (posCount.get(h.pos) || 0) + 1));
     const useCount     = gramHits.length >= DENSE_GRAM_MIN;
-    const repeatedGram = useCount ? gramHits.filter(h => posCount.get(h.pos) >= 2) : [];
-    const onceOnly     = useCount ? gramHits.filter(h => posCount.get(h.pos) === 1) : [];
+    // 【回数が突出して少ない文法は終わりの根拠にしない】
+    // いちばん多い位置に比べて極端に少ない文法は、読み間違いか、
+    // 範囲外の問題をAIが文法として書いたものである可能性が高い。
+    // 実例（中1・正解はUnit 2 Part 2まで）：can が計15回に対し「現在進行形」が2回。
+    //   その2回だけでUnit 7まで範囲が伸びた。
+    // 実例（中1・正解はStage Activity 1まで）：疑問詞・命令文が各9回に対し「代名詞」が6回。
+    //   6回でUnit 6まで伸びた。
+    // 一方、拮抗している場合（10回・8回・8回）は正しく判定できていた。
+    // そこで「いちばん多い位置の3分の1未満」を目安に外す。
+    const maxPosCount = Math.max(0, ...[...posCount.values()]);
+    const MIN_SHARE = 1 / 3;
+    const enough = h => posCount.get(h.pos) >= 2 &&
+                        posCount.get(h.pos) >= maxPosCount * MIN_SHARE;
+    const repeatedGram = useCount ? gramHits.filter(enough) : [];
+    const onceOnly     = useCount ? gramHits.filter(h => !enough(h)) : [];
     // 判定に使ったかどうかを1件ずつ記録する。
     // 表示は文法名ごとに数え、判定はUnitの位置ごとに数えていたため、
     // 「1回だけなので使わない」と表示されているものが実際は使われていた（表示が嘘だった）。
-    gramHits.forEach(h => { h.usedForEnd = useCount ? (posCount.get(h.pos) >= 2) : true;
-                            h.posCount   = posCount.get(h.pos); });
-    diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}）`))];
+    gramHits.forEach(h => { h.usedForEnd = useCount ? enough(h) : true;
+                            h.posCount   = posCount.get(h.pos);
+                            h.maxCount   = maxPosCount; });
+    diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}／${h.posCount}回）`))];
     diag.gramDense     = useCount;
     const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
 
-    // 文法の手がかりが少ないときは、回数で絞れないため誤りが1件混ざるだけで終わりが飛ぶ。
-    // そこで「その位置の近くに出題語があるか」で裏づけを取る。
-    // 実例：中1の5月のテスト（正解はUnit 2 Part 1まで）で、文法が2件しか拾えず、
-    //       そのうち1件の「want to 動詞の原形」（Unit 8）が終わりになった。
-    //       Unit 8の周りには出題語が1つもなく、単語はUnit 0〜2に集中していた。
-    if (!useCount && gramHits.length > 1) {
+    // 終わりの位置は、その近くに出題語があるかで裏づけを取る。
+    // 実例（中1・正解はUnit 4 Stage Activity 1まで）：疑問詞・命令文が各9回、代名詞が6回。
+    //   回数だけ見ると代名詞（Unit 6）も十分だが、Unit 6の出題語は1語しかなく、
+    //   Unit 4の出題語は7語あった。範囲はUnit 4までだった。
+    if (gramHits.length > 1) {
       const SUPPORT_RANGE = 1.0;   // この距離以内の出題語を裏づけとみなす
       const SUPPORT_MIN   = 2;     // 裏づけに必要な語数
       const supported = c => wordHits.filter(w => !w.weak && w.pos >= c.pos - SUPPORT_RANGE).length >= SUPPORT_MIN;
-      const cands = [...gramHits].sort((a, b) => b.pos - a.pos);
+      const cands = [...(repeatedGram.length ? repeatedGram : gramHits)].sort((a, b) => b.pos - a.pos);
       const ok = cands.find(supported);
       if (ok && ok.pos < endHit.pos) {
         diag.endDemoted = `${endHit.term}（${endHit.unit}）は近くに出題語がないため終わりにしませんでした`;
