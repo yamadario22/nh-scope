@@ -4436,23 +4436,36 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const gramEndPos = endHit.pos;
 
     // Let's Read / Real Life English / Stage Activity には新出文法がないため、
-    // 文法だけでは終わりが届かない。
-    // （Unit 0 に文法がなく始まりを単語で拾う必要があったのと同じ構造の問題）
-    // これらが範囲の終わりになることは実際にあるため、単語の手がかりで終わりを伸ばす。
-    // ただし無条件に許すと、長文に出た未習の語で範囲が飛ぶ（実例：6月のテストで
-    // energy が Let's Read 2 に一致し、終わりがUnit 6まで飛んだ）。
-    // 文法の終わりから1Unit以内に限定することで、直後のものだけを拾う。
+    // 文法だけでは終わりが届かない。これらが範囲の終わりになることは実際にあるので、
+    // 単語の手がかりで終わりを伸ばす。
+    //
+    // ただし単語1個では伸ばさない。長文にたまたま出た語が一致するだけで範囲が伸びてしまう
+    // （実例：6月のテスト・正解はUnit 3 Part 1までなのに、peace が Let's Read 1 の語に
+    //  一致しただけで Let's Read 1 まで伸びた）。
+    // そのセクションの語が2語以上出ているときだけ、本当に範囲に入っていたとみなす。
     const NO_GRAMMAR_SECTIONS = /Let'?s\s*Read|Real Life English|Stage Activity/i;
     if (gramHits.length) {
       const NO_GRAM_MAX_GAP = 1.0;
+      const MIN_WORDS_TO_EXTEND = 2;
+      const bySection = new Map();
       wordHits.forEach(h => {
         if (h.weak) return;
         if (!NO_GRAMMAR_SECTIONS.test(h.section || h.unit || '')) return;
-        if (h.pos <= endHit.pos) return;
+        if (h.pos <= gramEndPos) return;
         if (h.pos > gramEndPos + NO_GRAM_MAX_GAP) return;
-        endHit = h;
+        const key = h.section || h.unit;
+        if (!bySection.has(key)) bySection.set(key, { terms: new Set(), hit: h });
+        bySection.get(key).terms.add(h.term);
+        if (h.pos > bySection.get(key).hit.pos) bySection.get(key).hit = h;
       });
-      if (endHit.pos !== gramEndPos) diag.endExtendedByWord = `${endHit.term}（${endHit.section || endHit.unit}）`;
+      bySection.forEach((v) => {
+        if (v.terms.size < MIN_WORDS_TO_EXTEND) return;
+        if (v.hit.pos > endHit.pos) endHit = v.hit;
+      });
+      if (endHit.pos !== gramEndPos) {
+        const k = endHit.section || endHit.unit;
+        diag.endExtendedByWord = `${k}（${[...(bySection.get(k)?.terms || [])].join('・')}）`;
+      }
     }
     const endUnit = Math.floor(endHit.pos);
     diag.decidedBy = gramHits.length
@@ -4472,6 +4485,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 長文に前回までの範囲の単語が出てくると、それだけで始まりが前に引っぱられるため、
     // ここで下限を決めておく（実例：後期中間のテストで、前期期末までの範囲の
     // hear of / national / bring together が長文に出て、始まりがUnit 3になっていた）。
+    //
+    // ただし「前回の終わりと同じ位置」は残す。次のテストは前回が終わったところから
+    // 始まるので、境目のセクションは両方の範囲に入る（実例：5月の中間がUnit 1 Part 1までで、
+    // 6月の期末もUnit 1 Part 1から始まる）。ここを除外すると始まりが後ろにずれる。
     const prevEndPos = (opts && opts.prevEndPos != null) ? opts.prevEndPos : null;
     if (prevEndPos != null && prevEndPos >= 0) {
       diag.prevEndPos = prevEndPos;
@@ -4480,7 +4497,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const inWindow = allHits.filter(h => {
       if (h.weak) return false;                    // 誤ヒットは開始の根拠にしない
       if (h.usedForEnd === false) return false;     // 1回しか出ない文法は開始の根拠にもしない
-      if (prevEndPos != null && h.pos <= prevEndPos + 0.001) return false; // 前回までの範囲は除く
+      if (prevEndPos != null && h.pos < prevEndPos - 0.001) return false; // 前回より前は除く（同じ位置は残す）
       const u = Math.floor(h.pos);
       return u >= minUnit && u <= endUnit;
     });
