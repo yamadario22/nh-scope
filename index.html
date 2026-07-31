@@ -3692,8 +3692,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
                 <td style="font-size:12px">${esc(h.grade||'')}${gradeFlag}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
                 <td style="font-size:12px">${(()=>{
-                  const cur = rangeBothNotations(h.grade, h.range);
-                  const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange) : null;
+                  const cur = rangeBothNotations(h.grade, h.range, h.rangePages);
+                  const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange, h.prevGradePages) : null;
                   const line = (label, b, strong) =>
                     `<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
                        ${label?`<span style="color:var(--muted);font-size:10px;white-space:nowrap">${esc(label)}</span>`:''}
@@ -3821,9 +3821,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
              terms: [...new Set(use.map(h => h.term))] };
   }
 
-  // 範囲を「単元表記 ／ ページ表記」の形にそろえる（範囲表と見比べやすくするため）
-  function rangeBothNotations(grade, rangeText) {
-    const pg = rangeWithPages(grade, rangeText);
+  // 範囲を「単元表記 ／ ページ表記」の形にそろえる（範囲表と見比べやすくするため）。
+  // 手入力されたページ番号があれば、それをそのまま使う（計算し直すと数字が変わってしまうため）。
+  function rangeBothNotations(grade, rangeText, pages) {
+    const pg = pages && pages.from
+      ? `p.${pages.from}${pages.from === pages.to ? '' : '〜' + pages.to}`
+      : rangeWithPages(grade, rangeText);
     return { unit: rangeText || '範囲不明', page: pg || '' };
   }
 
@@ -3994,12 +3997,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     const gradeN = gradeNumOf(h.grade);
     const prevG  = gradeN > 1 ? normalizeGrade('中' + (gradeN - 1)) : '';
-    // いまの範囲からページを割り出して初期値にする
-    const cp = (() => { const p = parseRangeText(h.range);
+    // いまの範囲からページを割り出して初期値にする（手入力済みならその数字をそのまま使う）
+    const cp = h.rangePages && h.rangePages.from ? { from: h.rangePages.from, to: h.rangePages.to }
+      : (() => { const p = parseRangeText(h.range);
       const a = sectionPages(h.grade, p.from_unit, p.from_lesson);
       const b = sectionPages(h.grade, p.to_unit,   p.to_lesson);
       return { from: a ? a.from : '', to: b ? b.to : (a ? a.to : '') }; })();
-    const pp = (() => { if (!h.prevGradeRange) return { from:'', to:'' };
+    const pp = h.prevGradePages && h.prevGradePages.from ? { from: h.prevGradePages.from, to: h.prevGradePages.to }
+      : (() => { if (!h.prevGradeRange) return { from:'', to:'' };
       const p = parseRangeText(h.prevGradeRange);
       const a = sectionPages(h.prevGradeGrade, p.from_unit, p.from_lesson);
       const b = sectionPages(h.prevGradeGrade, p.to_unit,   p.to_lesson);
@@ -4063,29 +4068,37 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const build = (gradeLabel, idFrom, idTo) => {
       const f = parseInt((document.getElementById(idFrom)||{}).value);
       const t = parseInt((document.getElementById(idTo)||{}).value);
-      if (!f && !t) return '';
-      return pagesToRangeText(gradeLabel, `${f||t}〜${t||f}`) || '';
+      if (!f && !t) return { text:'', pages:null };
+      return { text: pagesToRangeText(gradeLabel, `${f||t}〜${t||f}`) || '',
+               pages: { from: f || t, to: t || f } };
     };
-    const curText  = build(mo.dataset.grade, 'reCurFrom', 'reCurTo');
-    const prevText = mo.dataset.prevGrade ? build(mo.dataset.prevGrade, 'rePrevFrom', 'rePrevTo') : '';
+    const cur  = build(mo.dataset.grade, 'reCurFrom', 'reCurTo');
+    const prev = mo.dataset.prevGrade ? build(mo.dataset.prevGrade, 'rePrevFrom', 'rePrevTo') : { text:'', pages:null };
+    const curText = cur.text, prevText = prev.text;
     if (!curText) { alert('この学年の範囲を入れてください（教科書のページ番号）。'); return; }
 
+    const pgText = p => p ? `p.${p.from}${p.from === p.to ? '' : '〜' + p.to}` : 'なし';
     const ok = await showConfirm(
-      `範囲を書き換えます。\n\n${mo.dataset.grade}：${h.range||'なし'} → ${curText}` +
-      (mo.dataset.prevGrade ? `\n${mo.dataset.prevGrade}：${h.prevGradeRange||'なし'} → ${prevText||'なし'}` : ''),
+      `範囲を書き換えます。\n\n${mo.dataset.grade}：${curText}（${pgText(cur.pages)}）` +
+      (mo.dataset.prevGrade ? `\n${mo.dataset.prevGrade}：${prevText || 'なし'}（${pgText(prev.pages)}）` : ''),
       '書き換える');
     if (!ok) return;
 
     h.rangePrev      = h.range || '';
     h.range          = curText;
     h.rangeEditedBy  = '手入力';
+    // 入力されたページ番号をそのまま保存する。
+    // 単元名からページを計算し直すと「その単元まるごと」に広がってしまい、
+    // 入力した数字と違う数字が表示される（実例：p.116〜126 と入れたのに p.91〜128 と出た）。
+    h.rangePages     = cur.pages;
     h.prevGradeRange = prevText;
     h.prevGradeGrade = prevText ? mo.dataset.prevGrade : '';
+    h.prevGradePages = prevText ? prev.pages : null;
     try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
-      range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力',
-      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade });
+      range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力', rangePages: h.rangePages,
+      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade, prevGradePages: h.prevGradePages });
     closeRangeEdit();
     renderTestHistory();
     alert('範囲を書き換えました。');
@@ -4235,8 +4248,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
          ${esc(h.school||'')} ${esc(h.teacher||'')} ／ ${esc(h.grade||'学年不明')}
          ${(()=>{
-           const cur = rangeBothNotations(h.grade, h.range);
-           const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange) : null;
+           const cur = rangeBothNotations(h.grade, h.range, h.rangePages);
+           const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange, h.prevGradePages) : null;
            const row = (label, b) => `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:2px">
                <span style="min-width:5em">${esc(label)}</span><b>${esc(b.unit)}</b>${b.page?`<span>／ ${esc(b.page)}</span>`:''}</div>`;
            return (prev ? row(prev.grade + '（推定）', prev) : '') + row(esc(h.grade||'範囲'), cur);
