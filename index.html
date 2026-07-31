@@ -3552,6 +3552,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
           testDate: extractTestDate(name),
+          // 学年を画面で指定して分析した場合の印。
+          // 指定された学年は正しいので、あとから「学年が怪しい」と警告しない。
+          gradeSpecified: gradeWasPicked,
           prevGradeRange: prevGrade ? prevGrade.range : '',
           prevGradeGrade: prevGrade ? prevGrade.grade : '',
           year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
@@ -3709,9 +3712,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               // 保存された学年より上の学年の文法が出ている場合だけ印を出す。
               // 習っていない文法は出せないので、それは学年の間違いを示す。
               // 下の学年の文法が出るのは復習なので正常（印を出さない）。
+              // 学年を画面で指定して分析したものは、学年が正しいので印を出さない
+              //（中1のテストでAIが「動名詞」と書いただけで警告が出ていた）。
               let gradeFlag = '';
               try {
-                if (h.grade && (h.question_types||[]).length) {
+                if (h.grade && !h.gradeSpecified && (h.question_types||[]).length) {
                   const gi = inferGradeFromGrammar(h);
                   if (gi && gi.strong && gradeNumOf(gi.grade) > gradeNumOf(h.grade)) {
                     gradeFlag = `<div style="font-size:10px;color:#DC2626;font-weight:600" title="${esc(gi.basis)}は${esc(gi.grade)}で習う文法です。この学年では出題できません">⚠️${esc(gi.grade)}かも</div>`;
@@ -3877,7 +3882,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         // 逆に「推測のほうが下」は正常。中3のテストに動名詞や不定詞（中2）が復習で出るのは
         // 当たり前で、学年の間違いを意味しない。ここを区別せずに印を出したら、
         // 31件中の大半が誤検出になった。
-        const gi = inferGradeFromGrammar(r);
+        // 学年を画面で指定して分析したものは、学年が正しいので警告しない
+        const gi = h.gradeSpecified ? null : inferGradeFromGrammar(r);
         if (gi && gi.strong && gradeNumOf(gi.grade) > gradeNumOf(r.grade)) {
           gradeSuspect.push({ name: h.name || '', saved: r.grade, guess: gi.grade, basis: gi.basis });
         }
@@ -4273,20 +4279,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   async function clearTestHistory() {
-    const ok = await showConfirm('テスト分析履歴を全て削除しますか？この操作は取り消せません。', '全て削除する');
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    if (!hist.length) { alert('テスト分析履歴はありません。'); return; }
+    const ok = await showConfirm(
+      `テスト分析履歴 ${hist.length}件をすべて削除します。\n\n` +
+      `元のPDFは消えないので、分析し直せば作り直せます。\n` +
+      `この操作は取り消せません。`, '全て削除する');
     if (!ok) return;
-    // localStorage削除
-    const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+
     localStorage.removeItem(TEST_HIST_KEY);
-    // Firestoreの個別文書を削除
+    const stEl = document.getElementById('testStatus');
+    // Firestoreの個別文書を削除（件数が多いので進捗を出す）
     if (FIREBASE_READY && db) {
+      let n = 0;
       for (const entry of hist) {
-        if (entry.firestoreId) {
-          try { await db.collection(FB_TESTS_COL).doc(entry.firestoreId).delete(); } catch {}
-        }
+        if (!entry.firestoreId) continue;
+        try { await db.collection(FB_TESTS_COL).doc(entry.firestoreId).delete(); } catch {}
+        n++;
+        if (n % 20 === 0 && stEl) setSt(stEl, 'load', `クラウドから削除中... ${n}件`);
       }
+      if (stEl) setSt(stEl, 'ok', `✅ ${hist.length}件の履歴を削除しました`);
     }
     renderTestHistory();
+    alert(`${hist.length}件の履歴を削除しました。`);
   }
 
   function deleteTestHistoryItem(index) {
