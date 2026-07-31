@@ -3105,6 +3105,12 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・小問を大問にまとめない。整序の小問が3問あれば sub_questions も3件になる
 ・大問番号（section）は、テストに印刷されている番号をそのまま書く（例：1、2、大問3）
 
+【書きすぎないこと】
+・type は20文字以内、grammar と phrases は各60文字以内、theme は15文字以内
+・summary は150文字以内
+・同じ説明を繰り返さない。1つの大問について説明は1回だけ書く
+・「小問1は〜、小問2は〜」という説明を繰り返し書かない。sub_questions に1件ずつ入れる
+
 【tested_vocab（出題語）は必ず埋めること】
 ・渡された画像に出てくる単語・熟語を、できるだけ多く配列で列挙する。空配列で返してはいけない
 ・入れるもの：長文や対話文の特徴的な単語（5文字以上）、問われた熟語、選択肢の語
@@ -3184,6 +3190,48 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 
   // ページを分けて分析した結果を1つにまとめる。
   // 大問がページの境目をまたぐと同じ大問が2回出てくるため、大問番号でまとめ直す。
+  // AIが同じ文を延々と繰り返す暴走がまれに起きる。
+  // 実例：大問の説明欄に同じ説明が数百回繰り返され、1件で数十KBになった。
+  // 保存データが肥大化してブラウザの上限を超えるため、保存前に切り詰める。
+  function collapseRunaway(s, maxLen) {
+    let t = String(s == null ? '' : s);
+    if (!t) return '';
+    const limit = maxLen || 120;
+    if (t.length <= limit) return t;
+    // 同じ文が繰り返されていたら最初の1回だけ残す
+    const m = t.match(/^(.{10,120}?)\1{2,}/);
+    if (m) t = m[1];
+    // 「。」で切って重複する文を除く
+    const seen = new Set();
+    const uniq = t.split(/(?<=。)/).filter(x => {
+      const k = x.trim(); if (!k) return false;
+      if (seen.has(k)) return false; seen.add(k); return true;
+    }).join('');
+    t = uniq || t;
+    return t.length > limit ? t.slice(0, limit) + '…' : t;
+  }
+
+  // AIの出力全体から、暴走した長文を取り除く
+  function sanitizeAiText(r) {
+    if (!r || typeof r !== 'object') return r;
+    r.summary = collapseRunaway(r.summary, 300);
+    (r.question_types || []).forEach(qt => {
+      qt.type    = collapseRunaway(qt.type, 40);
+      qt.grammar = collapseRunaway(qt.grammar, 120);
+      qt.phrases = collapseRunaway(qt.phrases, 120);
+      qt.theme   = collapseRunaway(qt.theme, 40);
+      (qt.sub_questions || []).forEach(sq => {
+        sq.type    = collapseRunaway(sq.type, 40);
+        sq.grammar = collapseRunaway(sq.grammar, 80);
+        sq.phrases = collapseRunaway(sq.phrases, 80);
+        sq.theme   = collapseRunaway(sq.theme, 40);
+      });
+    });
+    r.key_items    = (r.key_items    || []).map(x => collapseRunaway(x, 60)).filter(Boolean).slice(0, 60);
+    r.tested_vocab = (r.tested_vocab || []).map(x => collapseRunaway(x, 60)).filter(Boolean).slice(0, 120);
+    return r;
+  }
+
   function mergeTestResults(list) {
     const merged = { grade:'', from_unit:'', from_lesson:'', to_unit:'', to_lesson:'',
                      summary:'', question_types:[], tested_vocab:[], key_items:[], gradeVotes:{},
@@ -3194,7 +3242,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     const summaries = [];
     const gradeVotes = {};     // 学年ごとの票数
 
-    (list || []).forEach(r => {
+    (list || []).forEach(r0 => {
+      const r = sanitizeAiText(r0);
       if (!r) return;
       merged.totalPages++;
       // 「読み取れなかった」とAIが申告したページを数える。
@@ -3860,8 +3909,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const changes = [];   // {idx, before, after, name}
     const gradeSuspect = []; // 保存された学年と、文法から推測した学年が食い違うもの
     let skipped = 0;      // 判定材料がなく計算できなかった件数
+    let cleaned = 0;      // 暴走した長文を掃除した件数
 
     hist.forEach((h, idx) => {
+      // 保存済みの暴走した長文もここで掃除する（保存データの肥大化を解消）
+      const sizeBefore = JSON.stringify(h.question_types || []).length;
+      sanitizeAiText(h);
+      if (JSON.stringify(h.question_types || []).length < sizeBefore) cleaned++;
       // 2025年度より前のテストは今の教科書と別版のため範囲判定の対象外
       const y = parseInt(h.year || (h.date||'').split('/')[0] || '0');
       if (y && y < 2025) { skipped++; return; }
@@ -3915,7 +3969,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       : '';
 
     if (!changes.length) {
-      alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件）${suspectNote}`);
+      // 範囲が変わらなくても、掃除した結果は保存する
+      if (cleaned) {
+        try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); } catch {}
+        renderTestHistory();
+      }
+      alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件`
+        + (cleaned ? `／長すぎる説明文を掃除：${cleaned}件` : '') + `）${suspectNote}`);
       return;
     }
 
