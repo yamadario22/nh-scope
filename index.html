@@ -1052,24 +1052,32 @@
   // 学年別なので、同じ語でも学年が違えば衝突しない（中1のwhich＝疑問詞、中3＝関係代名詞）
   const GRAMMAR_UNIT_MAPS = {
     1: [ // 中1
+      // want to は Unit 8 にも出るが、Unit 1 Part 1 に熟語として先に出るので Unit 1 を優先する
+      [/want\s*to/i,                        'Unit 1','Part 1'],
       [/過去進行/,                          'Unit 10','Part 2'],
       [/be動詞の過去/,                      'Unit 10','Part 1'],
       [/there\s*(is|are)/i,                 'Unit 10','Part 3'],
       [/過去形|過去の文/,                   'Unit 9','Part 1'],
-      [/(want|try)\s*to/i,                  'Unit 8','Part 1'],
+      // Unit 8 の文法は need to / try to / look 形容詞
+      [/(need|try)\s*to/i,                  'Unit 8','Part 1'],
       [/look\s*[+＋]?\s*形容詞/i,           'Unit 8','Part 3'],
       [/感嘆文/,                            'Unit 7','Part 3'],
       [/現在進行/,                          'Unit 7','Part 1'],
-      [/whose/i,                            'Unit 6','Part 2'],
-      [/\bwhich\b/i,                        'Unit 6','Part 3'],
-      [/代名詞|所有格|目的格/,              'Unit 6','Part 1'],
+      // Unit 6：Part 1 は主格・所有格・目的格の代名詞、Part 2 は所有代名詞と whose、Part 3 は which
+      // 中1に関係代名詞はない（中3 Unit 5）。「関係代名詞」と書かれたものは拾わない。
+      // which / who という語に反応して中1に割り当ててしまう誤りを防ぐ。
+      [/^(?!.*(関係代名詞|接触節)).*\bwhich\b/i,          'Unit 6','Part 3'],
+      [/^(?!.*関係代名詞).*(所有代名詞|whose)/i,           'Unit 6','Part 2'],
+      [/^(?!.*関係代名詞).*(代名詞|主格|所有格|目的格)/,   'Unit 6','Part 1'],
       [/三単現|三人称単数/,                 'Unit 5','Part 1'],
       [/命令文/,                            'Unit 4','Part 3'],
+      // Unit 4：Part 1 は how many、Part 2 は what time と what + 名詞
       [/how\s*many/i,                       'Unit 4','Part 1'],
-      [/what\s*[+＋]\s*名詞/i,              'Unit 4','Part 2'],
+      [/what\s*time|what\s*[+＋]?\s*名詞/i, 'Unit 4','Part 2'],
+      // Unit 3 は単純な疑問詞疑問文。Part 1 は what 単体と who、Part 2 は how と when、Part 3 は where
       [/\bwhere\b/i,                        'Unit 3','Part 3'],
       [/\bhow\b|\bwhen\b/i,                 'Unit 3','Part 2'],
-      [/\bwhat\b|\bwho\b|疑問詞/i,          'Unit 3','Part 1'],
+      [/^(?!.*(関係代名詞|接触節|間接疑問)).*(\bwhat\b|\bwho\b|疑問詞)/i, 'Unit 3','Part 1'],
       [/this\s*is|that\s*is/i,              'Unit 2','Part 3'],
       [/\bcan\b/i,                          'Unit 2','Part 2'],
       [/he\s*is|she\s*is/i,                 'Unit 2','Part 1']
@@ -1079,9 +1087,12 @@
       [/be\s*going\s*to/i,                  'Unit 1','Part 1'],
       [/\bwill\b/i,                         'Unit 1','Part 2'],
       [/人物動詞.*(疑問詞|間接)|(疑問詞|間接).*人物動詞/, 'Unit 5','Part 2'],
-      [/疑問詞\s*[+＋]?\s*不定詞|(how|what|where|when)\s*to\b/i, 'Unit 5','Part 1'],
-      [/be\s*sure/i,                        'Unit 5','Read and Think 1'],
-      [/人物動詞|(show|give|tell|teach|buy|make)\s*(人|A)\s*(物|B)|svoo/i, 'Unit 1','Read and Think 1'],
+      // Unit 5 Part 1：疑問詞不定詞（how to / what to / where to / when to）
+      [/疑問詞\s*[+＋]?\s*不定詞|疑問詞不定詞|(how|what|where|when|which)\s*to\b/i, 'Unit 5','Part 1'],
+      // Unit 5 Read and Think 1：be sure that / be glad that（thatを伴う形）
+      [/be\s*(sure|glad)\s*that|be\s*sure/i, 'Unit 5','Read and Think 1'],
+      // Unit 1 Read and Think 1：show / give / tell / teach / buy / make ＋人＋物
+      [/人物動詞|(show|give|tell|teach|buy|make)\s*[+＋]?\s*(人|A|[a-z]+)\s*[+＋]?\s*(物|B|[a-z]+)|svoo/i, 'Unit 1','Read and Think 1'],
       [/call\s*A\s*B|call\s*[OＯ]\s*[CＣ]/i, 'Unit 1','Read and Think 2'],
       [/because/i,                          'Unit 2','Read and Think 1'],
       [/接続詞.*that|that節/i,              'Unit 2','Read and Think 2'],
@@ -1095,7 +1106,8 @@
       // 中2 Unit 3 で習うのは「感情を表す形容詞 ＋ to不定詞」（I'm glad to see you.）。
       // happy / sad のような感情の形容詞そのものは中1の語彙であって文法ではない。
       // 「感情」という語だけで反応させると、中1の復習問題で範囲がUnit 3まで伸びる。
-      [/感情.*(不定詞|\bto\b)|(不定詞|\bto\b).*感情|be\s*glad\s*to/i, 'Unit 3','Part 2'],
+      // Unit 3 Part 2：感情原因の不定詞（副詞的用法）
+      [/感情.*(不定詞|\bto\b)|(不定詞|\bto\b).*感情|感情原因|be\s*glad\s*to/i, 'Unit 3','Part 2'],
       // 中2の不定詞は3用法（名詞的・形容詞的・副詞的）。
       // 「want O to do」は中3 Unit 3 Part 2 なので、ここには含めない。
       // 除外しないと、AIが「want + O + to do (不定詞)」と書いたときだけ中2にも当たってしまい、
@@ -1108,11 +1120,14 @@
       // 中2 Unit 4 の動名詞として扱うと、中1の復習問題だけで範囲がUnit 4まで飛ぶ。
       [/^(?!.*(enjoy|like|good\s*at|look\s*forward))(?:.*動名詞.*主語|.*主語.*動名詞)/i, 'Unit 4','Read and Think 2'],
       [/^(?!.*(enjoy|like|good\s*at|look\s*forward))(?:.*動名詞|.*～?ing形?\s*[（(]?名詞)/i, 'Unit 4','Read and Think 1'],
-      [/\bas\b.*\bas\b|原級/i,              'Unit 6','Read and Think 2'],
+      // Unit 6 の比較：Part 1 ～er / the ～est、Part 2 more ～ than / the most ～、
+      //                Read and Think 1 better / the best、Read and Think 2 as ～ as / not as ～ as
+      [/as\s*[～~]?\s*as|原級|not\s*as/i,   'Unit 6','Read and Think 2'],
       [/\b(better|best)\b/i,                'Unit 6','Read and Think 1'],
       [/\b(more|most)\b/i,                  'Unit 6','Part 2'],
-      [/比較|最上級|er\s*than/i,            'Unit 6','Part 1'],
-      [/助動詞.*受け?身|(can|will|must)\s*be\s*(過去分詞|[a-z]+ed)/i, 'Unit 7','Read and Think 2'],
+      [/比較級|最上級|比較表現|比較|er\s*than|est\b/i, 'Unit 6','Part 1'],
+      // Unit 7：Part 1 受け身、Read and Think 1 by 〜、Read and Think 2 助動詞＋受動態
+      [/助動詞.*(受け?身|受動)|(受け?身|受動).*助動詞|(can|will|must)\s*be\s*(過去分詞|[a-z]+ed)/i, 'Unit 7','Read and Think 2'],
       [/\bby\b.*(受け?身|受動)|(受け?身|受動).*\bby\b/i, 'Unit 7','Read and Think 1'],
       [/受け?身|受動態/,                    'Unit 7','Part 1']
     ],
@@ -1125,7 +1140,8 @@
       [/make\s*(人|[OＯA])\s*(形容詞|[CＣB])|svoc/i, 'Unit 1','Read and Think 1'],
       // 「The story shows me that ...」＝Unit 1。SVOO・人物動詞という書き方でも拾えるようにする。
       // 目的語が「A」「O」と書かれることもあるため、そこも許す
-      [/(show|tell|teach)\s*[+＋]?\s*(人|me|us|[AO])\b.*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
+      // Unit 1 Read and Think 2：show / tell / teach ＋人＋ that
+      [/(show|tell|teach)[^。]*that|svoo|sv\s*o\s*o|svo\s*that|人物動詞.*that/i, 'Unit 1','Read and Think 2'],
       // 「It is important for us to understand ....」＝Unit 3 Part 1。
       // 中3で習うのは「It is 形容詞 for O to ～」で、for が入るのが中2との違い。
       // AIは「It is + (for + (人など)) + to + 動詞の原形」のように記号を挟んで書くため、
@@ -1137,13 +1153,15 @@
       // AIが「I know how to make a cake.」を間接疑問文と誤ラベルした実例があるため、
       // 疑問詞のあとに to が続く形が書かれていたら、ここでは判定しない。
       [/^(?!.*(how|what|where|when|who)\s*to\b)(?!.*疑問詞\s*[+＋]\s*(to|不定詞)).*(間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節)/i, 'Unit 4','Part 1'],
-      [/let\s*(人|[a-z]+)?\s*(原形)?/i,     'Unit 3','Read and Think 1'],
-      [/help\s*(人|[a-z]+)?\s*(原形)?/i,    'Unit 3','Read and Think 2'],
+      // Unit 3 Read and Think 1・2：原形不定詞（let 人 原形不定詞 / help 人 原形不定詞）
+      [/let\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i,  'Unit 3','Read and Think 1'],
+      [/help\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i, 'Unit 3','Read and Think 2'],
       // 「I want everyone to know ....」＝Unit 3 Part 2。
       // AIは「want + O + to do」「want 人 to do」のように記号を挟んで書くため、
       // 目的語の位置に記号や英字が入っても拾えるようにする
       [/(want|tell|ask)\s*[+＋]?\s*(人|目的語|[AO]|[A-Za-z]+)?\s*[+＋]?\s*(to\b|to不定詞|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
-      [/後置修飾|分詞.*修飾|現在分詞|過去分詞.*(修飾|名詞)/, 'Unit 4','Read and Think 2'],
+      // Unit 4 Read and Think 1・2：後置修飾（現在分詞・過去分詞）
+      [/後置修飾|分詞.*修飾|現在分詞|過去分詞/, 'Unit 4','Read and Think 2'],
       [/接触節/,                            'Unit 5','Part 1'],
       [/関係代名詞.*who|who.*関係代名詞/i,  'Unit 5','Part 2'],
       // 目的格の関係代名詞は Unit 5 Read and Think 2
@@ -1153,6 +1171,8 @@
       [/関係代名詞|主格.*(which|that)/i,    'Unit 5','Read and Think 2'],
       [/仮定法.*wish|i\s*wish/i,            'Unit 6','Part 1'],
       [/仮定法.*were|if.*were/i,            'Unit 6','Part 2'],
+      // Unit 6 Read and Think 1・2：If 主語 動詞の過去形 〜, 主語 助動詞の過去形 〜.
+      [/if.*(動詞の過去形|過去形).*(助動詞の過去形|would|could|might)|仮定法.*(would|could|might)/i, 'Unit 6','Read and Think 2'],
       [/仮定法/,                            'Unit 6','Read and Think 2']
     ]
   };
@@ -3120,7 +3140,15 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 　　名詞 ＋ ～ing（後ろから名詞を説明）→「後置修飾」
 ・ただし enjoy ...ing / like ...ing / be good at ...ing / look forward to ...ing は
 　中1で熟語として習うものなので「動名詞」と書かず、phrases に熟語として書く
-・分詞の後置修飾は「後置修飾」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
+・分詞の後置修飾は「後置修飾（現在分詞）」「後置修飾（過去分詞）」と表記
+・仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」「仮定法（If 主語 動詞の過去形, 主語 助動詞の過去形）」
+・中2の不定詞は用法で書き分ける
+　　感情の原因（I'm glad to see you.）→「感情原因の不定詞（副詞的用法）」
+　　It is ... to ...（forなし）→「It to (名詞的用法)」
+・疑問詞のあとに to が続く形（how to / what to / where to / when to）は「疑問詞不定詞」と表記
+・let / help のあとの動詞の原形は「原形不定詞」と表記（「原形」だけにしない）
+・SVOO は動詞を明記：「show/give/tell/teach/buy/make 人 物」
+・「show/tell/teach 人 that」は that を明記して書く
 ・間接疑問文と「疑問詞＋不定詞」は別の文法。学年が変わるので必ず区別する
   「I know how to make a cake.」＝疑問詞のあとが〈to＋動詞の原形〉→「疑問詞+不定詞」と表記
   「I know where he is.」＝疑問詞のあとが〈主語＋動詞〉→「間接疑問文」と表記
