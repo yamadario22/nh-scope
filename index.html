@@ -773,6 +773,21 @@
   </div>
 </div>
 
+<!-- 範囲を手で直す -->
+<div class="modal-ov" id="rangeEditModal" style="display:none" onclick="if(event.target===this)closeRangeEdit()">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <div class="modal-title">✏️ 範囲を直す</div>
+      <button class="modal-close" onclick="closeRangeEdit()">✕</button>
+    </div>
+    <div class="modal-body" id="rangeEditBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeRangeEdit()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveRangeEdit()">書き換える</button>
+    </div>
+  </div>
+</div>
+
 <!-- 教科書データの異物チェック -->
 <div class="modal-ov" id="anomalyModal" style="display:none" onclick="if(event.target===this)closeAnomalyModal()">
   <div class="modal" style="max-width:760px">
@@ -3920,50 +3935,158 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 実物と見比べて、判定のどこが間違っているかを特定するための画面。Geminiは使わない。
   // 保存済みテストの学年を直す。学年を間違えると範囲がまるごと外れるが、
   // 分析し直すとAPI料金がかかるため、学年だけ直して範囲を計算し直せるようにする。
-  // 範囲を手で直す。
-  // 前学年ぶんの範囲は、前学年の文法がすべて復習として出しうるため推定では当たらない
+  // ページ番号から、その位置の単元名・セクション名を求める。
+  // 範囲表はページで書かれているため、ページで入力できるようにするために使う。
+  function pageToSectionName(grade, page) {
+    const gradeN = gradeNumOf(grade);
+    if (!gradeN || !(page > 0)) return '';
+    const bookId = `default_c${gradeN}`;
+    const unit = unitFromPage(bookId, page);
+    if (!unit) return '';
+    // セクション名（Part 1 など）は教科書データの同じページの項目から拾う
+    const book = bookById(bookId);
+    const items = (book?.items || []).filter(it => it.page === page && it.lesson);
+    if (items.length) {
+      const cnt = new Map();
+      items.forEach(it => cnt.set(it.lesson, (cnt.get(it.lesson) || 0) + 1));
+      let best = '', n = 0;
+      cnt.forEach((v, k) => { if (v > n) { n = v; best = k; } });
+      // 単元名と重複する場合はセクション名を付けない
+      if (best && !unit.includes(best)) return `${unit} ${best}`;
+    }
+    return unit;
+  }
+
+  // 「p.116〜126」「116-126」のような入力を単元表記に変換する。
+  // 変換できない場合は null を返す（入力をそのまま使う）
+  function pagesToRangeText(grade, input) {
+    const s = String(input || '').replace(/\s/g, '');
+    const m = s.match(/^p?\.?(\d{1,3})(?:[〜~\-–ー](?:p\.?)?(\d{1,3}))?(?:まで)?$/i);
+    if (!m) return null;
+    const from = parseInt(m[1]);
+    const to   = m[2] ? parseInt(m[2]) : from;
+    const a = pageToSectionName(grade, from);
+    const b = pageToSectionName(grade, to);
+    if (!a && !b) return null;
+    if (!a || !b || a === b) return a || b;
+    return `${a} 〜 ${b}`;
+  }
+
+  // 範囲を手で直す（教科書のページ番号を数字で入れるだけ）。
+  // 範囲表は「中1教科書 p.116〜126、中2教科書 p.15まで」と書かれているので、
+  // その数字をそのまま打てるようにする。「p.」や「〜」は入力させない。
+  // 前学年ぶんの範囲は、前学年の文法がすべて復習として出しうるため機械では推定できない
   //（実例：正解が中1 p.116〜126のところ、推定はUnit 7から始まってしまった）。
-  // 範囲表には書いてあるので、手で入れられるようにする。
-  async function fixTestRange(idx) {
+  let rangeEditIdx = -1;
+
+  function closeRangeEdit() {
+    const m = document.getElementById('rangeEditModal');
+    if (m) m.style.display = 'none';
+    rangeEditIdx = -1;
+  }
+
+  function fixTestRange(idx) {
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
     const h = hist[idx];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
+    rangeEditIdx = idx;
 
-    const cur = prompt(
-      `${h.name||''}\n\n【${h.grade||'この学年'}の範囲】を入力してください。\n` +
-      `単元名でもページでも入れられます。\n` +
-      `例：Unit 1 Part 1 〜 Unit 1 Read and Think 2\n例：p.9〜15`,
-      h.range || '');
-    if (cur === null) return;
+    const gradeN = gradeNumOf(h.grade);
+    const prevG  = gradeN > 1 ? normalizeGrade('中' + (gradeN - 1)) : '';
+    // いまの範囲からページを割り出して初期値にする
+    const cp = (() => { const p = parseRangeText(h.range);
+      const a = sectionPages(h.grade, p.from_unit, p.from_lesson);
+      const b = sectionPages(h.grade, p.to_unit,   p.to_lesson);
+      return { from: a ? a.from : '', to: b ? b.to : (a ? a.to : '') }; })();
+    const pp = (() => { if (!h.prevGradeRange) return { from:'', to:'' };
+      const p = parseRangeText(h.prevGradeRange);
+      const a = sectionPages(h.prevGradeGrade, p.from_unit, p.from_lesson);
+      const b = sectionPages(h.prevGradeGrade, p.to_unit,   p.to_lesson);
+      return { from: a ? a.from : '', to: b ? b.to : (a ? a.to : '') }; })();
 
-    const prevG = gradeNumOf(h.grade) > 1 ? normalizeGrade('中' + (gradeNumOf(h.grade) - 1)) : '';
-    let prev = h.prevGradeRange || '';
-    if (prevG) {
-      const p = prompt(
-        `【${prevG}の範囲】があれば入力してください。\n` +
-        `前学年の内容が範囲に入らない場合は空欄のままにしてください。\n例：Unit 10 Part 1 〜 Let's Read\n例：p.116〜126`,
-        prev);
-      if (p === null) return;
-      prev = p.trim();
-    }
+    const numInput = (id, val) =>
+      `<input type="number" id="${id}" value="${val}" min="1" max="200" inputmode="numeric"
+              oninput="updateRangeEditPreview()"
+              style="width:72px;padding:6px 8px;font-size:14px;text-align:center;
+                     border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">`;
+
+    const row = (label, idFrom, idTo, v, previewId) =>
+      `<div style="margin-bottom:14px">
+         <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px">${esc(label)}の教科書</div>
+         <div style="display:flex;gap:6px;align-items:center;font-size:14px">
+           <span>p.</span>${numInput(idFrom, v.from)}<span>〜</span><span>p.</span>${numInput(idTo, v.to)}
+         </div>
+         <div id="${previewId}" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:1.4em"></div>
+       </div>`;
+
+    document.getElementById('rangeEditBody').innerHTML =
+      `<div style="font-size:12px;color:var(--muted);margin-bottom:10px">${esc(h.name||'')}</div>
+       ${row(h.grade || 'この学年', 'reCurFrom', 'reCurTo', cp, 'reCurPrev')}
+       ${prevG ? row(prevG + '（前学年）', 'rePrevFrom', 'rePrevTo', pp, 'rePrevPrev')
+               + `<div style="font-size:11px;color:var(--muted)">前学年の内容が範囲に入らない場合は、空欄にしてください。</div>`
+               : ''}
+       <div style="background:var(--background-secondary,#f8fafc);padding:8px;border-radius:6px;font-size:11px;color:var(--muted);margin-top:8px">
+         範囲表の数字をそのまま入れてください。単元名は自動で決まります。</div>`;
+    document.getElementById('rangeEditModal').dataset.grade = h.grade || '';
+    document.getElementById('rangeEditModal').dataset.prevGrade = prevG;
+    document.getElementById('rangeEditModal').style.display = 'flex';
+    updateRangeEditPreview();
+  }
+
+  // 入力されたページ番号から単元名を出して、その場で見せる
+  function updateRangeEditPreview() {
+    const mo = document.getElementById('rangeEditModal');
+    if (!mo) return;
+    const conv = (gradeLabel, idFrom, idTo, previewId) => {
+      const el = document.getElementById(previewId);
+      if (!el) return;
+      const f = parseInt((document.getElementById(idFrom)||{}).value);
+      const t = parseInt((document.getElementById(idTo)||{}).value);
+      if (!f && !t) { el.textContent = '（範囲に入れない）'; return; }
+      const txt = pagesToRangeText(gradeLabel, `${f||t}〜${t||f}`);
+      el.innerHTML = txt ? `→ <b>${esc(txt)}</b>`
+                         : '<span style="color:#DC2626">このページは教科書の範囲外です</span>';
+    };
+    conv(mo.dataset.grade, 'reCurFrom', 'reCurTo', 'reCurPrev');
+    if (mo.dataset.prevGrade) conv(mo.dataset.prevGrade, 'rePrevFrom', 'rePrevTo', 'rePrevPrev');
+  }
+
+  async function saveRangeEdit() {
+    if (rangeEditIdx < 0) return;
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const h = hist[rangeEditIdx];
+    if (!h) { closeRangeEdit(); return; }
+    const mo = document.getElementById('rangeEditModal');
+
+    const build = (gradeLabel, idFrom, idTo) => {
+      const f = parseInt((document.getElementById(idFrom)||{}).value);
+      const t = parseInt((document.getElementById(idTo)||{}).value);
+      if (!f && !t) return '';
+      return pagesToRangeText(gradeLabel, `${f||t}〜${t||f}`) || '';
+    };
+    const curText  = build(mo.dataset.grade, 'reCurFrom', 'reCurTo');
+    const prevText = mo.dataset.prevGrade ? build(mo.dataset.prevGrade, 'rePrevFrom', 'rePrevTo') : '';
+    if (!curText) { alert('この学年の範囲を入れてください（教科書のページ番号）。'); return; }
 
     const ok = await showConfirm(
-      `範囲を書き換えます。\n\n${h.grade||''}：${h.range||'なし'} → ${cur.trim() || 'なし'}` +
-      (prevG ? `\n${prevG}：${h.prevGradeRange||'なし'} → ${prev || 'なし'}` : ''),
+      `範囲を書き換えます。\n\n${mo.dataset.grade}：${h.range||'なし'} → ${curText}` +
+      (mo.dataset.prevGrade ? `\n${mo.dataset.prevGrade}：${h.prevGradeRange||'なし'} → ${prevText||'なし'}` : ''),
       '書き換える');
     if (!ok) return;
 
     h.rangePrev      = h.range || '';
-    h.range          = cur.trim() || '範囲不明';
+    h.range          = curText;
     h.rangeEditedBy  = '手入力';
-    h.prevGradeRange = prev;
-    h.prevGradeGrade = prev ? prevG : '';
+    h.prevGradeRange = prevText;
+    h.prevGradeGrade = prevText ? mo.dataset.prevGrade : '';
     try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力',
       prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade });
+    closeRangeEdit();
     renderTestHistory();
     alert('範囲を書き換えました。');
   }
