@@ -1125,7 +1125,10 @@
       [/後置修飾|分詞.*修飾|現在分詞|過去分詞.*(修飾|名詞)/, 'Unit 4','Read and Think 2'],
       [/接触節/,                            'Unit 5','Part 1'],
       [/関係代名詞.*who|who.*関係代名詞/i,  'Unit 5','Part 2'],
-      [/目的格.*関係代名詞|関係代名詞.*目的格/, 'Unit 6','Read and Think 2'],
+      // 目的格の関係代名詞は Unit 5 Read and Think 2
+      //（This is a picture that (which) I found on the internet.）
+      // 中3の Unit 6 は仮定法なので関係代名詞は入らない。
+      [/目的格.*関係代名詞|関係代名詞.*目的格/, 'Unit 5','Read and Think 2'],
       [/関係代名詞|主格.*(which|that)/i,    'Unit 5','Read and Think 2'],
       [/仮定法.*wish|i\s*wish/i,            'Unit 6','Part 1'],
       [/仮定法.*were|if.*were/i,            'Unit 6','Part 2'],
@@ -3386,7 +3389,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
       const droppedFields = sanitizeRangeFields(r);
       // ライブラリデータがある場合、tested_vocabとのページ照合で範囲終端を補正
-      if (!tooBlurry) refineRangeFromLibrary(r);
+      // 同じ学校・同じ学年の「前回のテスト」の終わりを、範囲の始まりの下限として使う
+      const testDate = extractTestDate(name);
+      const prev = findPrevTestEnd({ school: extractSchoolName(name), grade: r.grade, testDate });
+      const prevEndPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
+      if (!tooBlurry) refineRangeFromLibrary(r, { prevEndPos: (prevEndPos != null && prevEndPos >= 0) ? prevEndPos : null });
 
 
       // 範囲テキストを組み立て
@@ -3485,7 +3492,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           key_items:    (r.key_items||[]).slice(0,60),
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
-          year: new Date().getFullYear().toString()
+          testDate: extractTestDate(name),
+          year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
         };
         const firestoreId = await saveTestEntryToFirestore(entry);
         if (firestoreId) entry.firestoreId = firestoreId;
@@ -3730,7 +3738,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           gradeSuspect.push({ name: h.name || '', saved: r.grade, guess: gi.grade, basis: gi.basis });
         }
       }
-      refineRangeFromLibrary(r);
+      // 同じ学校・同じ学年の「前回のテスト」の終わりを、範囲の始まりの下限として使う
+      const tDate = h.testDate || extractTestDate(h.name || '');
+      const prev = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''), grade: r.grade, testDate: tDate });
+      const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
+      refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null });
       const after = buildRangeText(r);
       const before = h.range || '範囲不明';
       if ((after && after !== before) || inferredGrade) {
@@ -3868,14 +3880,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const gramSorted = [...gramGroups.values()].sort((a,b) => b.count - a.count || a.pos - b.pos);
     const gramRows = gramSorted.length
       ? `<div class="tbl-wrap"><table>
-          <thead><tr><th>文法</th><th style="width:50px;text-align:right">回数</th><th>Unit</th><th>終わりの根拠</th></tr></thead>
-          <tbody>${gramSorted.map(g => `<tr${g.count === 1 ? ' style="background:#FEF2F2"' : ''}>
+          <thead><tr><th>文法</th><th style="width:50px;text-align:right">回数</th><th>Unit</th><th style="width:130px">終わりの根拠</th></tr></thead>
+          <tbody>${gramSorted.map(g => `<tr${g.usedForEnd === false ? ' style="background:#FEF2F2"' : ''}>
             <td style="font-size:11px">${esc(g.term)}</td>
             <td style="font-size:11px;text-align:right;font-weight:600">${g.count}</td>
             <td style="font-size:11px">${esc(g.unit)}${g.lesson?' '+esc(g.lesson):''}</td>
-            <td style="font-size:11px;color:${g.count===1?'#DC2626':'var(--muted)'}">${g.count===1?'使わない（1回だけ）':'使う'}</td>
+            <td style="font-size:11px;color:${g.usedForEnd === false ? '#DC2626' : 'var(--muted)'}">${
+              g.usedForEnd === false
+                ? `使わない（この位置は${g.posCount||g.count}回だけ）`
+                : `使う（この位置は計${g.posCount||g.count}回）`}</td>
           </tr>`).join('')}</tbody></table></div>
-         <div style="font-size:11px;color:var(--muted);margin-top:4px">1回しか出ていない文法は、読み間違いの可能性があるため終わりの根拠にしません。</div>`
+         <div style="font-size:11px;color:var(--muted);margin-top:4px">
+           同じUnit・同じセクションを指す文法はまとめて数えます（書き方が違っても同じ場所なら同じ根拠のため）。
+           2回以上ないものは、読み間違いの可能性があるため終わりの根拠にしません。</div>`
       : '<div style="color:var(--muted)">なし（この学年の文法対応表に載っている文法が拾えていません）</div>';
 
     const sorted = (d.words||[]).slice().sort((a,b)=>a.pos-b.pos);
@@ -3899,6 +3916,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
     if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
+    if (d.prevEndPos != null) decision.push(`前回のテストの終わりより前は範囲に入れていません（下限：${d.prevEndPos}）`);
     if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
     if ((d.onceOnlyTerms||[]).length) decision.push(`1回しか出ていないため終わりの根拠にしなかった文法：${esc((d.onceOnlyTerms||[]).slice(0,8).join('・'))}`);
     if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
@@ -4177,7 +4195,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return dropped;
   }
 
-  function refineRangeFromLibrary(r) {
+  function refineRangeFromLibrary(r, opts) {
     // diag：判定の途中経過。範囲がどう決まったかを画面で見るための記録。
     // 判定そのものには一切影響しない（記録するだけ）。
     const diag = { grade:'', gram:[], words:[], otherGrade:[], endUnit:null, minUnit:null,
@@ -4397,6 +4415,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const useCount     = gramHits.length >= DENSE_GRAM_MIN;
     const repeatedGram = useCount ? gramHits.filter(h => posCount.get(h.pos) >= 2) : [];
     const onceOnly     = useCount ? gramHits.filter(h => posCount.get(h.pos) === 1) : [];
+    // 判定に使ったかどうかを1件ずつ記録する。
+    // 表示は文法名ごとに数え、判定はUnitの位置ごとに数えていたため、
+    // 「1回だけなので使わない」と表示されているものが実際は使われていた（表示が嘘だった）。
+    gramHits.forEach(h => { h.usedForEnd = useCount ? (posCount.get(h.pos) >= 2) : true;
+                            h.posCount   = posCount.get(h.pos); });
     diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}）`))];
     diag.gramDense     = useCount;
     const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
@@ -4414,9 +4437,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // ── ステップ2：開始を「終わりから最大3Unit分」の窓の中で決める ──
     // 終端を含めて3つ前まで（例：終端Unit6ならUnit4まで）。それより前は復習として無視。
     const MAX_SPAN = 3; // 範囲の最大の幅（Unit数）。2でも3でもよいが、それ以上は広げない。
-    const minUnit  = Math.max(0, endUnit - (MAX_SPAN - 1)); // 0未満にならないようにする
+    let minUnit  = Math.max(0, endUnit - (MAX_SPAN - 1)); // 0未満にならないようにする
+    // 前回のテストの終わりが分かっていれば、それより前は範囲に入らない。
+    // 次のテストは前回の続きから始まるのが基本。
+    // 長文に前回までの範囲の単語が出てくると、それだけで始まりが前に引っぱられるため、
+    // ここで下限を決めておく（実例：後期中間のテストで、前期期末までの範囲の
+    // hear of / national / bring together が長文に出て、始まりがUnit 3になっていた）。
+    const prevEndPos = (opts && opts.prevEndPos != null) ? opts.prevEndPos : null;
+    if (prevEndPos != null && prevEndPos >= 0) {
+      diag.prevEndPos = prevEndPos;
+      minUnit = Math.max(minUnit, Math.floor(prevEndPos));
+    }
     const inWindow = allHits.filter(h => {
-      if (h.weak) return false;               // 誤ヒットは開始の根拠にしない
+      if (h.weak) return false;                    // 誤ヒットは開始の根拠にしない
+      if (h.usedForEnd === false) return false;     // 1回しか出ない文法は開始の根拠にもしない
+      if (prevEndPos != null && h.pos <= prevEndPos + 0.001) return false; // 前回までの範囲は除く
       const u = Math.floor(h.pos);
       return u >= minUnit && u <= endUnit;
     });
@@ -4889,7 +4924,8 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
         key_items:    (r.key_items||[]).slice(0,60),
           notes: r.cross_grade_notes||'',
         date: new Date().toLocaleDateString('ja-JP'),
-        year: new Date().getFullYear().toString(),
+        testDate: extractTestDate(name),
+        year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString(),
         schoolCount
       };
       const firestoreId = await saveTestEntryToFirestore(entry);
@@ -4922,6 +4958,45 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
   }
 
   // ── ファイル名から学校名・教師名を抽出 ───────────────────────────────
+  // ファイル名からテストの実施日を取り出す（例：常磐中ﾌﾒｲ2025年05月20日問題1.pdf → 2025-05-20）
+  // これまで保存していた year は「分析した年」だったため、2025年のテストを2026年に分析すると
+  // 2026年として記録されていた。実施日が分かると、前回のテストとの前後関係も判定できる。
+  function extractTestDate(filename) {
+    const m = String(filename||'').match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if (!m) return '';
+    const pad = n => String(n).padStart(2,'0');
+    return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  }
+
+  // その日付が属する年度を返す（4月〜翌3月が1年度。3月以前は前年の年度）
+  function schoolYearOf(dateStr) {
+    const m = String(dateStr||'').match(/^(\d{4})-(\d{2})/);
+    if (!m) return 0;
+    const y = parseInt(m[1]), mo = parseInt(m[2]);
+    return mo >= 4 ? y : y - 1;
+  }
+
+  // 同じ学校・同じ学年で、同じ年度内の「前回のテスト」の終わりを返す。
+  // 2学期制：前期中間（5〜6月）→ 前期期末（9月）→ 後期中間（11月）→ 学年末（1〜2月）
+  // 次のテストは前回の続きから始まるのが基本なので、範囲の始まりを絞る手がかりになる。
+  function findPrevTestEnd({ school, grade, testDate }) {
+    if (!school || !grade || !testDate) return null;
+    const sy = schoolYearOf(testDate);
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    let best = null;
+    hist.forEach(h => {
+      const d = h.testDate || extractTestDate(h.name || '');
+      if (!d || d >= testDate) return;                       // 未来・同日は対象外
+      if (schoolYearOf(d) !== sy) return;                     // 別の年度は対象外
+      if ((h.school||'') !== school) return;
+      if (normalizeGrade(h.grade||'') !== normalizeGrade(grade)) return;
+      if (!h.range || h.range === '範囲不明') return;
+      if (!best || d > best.date) best = { date: d, range: h.range, name: h.name || '' };
+    });
+    return best;
+  }
+
   function extractSchoolName(filename) {
     const m = (filename||'').match(/^(.+?(?:中学校?|中))/);
     return m ? m[1] : filename.split(/\d{4}/)[0].trim();
