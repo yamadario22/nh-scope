@@ -1062,6 +1062,8 @@
       [/(need|try)\s*to/i,                  'Unit 8','Part 1'],
       [/look\s*[+＋]?\s*形容詞/i,           'Unit 8','Part 3'],
       [/感嘆文/,                            'Unit 7','Part 3'],
+      // Unit 7：Part 1 は現在進行形、Part 2 は現在進行形の疑問文、Part 3 は感嘆文
+      [/現在進行.*(疑問|否定)|(疑問|否定).*現在進行/, 'Unit 7','Part 2'],
       [/現在進行/,                          'Unit 7','Part 1'],
       // Unit 6：Part 1 は主格・所有格・目的格の代名詞、Part 2 は所有代名詞と whose、Part 3 は which
       // 中1に関係代名詞はない（中3 Unit 5）。「関係代名詞」と書かれたものは拾わない。
@@ -1161,7 +1163,9 @@
       // 目的語の位置に記号や英字が入っても拾えるようにする
       [/(want|tell|ask)\s*[+＋]?\s*(人|目的語|[AO]|[A-Za-z]+)?\s*[+＋]?\s*(to\b|to不定詞|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
       // Unit 4 Read and Think 1・2：後置修飾（現在分詞・過去分詞）
-      [/後置修飾|分詞.*修飾|現在分詞|過去分詞/, 'Unit 4','Read and Think 2'],
+      // 「不規則動詞の過去分詞」は現在完了で使う活用形のことであって、後置修飾ではない。
+      // 修飾・名詞と一緒に書かれているときだけ後置修飾とみなす。
+      [/後置修飾|分詞.*修飾|修飾.*分詞|現在分詞|(過去分詞|分詞).*(修飾|名詞)/, 'Unit 4','Read and Think 2'],
       [/接触節/,                            'Unit 5','Part 1'],
       [/関係代名詞.*who|who.*関係代名詞/i,  'Unit 5','Part 2'],
       // 目的格の関係代名詞は Unit 5 Read and Think 2
@@ -3135,12 +3139,15 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 ・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
 ・「～ing」は形で見分けて書き分ける（学年が変わるため、ここを間違えると出題範囲がずれる）
 　　am / is / are ＋ ～ing　→「現在進行形」
+　　　（疑問文なら「現在進行形の疑問文」、否定文なら「現在進行形の否定文」と書き分ける）
 　　was / were ＋ ～ing　　→「過去進行形」
 　　一般動詞 ＋ ～ing、前置詞 ＋ ～ing　→「動名詞」
 　　名詞 ＋ ～ing（後ろから名詞を説明）→「後置修飾」
 ・ただし enjoy ...ing / like ...ing / be good at ...ing / look forward to ...ing は
 　中1で熟語として習うものなので「動名詞」と書かず、phrases に熟語として書く
 ・分詞の後置修飾は「後置修飾（現在分詞）」「後置修飾（過去分詞）」と表記
+・現在完了で使う過去分詞（have played など）は後置修飾ではない。
+　その場合は「現在完了（経験）」のように用法で書き、「過去分詞」とだけ書かない
 ・仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」「仮定法（If 主語 動詞の過去形, 主語 助動詞の過去形）」
 ・中2の不定詞は用法で書き分ける
 　　感情の原因（I'm glad to see you.）→「感情原因の不定詞（副詞的用法）」
@@ -4844,15 +4851,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 終端を含めて3つ前まで（例：終端Unit6ならUnit4まで）。それより前は復習として無視。
     const MAX_SPAN = 3; // 範囲の最大の幅（Unit数）。2でも3でもよいが、それ以上は広げない。
     let minUnit  = Math.max(0, endUnit - (MAX_SPAN - 1)); // 0未満にならないようにする
-    // 前回のテストの終わりが分かっていれば、それより前は範囲に入らない。
-    // 次のテストは前回の続きから始まるのが基本。
+    // 前回のテストの終わりが分かっていれば、その次のセクションから始まる。
+    // 前回がUnit 2 Part 2で終わったなら、次はUnit 2 Part 3から。同じセクションは繰り返さない。
     // 長文に前回までの範囲の単語が出てくると、それだけで始まりが前に引っぱられるため、
     // ここで下限を決めておく（実例：後期中間のテストで、前期期末までの範囲の
     // hear of / national / bring together が長文に出て、始まりがUnit 3になっていた）。
-    //
-    // ただし「前回の終わりと同じ位置」は残す。次のテストは前回が終わったところから
-    // 始まるので、境目のセクションは両方の範囲に入る（実例：5月の中間がUnit 1 Part 1までで、
-    // 6月の期末もUnit 1 Part 1から始まる）。ここを除外すると始まりが後ろにずれる。
     const prevEndPos = (opts && opts.prevEndPos != null) ? opts.prevEndPos : null;
     if (prevEndPos != null && prevEndPos >= 0) {
       diag.prevEndPos = prevEndPos;
@@ -4860,8 +4863,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
     const inWindow = allHits.filter(h => {
       if (h.weak) return false;                    // 誤ヒットは開始の根拠にしない
-      if (h.usedForEnd === false) return false;     // 1回しか出ない文法は開始の根拠にもしない
-      if (prevEndPos != null && h.pos < prevEndPos - 0.001) return false; // 前回より前は除く（同じ位置は残す）
+      if (h.usedForEnd === false) return false;     // 回数が足りない文法は開始の根拠にもしない
+      if (prevEndPos != null && h.pos <= prevEndPos + 0.001) return false; // 前回の終わりまでは除く
       const u = Math.floor(h.pos);
       return u >= minUnit && u <= endUnit;
     });
