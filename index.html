@@ -1065,7 +1065,7 @@
       [/\bwill\b/i,                         'Unit 1','Part 2'],
       [/人物動詞.*(疑問詞|間接)|(疑問詞|間接).*人物動詞/, 'Unit 5','Part 2'],
       [/疑問詞\s*[+＋]?\s*不定詞|(how|what|where|when)\s*to\b/i, 'Unit 5','Part 1'],
-      [/be\s*sure|be\s*glad/i,              'Unit 5','Read and Think 1'],
+      [/be\s*sure/i,                        'Unit 5','Read and Think 1'],
       [/人物動詞|(show|give|tell|teach|buy|make)\s*(人|A)\s*(物|B)|svoo/i, 'Unit 1','Read and Think 1'],
       [/call\s*A\s*B|call\s*[OＯ]\s*[CＣ]/i, 'Unit 1','Read and Think 2'],
       [/because/i,                          'Unit 2','Read and Think 1'],
@@ -1077,7 +1077,10 @@
       // 「It is 形容詞 for O to ～」（forあり）は中3なので、forが入っていたら中2にしない。
       // 「形式主語」という語だけでも中2だが、forが書かれていれば中3の形なので除外する。
       [/^(?!.*\bfor\b)(?:.*(?:名詞的用法|形式主語)|.*it\s*(?:is|was)\b.*\bto\b|.*\bit\s*to\b)/i, 'Unit 3','Read and Think 2'],
-      [/感情/,                              'Unit 3','Part 2'],
+      // 中2 Unit 3 で習うのは「感情を表す形容詞 ＋ to不定詞」（I'm glad to see you.）。
+      // happy / sad のような感情の形容詞そのものは中1の語彙であって文法ではない。
+      // 「感情」という語だけで反応させると、中1の復習問題で範囲がUnit 3まで伸びる。
+      [/感情.*(不定詞|\bto\b)|(不定詞|\bto\b).*感情|be\s*glad\s*to/i, 'Unit 3','Part 2'],
       // 中2の不定詞は3用法（名詞的・形容詞的・副詞的）。
       // 「want O to do」は中3 Unit 3 Part 2 なので、ここには含めない。
       // 除外しないと、AIが「want + O + to do (不定詞)」と書いたときだけ中2にも当たってしまい、
@@ -1085,8 +1088,11 @@
       [/^(?!.*\bfor\b)(?!.*(want|tell|ask)).*(副詞的用法|不定詞)/i,  'Unit 3','Part 1'],
       [/have\s*to/i,                        'Unit 4','Part 1'],
       [/\bmust\b/i,                         'Unit 4','Part 2'],
-      [/動名詞.*主語|主語.*動名詞/,         'Unit 4','Read and Think 2'],
-      [/動名詞|～?ing形?\s*[（(]?名詞/i,    'Unit 4','Read and Think 1'],
+      // enjoy ...ing / like ...ing / be good at ...ing / look forward to ...ing は
+      // 中1で熟語として習うもの。AIがこれらを「動名詞」と書くことがあるが、
+      // 中2 Unit 4 の動名詞として扱うと、中1の復習問題だけで範囲がUnit 4まで飛ぶ。
+      [/^(?!.*(enjoy|like|good\s*at|look\s*forward))(?:.*動名詞.*主語|.*主語.*動名詞)/i, 'Unit 4','Read and Think 2'],
+      [/^(?!.*(enjoy|like|good\s*at|look\s*forward))(?:.*動名詞|.*～?ing形?\s*[（(]?名詞)/i, 'Unit 4','Read and Think 1'],
       [/\bas\b.*\bas\b|原級/i,              'Unit 6','Read and Think 2'],
       [/\b(better|best)\b/i,                'Unit 6','Read and Think 1'],
       [/\b(more|most)\b/i,                  'Unit 6','Part 2'],
@@ -3092,6 +3098,13 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   「It is 形容詞 for O to ～」（forあり）→「It for to」と表記
 ・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
 ・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
+・「～ing」は形で見分けて書き分ける（学年が変わるため、ここを間違えると出題範囲がずれる）
+　　am / is / are ＋ ～ing　→「現在進行形」
+　　was / were ＋ ～ing　　→「過去進行形」
+　　一般動詞 ＋ ～ing、前置詞 ＋ ～ing　→「動名詞」
+　　名詞 ＋ ～ing（後ろから名詞を説明）→「後置修飾」
+・ただし enjoy ...ing / like ...ing / be good at ...ing / look forward to ...ing は
+　中1で熟語として習うものなので「動名詞」と書かず、phrases に熟語として書く
 ・分詞の後置修飾は「後置修飾」、仮定法は「仮定法（I wish）」「仮定法（If 主語 were）」
 ・間接疑問文と「疑問詞＋不定詞」は別の文法。学年が変わるので必ず区別する
   「I know how to make a cake.」＝疑問詞のあとが〈to＋動詞の原形〉→「疑問詞+不定詞」と表記
@@ -3461,6 +3474,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
            </div>`;
       }
 
+      // 前学年ぶんの範囲（学年最初のテストは前学年の内容も範囲に入ることがある）
+      const prevGrade = tooBlurry ? null : estimatePrevGradeRange(r);
+
       // 読み取りが不十分なときは警告する（範囲判定の材料が足りず、範囲が手前で止まるため）
       // 目安はページ数から出す。1ページに大問1つ以上、出題語3語以上は取れているのが普通。
       const qtCount = (r.question_types||[]).length;
@@ -3493,6 +3509,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
           testDate: extractTestDate(name),
+          prevGradeRange: prevGrade ? prevGrade.range : '',
+          prevGradeGrade: prevGrade ? prevGrade.grade : '',
           year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
         };
         const firestoreId = await saveTestEntryToFirestore(entry);
@@ -3562,6 +3580,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <div class="result-hero">
           <div class="result-grade">${esc(r.grade||'')}</div>
           <div class="result-range">${esc(rangeStr)}</div>
+          ${(()=>{
+            const cur = rangeBothNotations(r.grade, rangeStr);
+            const prev = prevGrade ? rangeBothNotations(prevGrade.grade, prevGrade.range) : null;
+            const row = (label, b) => `<div style="display:flex;gap:10px;align-items:baseline;justify-content:center;flex-wrap:wrap;font-size:13px;margin-top:3px">
+                <span style="opacity:0.75">${esc(label)}</span><span>${esc(b.unit)}</span>${b.page?`<span style="opacity:0.85">／ ${esc(b.page)}</span>`:''}</div>`;
+            return (prev ? row(prev.grade + '（前学年・推定なので要確認）', prev) : '')
+                 + (cur.page ? row(esc(r.grade||''), cur) : '');
+          })()}
         </div>
         ${blurWarn}
         ${gradeWarn}
@@ -3650,7 +3676,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               return `<tr>
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
                 <td style="font-size:12px">${esc(h.grade||'')}${gradeFlag}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
-                <td style="font-weight:600;color:var(--navy);font-size:12px">${esc(h.range||'')}${h.rangePrev&&h.rangePrev!==h.range?`<br><span style="font-weight:400;color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</span>`:''}</td>
+                <td style="font-size:12px">${(()=>{
+                  const cur = rangeBothNotations(h.grade, h.range);
+                  const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange) : null;
+                  const line = (label, b, strong) =>
+                    `<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+                       ${label?`<span style="color:var(--muted);font-size:10px;white-space:nowrap">${esc(label)}</span>`:''}
+                       <span style="${strong?'font-weight:600;color:var(--navy)':'color:var(--muted)'}">${esc(b.unit)}</span>
+                       ${b.page?`<span style="color:var(--muted);font-size:11px">／ ${esc(b.page)}</span>`:''}
+                     </div>`;
+                  return (prev ? line(prev.grade ? esc(prev.grade) : '前学年', prev, false) : '')
+                       + line(prev ? esc(h.grade||'') : '', cur, true)
+                       + (h.rangePrev && h.rangePrev !== h.range
+                          ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</div>` : '')
+                       + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${realIdx})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
+                       + (h.rangeEditedBy === '手入力' ? `<span style="font-size:10px;color:#059669;margin-left:4px">手入力</span>` : '');
+                })()}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
                 <td><button class="btn btn-ghost btn-sm" onclick="showRangeDiag(${realIdx})" style="padding:2px 6px;font-size:11px" title="この範囲がどう決まったかを見る">🔍</button>
@@ -3694,6 +3735,83 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return f && t ? (f === t ? f : `${f} 〜 ${t}`) : (f || t || '範囲不明');
   }
 
+  // 単元名・セクション名から、教科書のページ範囲を逆引きする。
+  // 範囲表は「中2教科書 p.15まで」のようにページで書かれているため、
+  // 判定した範囲にページを併記すると、実物と照らし合わせやすくなる。
+  // ページは教科書データの項目から拾う（同じUnit・同じセクションの項目のページの最小と最大）。
+  function sectionPages(grade, unit, lesson) {
+    const gradeN = gradeNumOf(grade);
+    if (!gradeN || !unit) return null;
+    const bookId = `default_c${gradeN}`;
+    const book = bookById(bookId);
+    if (!book) return null;
+    const norm = s => String(s || '').trim().toLowerCase();
+    const hit = (book.items || []).filter(it =>
+      it.page > 0 && norm(it.unit) === norm(unit) && (!lesson || norm(it.lesson) === norm(lesson)));
+    if (!hit.length) {
+      if (lesson) return sectionPages(grade, unit, '');   // セクションで見つからなければUnit全体
+      const table = PAGE_UNIT_TABLES[bookId] || [];
+      const e = table.find(x => x[1] === unit || x[2] === unit);
+      return e ? { from: e[0], to: e[0] } : null;
+    }
+    const pages = hit.map(i => i.page).sort((a, b) => a - b);
+    return { from: pages[0], to: pages[pages.length - 1] };
+  }
+
+  // 範囲テキスト（Unit 1 Part 1 〜 Unit 2 Part 2）にページを添える
+  function rangeWithPages(grade, rangeText) {
+    if (!rangeText || rangeText === '範囲不明') return '';
+    const p = parseRangeText(rangeText);
+    const a = sectionPages(grade, p.from_unit, p.from_lesson);
+    const b = sectionPages(grade, p.to_unit,   p.to_lesson);
+    const from = a ? a.from : null;
+    const to   = b ? b.to   : (a ? a.to : null);
+    if (from == null || to == null) return '';
+    return from === to ? `p.${from}` : `p.${from}〜${to}`;
+  }
+
+  // 前学年ぶんの範囲を推定する。
+  // 学年最初のテストは「中1教科書 p.116〜126、中2教科書 p.15まで」のように
+  // 前学年の内容も範囲に入ることがある。
+  // 前学年の文法（過去進行形＝中1 Unit 10 など）が出ていれば、そこが前学年ぶんの範囲になる。
+  // 単語は学年をまたいで重なるため使わない。文法だけで判定する。
+  function estimatePrevGradeRange(r) {
+    const gradeN = gradeNumOf(r.grade);
+    if (gradeN <= 1) return null;
+    const prevG = gradeN - 1;
+    const terms = [];
+    (r.question_types || []).forEach(qt => {
+      splitGrammarTerms(qt.grammar).forEach(t => terms.push(t));
+      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(t => terms.push(t)));
+    });
+    const hits = [];
+    terms.forEach(t => {
+      if (grammarToUnit(gradeN, t)) return;          // 今の学年で説明できるものは前学年ぶんではない
+      const gm = grammarToUnit(prevG, t);
+      if (!gm) return;
+      const pos = rangePos(`${gm.unit} ${gm.lesson || ''}`.trim(), prevG);
+      if (pos >= 0) hits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
+    });
+    if (hits.length < 2) return null;                 // 1件だけでは推定しない
+    // 同じ位置が2回以上あるものを優先（1回だけの読み間違いを避ける）
+    const cnt = new Map();
+    hits.forEach(h => cnt.set(h.pos, (cnt.get(h.pos) || 0) + 1));
+    const solid = hits.filter(h => cnt.get(h.pos) >= 2);
+    const use = solid.length ? solid : hits;
+    let lo = use[0], hi = use[0];
+    use.forEach(h => { if (h.pos < lo.pos) lo = h; if (h.pos > hi.pos) hi = h; });
+    const from = [lo.unit, lo.lesson].filter(Boolean).join(' ');
+    const to   = [hi.unit, hi.lesson].filter(Boolean).join(' ');
+    return { grade: normalizeGrade('中' + prevG), range: from === to ? from : `${from} 〜 ${to}`,
+             terms: [...new Set(use.map(h => h.term))] };
+  }
+
+  // 範囲を「単元表記 ／ ページ表記」の形にそろえる（範囲表と見比べやすくするため）
+  function rangeBothNotations(grade, rangeText) {
+    const pg = rangeWithPages(grade, rangeText);
+    return { unit: rangeText || '範囲不明', page: pg || '' };
+  }
+
   async function rejudgeTestRanges() {
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
@@ -3713,6 +3831,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (y && y < 2025) { skipped++; return; }
       const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
       if (!hasMaterial) { skipped++; return; }
+      // 手で直した範囲は、機械の判定で上書きしない
+      if (h.rangeEditedBy === '手入力') { skipped++; return; }
 
       const r = {
         grade: h.grade || '',
@@ -3800,6 +3920,54 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 実物と見比べて、判定のどこが間違っているかを特定するための画面。Geminiは使わない。
   // 保存済みテストの学年を直す。学年を間違えると範囲がまるごと外れるが、
   // 分析し直すとAPI料金がかかるため、学年だけ直して範囲を計算し直せるようにする。
+  // 範囲を手で直す。
+  // 前学年ぶんの範囲は、前学年の文法がすべて復習として出しうるため推定では当たらない
+  //（実例：正解が中1 p.116〜126のところ、推定はUnit 7から始まってしまった）。
+  // 範囲表には書いてあるので、手で入れられるようにする。
+  async function fixTestRange(idx) {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const h = hist[idx];
+    if (!h) { alert('このテストのデータが見つかりません。'); return; }
+
+    const cur = prompt(
+      `${h.name||''}\n\n【${h.grade||'この学年'}の範囲】を入力してください。\n` +
+      `単元名でもページでも入れられます。\n` +
+      `例：Unit 1 Part 1 〜 Unit 1 Read and Think 2\n例：p.9〜15`,
+      h.range || '');
+    if (cur === null) return;
+
+    const prevG = gradeNumOf(h.grade) > 1 ? normalizeGrade('中' + (gradeNumOf(h.grade) - 1)) : '';
+    let prev = h.prevGradeRange || '';
+    if (prevG) {
+      const p = prompt(
+        `【${prevG}の範囲】があれば入力してください。\n` +
+        `前学年の内容が範囲に入らない場合は空欄のままにしてください。\n例：Unit 10 Part 1 〜 Let's Read\n例：p.116〜126`,
+        prev);
+      if (p === null) return;
+      prev = p.trim();
+    }
+
+    const ok = await showConfirm(
+      `範囲を書き換えます。\n\n${h.grade||''}：${h.range||'なし'} → ${cur.trim() || 'なし'}` +
+      (prevG ? `\n${prevG}：${h.prevGradeRange||'なし'} → ${prev || 'なし'}` : ''),
+      '書き換える');
+    if (!ok) return;
+
+    h.rangePrev      = h.range || '';
+    h.range          = cur.trim() || '範囲不明';
+    h.rangeEditedBy  = '手入力';
+    h.prevGradeRange = prev;
+    h.prevGradeGrade = prev ? prevG : '';
+    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    catch { alert('ブラウザへの保存に失敗しました。'); return; }
+    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
+      range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力',
+      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade });
+    renderTestHistory();
+    alert('範囲を書き換えました。');
+  }
+
   async function fixTestGrade(idx) {
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
@@ -3916,7 +4084,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
     if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
-    if (d.endExtendedByWord) decision.push(`Let's Readには新出文法がないため、出題語で終わりを伸ばしました：${esc(d.endExtendedByWord)}`);
+    if (d.endDemoted) decision.push(esc(d.endDemoted));
+    if (d.endExtendedByWord) decision.push(`新出文法のないセクションのため、出題語で終わりを伸ばしました：${esc(d.endExtendedByWord)}`);
     if (d.prevEndPos != null) decision.push(`前回のテストの終わりより前は範囲に入れていません（下限：${d.prevEndPos}）`);
     if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
     if ((d.onceOnlyTerms||[]).length) decision.push(`1回しか出ていないため終わりの根拠にしなかった文法：${esc((d.onceOnlyTerms||[]).slice(0,8).join('・'))}`);
@@ -3941,7 +4110,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('rangeDiagBody').innerHTML =
       `<div style="font-size:13px;font-weight:600;margin-bottom:2px">${esc(h.name||'')}</div>
        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
-         ${esc(h.school||'')} ${esc(h.teacher||'')} ／ ${esc(h.grade||'学年不明')} ／ 保存されている範囲：<b>${esc(h.range||'')}</b>
+         ${esc(h.school||'')} ${esc(h.teacher||'')} ／ ${esc(h.grade||'学年不明')}
+         ${(()=>{
+           const cur = rangeBothNotations(h.grade, h.range);
+           const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange) : null;
+           const row = (label, b) => `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-top:2px">
+               <span style="min-width:5em">${esc(label)}</span><b>${esc(b.unit)}</b>${b.page?`<span>／ ${esc(b.page)}</span>`:''}</div>`;
+           return (prev ? row(prev.grade + '（推定）', prev) : '') + row(esc(h.grade||'範囲'), cur);
+         })()}
          ${d.after && d.after !== h.range ? `<br>いま計算し直すと：<b style="color:#DC2626">${esc(d.after)}</b>` : ''}
        </div>
        ${warn}
@@ -4433,6 +4609,23 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
+
+    // 文法の手がかりが少ないときは、回数で絞れないため誤りが1件混ざるだけで終わりが飛ぶ。
+    // そこで「その位置の近くに出題語があるか」で裏づけを取る。
+    // 実例：中1の5月のテスト（正解はUnit 2 Part 1まで）で、文法が2件しか拾えず、
+    //       そのうち1件の「want to 動詞の原形」（Unit 8）が終わりになった。
+    //       Unit 8の周りには出題語が1つもなく、単語はUnit 0〜2に集中していた。
+    if (!useCount && gramHits.length > 1) {
+      const SUPPORT_RANGE = 1.0;   // この距離以内の出題語を裏づけとみなす
+      const SUPPORT_MIN   = 2;     // 裏づけに必要な語数
+      const supported = c => wordHits.filter(w => !w.weak && w.pos >= c.pos - SUPPORT_RANGE).length >= SUPPORT_MIN;
+      const cands = [...gramHits].sort((a, b) => b.pos - a.pos);
+      const ok = cands.find(supported);
+      if (ok && ok.pos < endHit.pos) {
+        diag.endDemoted = `${endHit.term}（${endHit.unit}）は近くに出題語がないため終わりにしませんでした`;
+        endHit = ok;
+      }
+    }
     const gramEndPos = endHit.pos;
 
     // Let's Read / Real Life English / Stage Activity には新出文法がないため、
