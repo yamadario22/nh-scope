@@ -3916,6 +3916,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.minUnit !== null && d.minUnit !== undefined) decision.push(`さかのぼる限界＝Unit ${d.minUnit}（終わりから最大3Unit）`);
     if (d.startUnit !== null && d.startUnit !== undefined) decision.push(`始まり＝<b>Unit ${d.startUnit}</b>（根拠：${esc(d.startTerm||'')}）`);
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
+    if (d.endExtendedByWord) decision.push(`Let's Readには新出文法がないため、出題語で終わりを伸ばしました：${esc(d.endExtendedByWord)}`);
     if (d.prevEndPos != null) decision.push(`前回のテストの終わりより前は範囲に入れていません（下限：${d.prevEndPos}）`);
     if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
     if ((d.onceOnlyTerms||[]).length) decision.push(`1回しか出ていないため終わりの根拠にしなかった文法：${esc((d.onceOnlyTerms||[]).slice(0,8).join('・'))}`);
@@ -4372,9 +4373,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // ページから特定できない項目は、位置の根拠にしない。
       const ru = rangeUnitFromPage(first.bookId, first.page);
       if (!ru) { diag.noMatch = diag.noMatch || []; diag.noMatch.push(`${v}（ページ不明で位置が特定できず）`); continue; }
-      const pos = rangePos([ru, first.lesson].filter(Boolean).join(' '), firstGrade);
+      // そのページが Real Life English / Stage Activity / Let's Read なら、
+      // その位置（Unitの後ろ）を使う。項目のセクション欄に頼らずページから決める。
+      const sec = unitFromPage(first.bookId, first.page) || '';
+      const auxSec = parseAuxName(sec);
+      const label = (auxSec && auxSec.base !== "Let's Read")
+        ? `${ru} ${auxSec.base}`
+        : [ru, first.lesson].filter(Boolean).join(' ');
+      const pos = rangePos(label, firstGrade);
       if (pos >= 0) wordHits.push({
-        pos, unit: ru, lesson: first.lesson || '', term: v,
+        pos, unit: ru, lesson: first.lesson || '', term: v, section: sec,
         // ここから下は内訳表示のための記録（判定には使わない）
         matched: first.content || '', matchedType: first.type || '',
         matchedPage: first.page || 0, matchedUnit: first.unit || '',
@@ -4425,6 +4433,27 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
+    const gramEndPos = endHit.pos;
+
+    // Let's Read / Real Life English / Stage Activity には新出文法がないため、
+    // 文法だけでは終わりが届かない。
+    // （Unit 0 に文法がなく始まりを単語で拾う必要があったのと同じ構造の問題）
+    // これらが範囲の終わりになることは実際にあるため、単語の手がかりで終わりを伸ばす。
+    // ただし無条件に許すと、長文に出た未習の語で範囲が飛ぶ（実例：6月のテストで
+    // energy が Let's Read 2 に一致し、終わりがUnit 6まで飛んだ）。
+    // 文法の終わりから1Unit以内に限定することで、直後のものだけを拾う。
+    const NO_GRAMMAR_SECTIONS = /Let'?s\s*Read|Real Life English|Stage Activity/i;
+    if (gramHits.length) {
+      const NO_GRAM_MAX_GAP = 1.0;
+      wordHits.forEach(h => {
+        if (h.weak) return;
+        if (!NO_GRAMMAR_SECTIONS.test(h.section || h.unit || '')) return;
+        if (h.pos <= endHit.pos) return;
+        if (h.pos > gramEndPos + NO_GRAM_MAX_GAP) return;
+        endHit = h;
+      });
+      if (endHit.pos !== gramEndPos) diag.endExtendedByWord = `${endHit.term}（${endHit.section || endHit.unit}）`;
+    }
     const endUnit = Math.floor(endHit.pos);
     diag.decidedBy = gramHits.length
       ? (repeatedGram.length ? '文法（2回以上出たもの）'
