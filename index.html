@@ -3158,6 +3158,9 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   「It is 形容詞 for O to ～」（forあり）→「It for to」と表記
 ・不定詞は用法を明記：「不定詞（副詞的用法）」「不定詞（形容詞的用法）」「不定詞（名詞的用法）」
 ・関係代名詞は格を明記：「主格の関係代名詞which」「目的格の関係代名詞that」「接触節」
+・「～ing」が出たら、grammar_example にその英文（または該当部分）をそのまま書く
+　　例：grammar「動名詞」／ grammar_example「I enjoy playing tennis.」
+　　この英文をもとにアプリ側で正しく判定するので、判断に迷ったらそのまま英文を書けばよい
 ・「～ing」は形で見分けて書き分ける（学年が変わるため、ここを間違えると出題範囲がずれる）
 　　am / is / are ＋ ～ing　→「現在進行形」
 　　　（疑問文なら「現在進行形の疑問文」、否定文なら「現在進行形の否定文」と書き分ける）
@@ -3481,6 +3484,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                   count:   { type: 'INTEGER' },
                   theme:   { type: 'STRING' },
                   grammar: { type: 'STRING' },
+                  grammar_example: { type: 'STRING' },
                   phrases: { type: 'STRING' },
                   sub_questions: {
                     type: 'ARRAY',
@@ -3491,6 +3495,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         count:   { type: 'INTEGER' },
                         theme:   { type: 'STRING' },
                         grammar: { type: 'STRING' },
+                        grammar_example: { type: 'STRING' },
                         phrases: { type: 'STRING' }
                       }
                     }
@@ -3541,7 +3546,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const testDate = extractTestDate(name);
       const prev = findPrevTestEnd({ school: extractSchoolName(name), grade: r.grade, testDate });
       const prevEndPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
-      if (!tooBlurry) refineRangeFromLibrary(r, { prevEndPos: (prevEndPos != null && prevEndPos >= 0) ? prevEndPos : null });
+      if (!tooBlurry) refineRangeFromLibrary(r, { prevEndPos: (prevEndPos != null && prevEndPos >= 0) ? prevEndPos : null, testDate });
 
 
       // 範囲テキストを組み立て
@@ -4204,7 +4209,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const tDate = h.testDate || extractTestDate(h.name || '');
       const prev = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''), grade: r.grade, testDate: tDate });
       const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
-      refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null });
+      refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null, testDate: tDate });
       const after = buildRangeText(r);
       const before = h.range || '範囲不明';
       if ((after && after !== before) || inferredGrade) {
@@ -4774,6 +4779,35 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 用法の情報が消える（中3なら「完了」＝Unit 2 の証拠が失われる）。
   // そこでカッコの外の区切りだけで分け、カッコの中に並ぶ用法は
   // 「現在完了形（経験）」「現在完了形（完了）」に展開して両方を証拠にする。
+  // 「～ing」がどの文法かを、実際の英文から判定する。
+  // AIが「動名詞」とだけ書いてくることがあり、その中には中1で熟語として習うもの
+  //（enjoy ~ing / like ~ing / be good at ~ing / look forward to ~ing）が混ざる。
+  // それを中2 Unit 4 の動名詞として扱うと、6月のテストの範囲がUnit 4まで飛ぶ。
+  // 英文があれば確実に見分けられるので、AIには英文を書かせて判断はこちらで行う。
+  // 戻り値：'中1熟語' / '現在進行形' / '過去進行形' / '動名詞' / null（判定できない）
+  function classifyIngForm(example) {
+    const s = String(example || '').toLowerCase();
+    if (!/\w+ing\b/.test(s)) return null;
+    // 中1で熟語として習うもの
+    if (/\b(enjoy|enjoys|enjoyed|like|likes|liked|good\s+at|look(ing|s|ed)?\s+forward\s+to)\b[^.]*\w+ing\b/.test(s))
+      return '中1熟語';
+    if (/\b(am|is|are)\s+\w+ing\b/.test(s))   return '現在進行形';
+    if (/\b(was|were)\s+\w+ing\b/.test(s))    return '過去進行形';
+    return '動名詞';
+  }
+
+  // 文法名と英文から、実際に使うべき文法名を決める
+  function resolveGrammarTerm(term, example) {
+    const t = String(term || '');
+    if (!/動名詞|ing/i.test(t)) return t;      // ～ing に関係しない文法はそのまま
+    const kind = classifyIngForm(example);
+    if (!kind) return t;
+    if (kind === '中1熟語')   return '';        // 中2の文法として扱わない（空にする）
+    if (kind === '現在進行形') return '現在進行形';
+    if (kind === '過去進行形') return '過去進行形';
+    return t;
+  }
+
   function splitGrammarTerms(str) {
     const s = String(str || '');
     const out = [];
@@ -4992,8 +5026,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (pos >= 0) gramHits.push({ pos, unit: gm.unit, lesson: gm.lesson || '', term: t });
     };
     (r.question_types || []).forEach(qt => {
-      splitGrammarTerms(qt.grammar).forEach(addGram);
-      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(addGram));
+      // 「～ing」は英文を見て正しい文法名に直してから使う
+      splitGrammarTerms(qt.grammar).forEach(t => {
+        const fixed = resolveGrammarTerm(t, qt.grammar_example);
+        if (fixed) addGram(fixed);
+        else { diag.ingFixed = diag.ingFixed || []; diag.ingFixed.push(`${t}（中1で熟語として習う形のため除外）`); }
+      });
+      (qt.sub_questions || []).forEach(sq => splitGrammarTerms(sq.grammar).forEach(t => {
+        const fixed = resolveGrammarTerm(t, sq.grammar_example);
+        if (fixed) addGram(fixed);
+        else { diag.ingFixed = diag.ingFixed || []; diag.ingFixed.push(`${t}（中1で熟語として習う形のため除外）`); }
+      }));
     });
 
     // ── ステップ2の材料：出題された「単語・熟語」を教科書のUnitに照合（初出位置） ──
@@ -5189,7 +5232,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         diag.endExtendedByWord = `${k}（${[...(bySection.get(k)?.terms || [])].join('・')}）`;
       }
     }
-    const endUnit = Math.floor(endHit.pos);
+    let endUnit = Math.floor(endHit.pos);
+
+    // 【1学期のテストで Unit 4 以降が終わりになることはない】
+    // 凌央さんの確認：Unit 4 が範囲に入るのは、どの学校でも9月以降。
+    // 実例：6月のテストで、AIが中1の熟語（enjoy ~ing など）を「動名詞」と書いたため、
+    //       中2 Unit 4 が終わりになった。
+    // 英文からの判定でほぼ防げるが、英文が取れなかったときの最後の歯止めとして残す。
+    const testMonth = (() => {
+      const d = (opts && opts.testDate) || '';
+      const m = String(d).match(/^\d{4}-(\d{2})/);
+      return m ? parseInt(m[1]) : 0;
+    })();
+    const isFirstTerm = testMonth >= 4 && testMonth <= 8;   // 4〜8月＝1学期
+    if (isFirstTerm && endUnit >= 4) {
+      const before = endHit;
+      const cands = [...(repeatedGram.length ? repeatedGram : gramHits)]
+        .filter(h => Math.floor(h.pos) < 4).sort((a, b) => b.pos - a.pos);
+      if (cands.length) {
+        endHit = cands[0];
+        diag.endDemoted = `${before.term}（${before.unit}）は1学期のテストでは範囲に入らないため終わりにしませんでした`;
+      }
+    }
+    endUnit = Math.floor(endHit.pos);
     diag.decidedBy = gramHits.length
       ? (repeatedGram.length ? '文法（2回以上出たもの）'
          : (useCount ? '文法（2回以上出たものがないため全部使用）'
@@ -5234,6 +5299,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 窓の中で最も前にある手がかり＝開始
     let startHit = inWindow[0];
     for (const h of inWindow) if (h.pos < startHit.pos) startHit = h;
+    // 始まりが終わりより後ろになることはありえない。
+    // 実例：「Unit 4 Read and Think 2 〜 Unit 4 Read and Think 1（p.53〜52）」と逆転していた。
+    if (startHit.pos > endHit.pos) startHit = endHit;
     diag.startUnit = Math.floor(startHit.pos);
     diag.startTerm = startHit.term || '';
 
