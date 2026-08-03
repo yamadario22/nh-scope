@@ -773,6 +773,21 @@
   </div>
 </div>
 
+<!-- 2学期制の学校を選ぶ -->
+<div class="modal-ov" id="semester2Modal" style="display:none" onclick="if(event.target===this)closeSemester2()">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title">📅 2学期制（前期・後期）の学校を選ぶ</div>
+      <button class="modal-close" onclick="closeSemester2()">✕</button>
+    </div>
+    <div class="modal-body" id="semester2Body"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeSemester2()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveSemester2()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 範囲を手で直す -->
 <div class="modal-ov" id="rangeEditModal" style="display:none" onclick="if(event.target===this)closeRangeEdit()">
   <div class="modal" style="max-width:460px">
@@ -3737,18 +3752,97 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 履歴のしぼり込み条件
   let histFilter = { grade:'', term:'', school:'' };
 
+  // 西三河の学校は2学期制（前期・後期）、それ以外は3学期制。
+  // 同じ11月のテストでも「後期中間」と「2学期期末」に分かれるため、学校ごとに覚えておく。
+  const SEMESTER2_KEY = 'nhscope_semester2_schools';
+  function getSemester2Schools() {
+    try { return new Set(JSON.parse(localStorage.getItem(SEMESTER2_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveSemester2Schools(set) {
+    try { localStorage.setItem(SEMESTER2_KEY, JSON.stringify([...set])); } catch {}
+  }
+  function isSemester2(school) {
+    return getSemester2Schools().has(String(school || '').trim());
+  }
+
   // 日付から「テストの時期」を求める。範囲表と照らすとき、時期で探せると便利。
   function testTermOf(h) {
     const d = h.testDate || extractTestDate(h.name || '');
     const m = String(d).match(/^\d{4}-(\d{2})/);
     if (!m) return '';
     const mo = parseInt(m[1]);
-    if (mo === 5 || mo === 6) return '1学期中間・期末（5〜6月）';
-    if (mo === 9)             return '2学期中間（9月）';
-    if (mo === 10)            return '10月';
-    if (mo === 11 || mo === 12) return '2学期期末（11〜12月）';
-    if (mo === 1 || mo === 2 || mo === 3) return '学年末（1〜3月）';
+    const school = h.school || extractSchoolName(h.name || '');
+    if (isSemester2(school)) {
+      // 2学期制（西三河）
+      if (mo === 5 || mo === 6)  return '前期中間テスト';
+      if (mo === 9 || mo === 10) return '前期期末テスト';
+      if (mo === 11 || mo === 12) return '後期中間テスト';
+      if (mo >= 1 && mo <= 3)    return '学年末テスト';
+    } else {
+      // 3学期制
+      if (mo === 5)              return '1学期中間テスト';
+      if (mo === 6)              return '1学期期末テスト';
+      if (mo === 9 || mo === 10) return '2学期中間テスト';
+      if (mo === 11 || mo === 12) return '2学期期末テスト';
+      if (mo >= 1 && mo <= 3)    return '学年末テスト';
+    }
     return `${mo}月`;
+  }
+
+  // 検索欄に出す順番
+  const TERM_ORDER = ['1学期中間テスト','1学期期末テスト','2学期中間テスト','2学期期末テスト',
+                      '前期中間テスト','前期期末テスト','後期中間テスト','学年末テスト'];
+
+
+  // 2学期制（西三河）の学校をチェックボックスで選ぶ
+  function openSemester2() {
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const schools = [...new Set(hist.map(h => h.school || extractSchoolName(h.name||'')).filter(Boolean))].sort();
+    if (!schools.length) { alert('分析済みのテストがないため、学校の一覧を作れません。'); return; }
+    const cur = getSemester2Schools();
+    document.getElementById('semester2Body').innerHTML =
+      `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+         西三河（岡崎・碧南・刈谷・豊田・安城・西尾・知立・高浜・みよし・幸田）の学校にチェックを入れてください。<br>
+         チェックした学校は<b>前期中間・前期期末・後期中間・学年末</b>、
+         それ以外は<b>1学期中間・1学期期末・2学期中間・2学期期末・学年末</b>として扱います。
+       </div>
+       <div style="display:flex;gap:6px;margin-bottom:8px">
+         <button class="btn btn-ghost btn-sm" onclick="toggleAllSemester2(true)">すべて選ぶ</button>
+         <button class="btn btn-ghost btn-sm" onclick="toggleAllSemester2(false)">すべて外す</button>
+         <span style="font-size:12px;color:var(--muted);align-self:center">全${schools.length}校</span>
+       </div>
+       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px">
+         ${schools.map((s,i) => `
+           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:4px;cursor:pointer;border-radius:4px"
+                  onmouseover="this.style.background='var(--background-secondary,#f1f5f9)'"
+                  onmouseout="this.style.background=''">
+             <input type="checkbox" class="sem2-chk" data-school="${esc(s)}" ${cur.has(s)?'checked':''} style="cursor:pointer">
+             <span>${esc(s)}</span>
+           </label>`).join('')}
+       </div>`;
+    document.getElementById('semester2Modal').style.display = 'flex';
+  }
+
+  function toggleAllSemester2(on) {
+    document.querySelectorAll('.sem2-chk').forEach(c => { c.checked = on; });
+  }
+
+  function closeSemester2() {
+    const m = document.getElementById('semester2Modal');
+    if (m) m.style.display = 'none';
+  }
+
+  function saveSemester2() {
+    const set = new Set();
+    document.querySelectorAll('.sem2-chk').forEach(c => {
+      if (c.checked) set.add(c.dataset.school);
+    });
+    saveSemester2Schools(set);
+    closeSemester2();
+    renderTestHistory();
+    alert(`${set.size}校を2学期制（前期・後期）として保存しました。`);
   }
 
   function setHistFilter(key, value) {
@@ -3822,9 +3916,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // しぼり込み欄に出す選択肢は、いまの年タブの中から作る
       const baseList = selectedHistYear === 'all' ? allHist
         : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
-      const termList = [...new Set(baseList.map(testTermOf).filter(Boolean))];
-      const termOrder = ['1学期中間・期末（5〜6月）','2学期中間（9月）','10月','2学期期末（11〜12月）','学年末（1〜3月）'];
-      termList.sort((a,b) => (termOrder.indexOf(a)+99)%100 - (termOrder.indexOf(b)+99)%100);
+      const termList = [...new Set(baseList.map(testTermOf).filter(Boolean))]
+        .sort((a,b) => {
+          const ia = TERM_ORDER.indexOf(a), ib = TERM_ORDER.indexOf(b);
+          return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
 
       const selStyle = 'padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px';
       const searchBox = `
@@ -3855,6 +3951,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <div class="card-title">
             <span>📋 テスト分析履歴</span>
             <span style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="openSemester2()"
+                title="西三河の学校は2学期制（前期・後期）です。学校ごとに設定すると、テストの時期が正しく表示されます">📅 学期制の設定</button>
               <button class="btn btn-ghost btn-sm" onclick="rejudgeTestRanges()"
                 title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
               <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
