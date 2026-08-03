@@ -3847,27 +3847,36 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   function setHistFilter(key, value) {
     histFilter[key] = value;
-    renderTestHistory();
+    renderHistTable();
   }
 
-  // 学校名の入力に応じて候補を出す
+  // 学校名の入力に応じて候補を出す。
+  // 入力欄そのものは作り直さない（作り直すと1文字ごとにカーソルが外れ、変換もできなくなる）。
   function updateSchoolSuggest(value) {
+    histFilter.school = String(value || '').trim();
+    renderSchoolSuggest();
+    renderHistTable();
+  }
+
+  function renderSchoolSuggest() {
     const box = document.getElementById('histSchoolSuggest');
     if (!box) return;
-    const v = String(value || '').trim();
-    histFilter.school = v;
-    if (!v) { box.innerHTML = ''; renderTestHistory(); return; }
+    const v = histFilter.school;
+    if (!v) { box.innerHTML = ''; box.style.display = 'none'; return; }
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
     const schools = [...new Set(hist.map(h => h.school || extractSchoolName(h.name||'')).filter(Boolean))];
-    const hits = schools.filter(s => s.includes(v)).sort().slice(0, 8);
-    box.innerHTML = hits.length && !schools.includes(v)
-      ? hits.map(s => `<div onclick="pickSchool('${esc(s).replace(/'/g,"\\'")}')"
-           style="padding:5px 8px;cursor:pointer;font-size:13px;border-bottom:0.5px solid var(--color-border-secondary,#e2e8f0)"
-           onmouseover="this.style.background='var(--background-secondary,#f1f5f9)'"
-           onmouseout="this.style.background=''">${esc(s)}</div>`).join('')
-      : '';
-    renderTestHistory();
+    const hits = schools.filter(s => s.includes(v)).sort().slice(0, 10);
+    // 候補が1つだけで、それが入力そのものなら出さない（選び終わっている状態）
+    if (!hits.length || (hits.length === 1 && hits[0] === v)) {
+      box.innerHTML = ''; box.style.display = 'none'; return;
+    }
+    box.innerHTML = hits.map(s =>
+      `<div onmousedown="pickSchool(${JSON.stringify(s).replace(/"/g,'&quot;')})"
+         style="padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:0.5px solid var(--color-border-secondary,#e2e8f0)"
+         onmouseover="this.style.background='var(--background-secondary,#f1f5f9)'"
+         onmouseout="this.style.background=''">${esc(s)}</div>`).join('');
+    box.style.display = 'block';
   }
 
   function pickSchool(s) {
@@ -3875,8 +3884,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (input) input.value = s;
     histFilter.school = s;
     const box = document.getElementById('histSchoolSuggest');
-    if (box) box.innerHTML = '';
-    renderTestHistory();
+    if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+    renderHistTable();
   }
 
   function clearHistFilter() {
@@ -3884,8 +3893,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const input = document.getElementById('histSchoolInput');
     if (input) input.value = '';
     const box = document.getElementById('histSchoolSuggest');
-    if (box) box.innerHTML = '';
-    renderTestHistory();
+    if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+    const gs = document.getElementById('histGradeSel'); if (gs) gs.value = '';
+    const ts = document.getElementById('histTermSel');  if (ts) ts.value = '';
+    renderHistTable();
+  }
+
+  // しぼり込み条件に合う履歴を返す
+  function filteredHist(allHist) {
+    let hist = selectedHistYear === 'all'
+      ? allHist
+      : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
+    if (histFilter.grade)  hist = hist.filter(h => normalizeGrade(h.grade||'') === histFilter.grade);
+    if (histFilter.term)   hist = hist.filter(h => testTermOf(h) === histFilter.term);
+    if (histFilter.school) hist = hist.filter(h =>
+      (h.school || extractSchoolName(h.name||'')).includes(histFilter.school));
+    return hist;
   }
 
   function renderTestHistory() {
@@ -3907,12 +3930,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         ? allHist
         : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
 
-      // 学年・時期・学校名でしぼり込む
-      if (histFilter.grade)  hist = hist.filter(h => normalizeGrade(h.grade||'') === histFilter.grade);
-      if (histFilter.term)   hist = hist.filter(h => testTermOf(h) === histFilter.term);
-      if (histFilter.school) hist = hist.filter(h =>
-        (h.school || extractSchoolName(h.name||'')).includes(histFilter.school));
-
       // しぼり込み欄に出す選択肢は、いまの年タブの中から作る
       const baseList = selectedHistYear === 'all' ? allHist
         : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
@@ -3923,27 +3940,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         });
 
       const selStyle = 'padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px';
+      // 検索欄は一度だけ描く。入力のたびに作り直すと、1文字ごとにカーソルが外れて
+      // 日本語の変換もできなくなるため、以後は表（testHistTable）だけを更新する。
       const searchBox = `
         <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
-          <select style="${selStyle}" onchange="setHistFilter('grade', this.value)">
+          <select id="histGradeSel" style="${selStyle}" onchange="setHistFilter('grade', this.value)">
             <option value="">学年（すべて）</option>
             ${['中１','中２','中３'].map(g=>`<option value="${g}" ${histFilter.grade===g?'selected':''}>${g}</option>`).join('')}
           </select>
-          <select style="${selStyle}" onchange="setHistFilter('term', this.value)">
+          <select id="histTermSel" style="${selStyle}" onchange="setHistFilter('term', this.value)">
             <option value="">テストの時期（すべて）</option>
             ${termList.map(t=>`<option value="${esc(t)}" ${histFilter.term===t?'selected':''}>${esc(t)}</option>`).join('')}
           </select>
           <div style="position:relative;min-width:180px">
             <input id="histSchoolInput" type="text" value="${esc(histFilter.school)}" placeholder="中学校名（例：安）"
-                   oninput="updateSchoolSuggest(this.value)" autocomplete="off"
+                   oninput="updateSchoolSuggest(this.value)" onfocus="renderSchoolSuggest()"
+                   onblur="setTimeout(()=>{const b=document.getElementById('histSchoolSuggest');if(b){b.innerHTML='';b.style.display='none';}},150)"
+                   autocomplete="off"
                    style="${selStyle};width:100%;box-sizing:border-box">
-            <div id="histSchoolSuggest" style="position:absolute;top:100%;left:0;right:0;z-index:20;
+            <div id="histSchoolSuggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:20;
                  background:var(--background-primary,#fff);border:0.5px solid var(--color-border-secondary,#cbd5e1);
                  border-radius:6px;max-height:220px;overflow:auto;box-shadow:0 4px 12px rgba(0,0,0,0.08)"></div>
           </div>
-          ${(histFilter.grade||histFilter.term||histFilter.school)
-            ? `<button class="btn btn-ghost btn-sm" onclick="clearHistFilter()">条件をクリア</button>` : ''}
-          <span style="font-size:12px;color:var(--muted);align-self:center">${hist.length}件</span>
+          <button class="btn btn-ghost btn-sm" onclick="clearHistFilter()">条件をクリア</button>
+          <span id="histCount" style="font-size:12px;color:var(--muted);align-self:center"></span>
         </div>`;
 
       el.innerHTML = `
@@ -3960,6 +3980,23 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           </div>
           ${yearTabs}
           ${searchBox}
+          <div id="testHistTable"></div>
+        </div>`;
+      renderSchoolSuggest();
+      renderHistTable();
+    } catch(e) { console.error('renderTestHistory error:', e); }
+  }
+
+  // 表だけを描き直す。検索欄は作り直さない（作り直すとカーソルが外れ、日本語入力が壊れる）
+  function renderHistTable() {
+    const el = document.getElementById('testHistTable');
+    if (!el) return;
+    let allHist = [];
+    try { allHist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const hist = filteredHist(allHist);
+    const cnt = document.getElementById('histCount');
+    if (cnt) cnt.textContent = `${hist.length}件`;
+    el.innerHTML = `
           <div class="tbl-wrap"><table>
             <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
             <tbody>${!hist.length ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">条件に合うテストがありません</td></tr>` : ''}${hist.map((h,idx)=>{
@@ -4021,8 +4058,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             }).join('')}
             </tbody>
           </table></div>
-        </div>`;
-    } catch(e) { console.error('renderTestHistory error:', e); }
+`;
   }
 
   // ── 保存済みテストの範囲を再判定 ────────────────────────────────
