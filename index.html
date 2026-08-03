@@ -4044,6 +4044,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const bookId = `default_c${gradeN}`;
     const unit = unitFromPage(bookId, page);
     if (!unit) return '';
+    // Unit 0 には Part などの区切りがないので、セクション名を付けない
+    if (/^Unit\s*0$/i.test(unit.trim())) return unit;
     // セクション名（Part 1 など）は教科書データの同じページの項目から拾う
     const book = bookById(bookId);
     const items = (book?.items || []).filter(it => it.page === page && it.lesson);
@@ -4897,27 +4899,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 文法だけでは終わりが届かない。これらが範囲の終わりになることは実際にあるので、
     // 単語の手がかりで終わりを伸ばす。
     //
-    // ただし単語1個では伸ばさない。長文にたまたま出た語が一致するだけで範囲が伸びてしまう
-    // （実例：6月のテスト・正解はUnit 3 Part 1までなのに、peace が Let's Read 1 の語に
-    //  一致しただけで Let's Read 1 まで伸びた）。
-    // そのセクションの語が2語以上出ているときだけ、本当に範囲に入っていたとみなす。
+    // 【どのくらい信用するか】
+    // 文法の終わりのすぐ後ろにあるセクションなら、範囲に入っている可能性が高い（1語でも認める）。
+    // 離れているセクションは、長文にたまたま出た語である可能性が高い（2語以上を求める）。
+    // 実例：文法がUnit 3 Read and Think 2までのとき、直後のLet's Read 1（差0.5）は範囲に入る。
+    //       一方、Unit 3 Part 1で終わるテストからLet's Read 1（差0.8）は範囲外だった。
     const NO_GRAMMAR_SECTIONS = /Let'?s\s*Read|Real Life English|Stage Activity/i;
     if (gramHits.length) {
-      const NO_GRAM_MAX_GAP = 1.0;
-      const MIN_WORDS_TO_EXTEND = 2;
+      const NEAR_GAP  = 0.6;   // これ以内なら1語でも認める
+      const FAR_GAP   = 1.0;   // これ以内なら2語以上で認める
       const bySection = new Map();
       wordHits.forEach(h => {
         if (h.weak) return;
         if (!NO_GRAMMAR_SECTIONS.test(h.section || h.unit || '')) return;
         if (h.pos <= gramEndPos) return;
-        if (h.pos > gramEndPos + NO_GRAM_MAX_GAP) return;
+        if (h.pos > gramEndPos + FAR_GAP) return;
         const key = h.section || h.unit;
         if (!bySection.has(key)) bySection.set(key, { terms: new Set(), hit: h });
         bySection.get(key).terms.add(h.term);
         if (h.pos > bySection.get(key).hit.pos) bySection.get(key).hit = h;
       });
       bySection.forEach((v) => {
-        if (v.terms.size < MIN_WORDS_TO_EXTEND) return;
+        const gap  = v.hit.pos - gramEndPos;
+        const need = gap <= NEAR_GAP ? 1 : 2;
+        if (v.terms.size < need) return;
         if (v.hit.pos > endHit.pos) endHit = v.hit;
       });
       if (endHit.pos !== gramEndPos) {
@@ -4988,6 +4993,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // Let's Read には Part / Scene などの下位区分がない（「Let's Read 3 Scene 1」は存在しない）
     if (/Let'?s\s*Read/i.test(r.from_unit)) r.from_lesson = '';
     if (/Let'?s\s*Read/i.test(r.to_unit))   r.to_lesson   = '';
+    // Unit 0 には Part などの区切りがないので、セクション名を付けずに「Unit 0」とだけ表示する
+    if (/^Unit\s*0$/i.test(String(r.from_unit).trim())) r.from_lesson = '';
+    if (/^Unit\s*0$/i.test(String(r.to_unit).trim()))   r.to_lesson   = '';
 
     // 安全網：その学年に存在しない単元が範囲に出ていたら、範囲を出さない。
     // 中3はUnit 0〜6しかないのに「Unit 9」が出た実例があった（ページ不明の項目のラベルを
