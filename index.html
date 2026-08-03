@@ -3359,6 +3359,18 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     return null;
   }
 
+  // 履歴の保存は「読んで、足して、書く」ため、同時に走ると片方が消える。
+  // テストを同時に分析するようにしたので、保存だけは順番待ちにする。
+  let histSaveQueue = Promise.resolve();
+  function saveTestHistoryEntry(entry) {
+    histSaveQueue = histSaveQueue.then(() => {
+      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY) || '[]');
+      hist.unshift(entry);
+      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0, 2000)));
+    }).catch(() => {});
+    return histSaveQueue;
+  }
+
   async function analyzeTest({imgs, name}) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
@@ -3406,12 +3418,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
 
       const r = await runWithProgressCard(stEl, 'test', imgs.length, 'テストをAIが分析中', async () => {
-        const results = [];
-        for (let c = 0; c < chunks.length; c++) {
+        // ページごとの処理は互いに独立しているので、まとめて送って同時に待つ。
+        // 1ページずつ順番に待つと、5ページで5回分の待ち時間がかかっていた（1件2分38秒）。
+        // 同時に送れば、いちばん遅い1回分の待ち時間で済む。
+        const PARALLEL = 4;   // 同時に送る数（多すぎるとAPIの制限に当たる）
+        const results = new Array(chunks.length).fill(null);
+        let doneCount = 0;
+        for (let base = 0; base < chunks.length; base += PARALLEL) {
           if (testAnalysisStopped) break;
-          const ch = chunks[c];
-          const parts = ch.imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
-          parts.push({ text:
+          const batch = chunks.slice(base, base + PARALLEL);
+          await Promise.all(batch.map(async (ch, bi) => {
+            const c = base + bi;
+            const parts = ch.imgs.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
+            parts.push({ text:
 `${promptText}
 
 【いま渡されている範囲】全${imgs.length}ページのうち ${ch.from}〜${ch.to}ページ目です。
@@ -3422,7 +3441,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 ・この画像に写っている内容から学年が判断できる場合だけ書いてください
 ・表紙や注意書きだけで中身が見えない場合は、grade を空文字にしてください
 ・当てずっぽうで書かないでください。学年を間違えると出題範囲がまるごと外れます` });
-          results.push(await callGeminiJSON(
+            results[c] = await callGeminiJSON(
             parts,
         `定期テスト分析の専門家。研究目的で次を抽出：
 ①問題形式と問題数（全大問・全小問） ②出題文法パターン ③出題熟語 ④長文・対話文・リスニングのテーマ
@@ -3472,10 +3491,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         },
             20000,
             getFastModeOpts()
-          ));
-          setSt(stEl, 'load', `${c+1}/${chunks.length}まとまり読み取り済み（${ch.to}/${imgs.length}ページ）...`);
+          );
+            doneCount++;
+            setSt(stEl, 'load', `${doneCount}/${chunks.length}ページ読み取り済み...`);
+          }));
         }
-        return mergeTestResults(results);
+        return mergeTestResults(results.filter(Boolean));
       });
       setSt(stEl,'ok','✅ 分析完了');
       if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
@@ -3617,9 +3638,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         };
         const firestoreId = await saveTestEntryToFirestore(entry);
         if (firestoreId) entry.firestoreId = firestoreId;
-        const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
-        hist.unshift(entry);
-        localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,2000)));
+        await saveTestHistoryEntry(entry);
         renderTestHistory();
       } catch {}
 
@@ -5168,19 +5187,28 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const stopBtn = document.getElementById('testStopBtn');
     if (stopBtn) stopBtn.style.display = 'inline-flex';
     const stEl = document.getElementById('testStatus');
-    // テストごとに順番に分析する。1つのテストの問題と解答はまとめて渡される。
-    for (let i = 0; i < pendingTestGroups.length; i++) {
+    const t0 = Date.now();
+    // テストも複数同時に処理する。1件ずつ順番に待つと数百件で何十時間もかかる。
+    // ページの同時処理と合わせて、1件あたりの時間を大きく短縮する。
+    const TESTS_AT_ONCE = 2;
+    let finished = 0;
+    for (let base = 0; base < pendingTestGroups.length; base += TESTS_AT_ONCE) {
       if (testAnalysisStopped) break;
-      const g = pendingTestGroups[i];
-      if (pendingTestGroups.length > 1) {
-        setSt(stEl, 'load', `【${i+1}/${pendingTestGroups.length}件目】${g.name} を分析中...`);
+      const batch = pendingTestGroups.slice(base, base + TESTS_AT_ONCE);
+      await Promise.all(batch.map(g => analyzeTest(g)));
+      finished += batch.length;
+      if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
+        const per = (Date.now() - t0) / finished;
+        const left = Math.round(per * (pendingTestGroups.length - finished) / 60000);
+        setSt(stEl, 'load',
+          `【${finished}/${pendingTestGroups.length}件】完了 — 残り約${left}分`);
       }
-      await analyzeTest(g);
     }
     if (stopBtn) stopBtn.style.display = 'none';
     document.getElementById('testStartBtn').disabled = false;
     if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
-      setSt(stEl, 'ok', `✅ ${pendingTestGroups.length}件のテストを分析しました（結果は履歴で確認できます）`);
+      const min = Math.round((Date.now() - t0) / 60000);
+      setSt(stEl, 'ok', `✅ ${pendingTestGroups.length}件のテストを分析しました（${min}分）`);
     }
   }
 
