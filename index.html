@@ -1221,8 +1221,12 @@
   // テスト範囲に入らないセクション。
   // 凌央さんの確認：範囲に入るのは Unit / Let's Read / Real Life English / Stage Activity。
   // 下の6つは、そのページの語が出題されていても「範囲がそこまで進んだ証拠」にならない。
+  // ここから問題が出題されることはないセクション。
+  // 範囲表に「Grammar for Communication まで」と書かれることはあるが、
+  // 実際にそのページから出題されることはない（凌央さんの確認）。
+  // したがって、これらのページの語や文法を範囲判定の根拠にしてはいけない。
   const NOT_IN_RANGE_SECTIONS = ['Sounds and Letters', 'Grammar for Communication',
-                                 'Learning in English', '英語の歌', '夏休み特集'];
+                                 'Learning in English', 'Unit Activity', '英語の歌', '夏休み特集'];
 
   // そのページが範囲判定の対象かどうか
   function isRangeTargetPage(bookId, page) {
@@ -5357,6 +5361,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // Unit 0 には Part などの区切りがないので、セクション名を付けずに「Unit 0」とだけ表示する
     if (/^Unit\s*0$/i.test(String(r.from_unit).trim())) r.from_lesson = '';
     if (/^Unit\s*0$/i.test(String(r.to_unit).trim()))   r.to_lesson   = '';
+
+    // 出題されないセクション（Grammar for Communication / Unit Activity など）が
+    // 範囲の端に出ることはない。判定の根拠にしていない以上、端にも出さない。
+    // 範囲表に「Grammar for Communication まで」と書かれることはあるが、
+    // 実際に出題されるのはその手前までなので、手前のセクション名に直す。
+    const NO_TEST_LESSON = /Grammar\s*for\s*Communication|Unit\s*Activity|Sounds\s*and\s*Letters|Learning\s*in\s*English/i;
+    if (NO_TEST_LESSON.test(r.from_lesson || '')) r.from_lesson = '';
+    if (NO_TEST_LESSON.test(r.to_lesson   || '')) r.to_lesson   = '';
 
     // 安全網：その学年に存在しない単元が範囲に出ていたら、範囲を出さない。
     // 中3はUnit 0〜6しかないのに「Unit 9」が出た実例があった（ページ不明の項目のラベルを
