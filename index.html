@@ -4560,13 +4560,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if ((d.excluded||[]).length) decision.push(`復習として外した語：${esc((d.excluded||[]).slice(0,12).join('・'))}`);
     if ((d.otherGrade||[]).length) decision.push(`他学年でのみ見つかった語：${esc((d.otherGrade||[]).slice(0,12).join('・'))}`);
 
-    const noMatchRows = (d.noMatch||[]).length
-      ? `<div style="font-size:12px;line-height:1.9">
+    const noMatchRows = ((d.noMatch||[]).length || (d.grammarLike||[]).length)
+      ? `${(d.grammarLike||[]).length ? `<div style="font-size:12px;line-height:1.9;margin-bottom:8px">
+           文法として判定した語（${(d.grammarLike||[]).length}件）：<br>
+           <span style="color:var(--muted)">${esc((d.grammarLike||[]).join('・'))}</span>
+           <div style="font-size:11px;color:var(--muted);margin-top:4px">
+             これらは文法対応表で場所を決めています。教科書のページとの照合には使いません。</div>
+         </div>` : ''}
+         ${(d.noMatch||[]).length ? `<div style="font-size:12px;line-height:1.9">
            教科書のどこにも見つからなかった語（${(d.noMatch||[]).length}件）：<br>
            <span style="color:var(--muted)">${esc((d.noMatch||[]).join('・'))}</span>
            <div style="font-size:11px;color:var(--muted);margin-top:4px">
-             ここに教科書にあるはずの語が並んでいる場合、教科書データが足りないか、語の形が違って照合できていません。</div>
-         </div>`
+             ここに教科書にあるはずの語が並んでいる場合、教科書データが足りないか、語の形が違って照合できていません。<br>
+             文法名（「動名詞」「比較級」など）がここに並ぶのは正常です。文法は別の方法で判定しています。</div>
+         </div>` : ''}`
       : '<div style="color:var(--muted);font-size:12px">なし（拾った語はすべて教科書のどこかで見つかりました）</div>';
 
     const weakCount = sorted.filter(w=>w.weak).length;
@@ -5043,6 +5050,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         ? `${ru} ${auxSec.base}`
         : [ru, first.lesson].filter(Boolean).join(' ');
       const pos = rangePos(label, firstGrade);
+      // その学年の文法として説明できる語は、単語の証拠にしない。
+      // 実例：don't have to は中2 Unit 4 の文法だが、たまたま Unit 6 Stage Activity 2 の
+      //   ページにも同じ熟語が載っていたため、範囲が Stage Activity 2 まで伸びた。
+      //   文法として出題されたものは、文法対応表で判定すべきで、載っているページの位置とは無関係。
+      const asGrammar = grammarToUnit(gradeNum, v);
+      if (asGrammar) {
+        diag.grammarLike = diag.grammarLike || [];
+        diag.grammarLike.push(`${v}（文法として${asGrammar.unit}で判定）`);
+        continue;
+      }
       if (pos >= 0) wordHits.push({
         pos, unit: ru, lesson: first.lesson || '', term: v, section: sec,
         // ここから下は内訳表示のための記録（判定には使わない）
@@ -5110,18 +5127,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
 
-    // 終わりの位置は、その近くに出題語があるかで裏づけを取る。
-    // 実例（中1・正解はUnit 4 Stage Activity 1まで）：疑問詞・命令文が各9回、代名詞が6回。
-    //   回数だけ見ると代名詞（Unit 6）も十分だが、Unit 6の出題語は1語しかなく、
-    //   Unit 4の出題語は7語あった。範囲はUnit 4までだった。
+    // 終わりの位置が「飛び地」になっていないかを確かめる。
+    //
+    // テスト範囲は連続した区間なので、途中のUnitがまったく空なのに、
+    // その先だけ出題があるのは不自然。読み間違いの可能性が高い。
+    //
+    // 実例（中1・正解はUnit 4まで）：Unit 3(9回) Unit 4(9回) Unit 5(0回) Unit 6(6回)
+    //   → Unit 5 が空なので Unit 6 は飛び地。落として Unit 4 を採用する。
+    // 実例（中2・正解はUnit 5まで）：Unit 2(10回) Unit 3(1回) Unit 4(7回) Unit 5(4回)
+    //   → 間が埋まっているので Unit 5 は地続き。そのまま採用する。
     if (gramHits.length > 1) {
-      const SUPPORT_RANGE = 1.0;   // この距離以内の出題語を裏づけとみなす
-      const SUPPORT_MIN   = 2;     // 裏づけに必要な語数
-      const supported = c => wordHits.filter(w => !w.weak && w.pos >= c.pos - SUPPORT_RANGE).length >= SUPPORT_MIN;
+      // Unit単位で、文法か単語のどちらかの手がかりがあるかを調べる
+      const filled = new Set();
+      gramHits.forEach(h => filled.add(Math.floor(h.pos)));
+      wordHits.forEach(h => { if (!h.weak) filled.add(Math.floor(h.pos)); });
+      const isIsland = c => {
+        const u = Math.floor(c.pos);
+        // ひとつ手前のUnitに手がかりがなければ飛び地とみなす
+        return u >= 1 && !filled.has(u - 1);
+      };
       const cands = [...(repeatedGram.length ? repeatedGram : gramHits)].sort((a, b) => b.pos - a.pos);
-      const ok = cands.find(supported);
-      if (ok && ok.pos < endHit.pos) {
-        diag.endDemoted = `${endHit.term}（${endHit.unit}）は近くに出題語がないため終わりにしませんでした`;
+      const ok = cands.find(c => !isIsland(c));
+      if (ok && ok.pos < endHit.pos && isIsland(endHit)) {
+        diag.endDemoted = `${endHit.term}（${endHit.unit}）は、ひとつ手前のUnitに手がかりがない飛び地のため終わりにしませんでした`;
         endHit = ok;
       }
     }
@@ -5156,8 +5184,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const need = gap <= NEAR_GAP ? 1 : 2;
         if (v.terms.size < need) return;
         if (v.hit.pos > endHit.pos) endHit = v.hit;
-      });
-      if (endHit.pos !== gramEndPos) {
+      });      if (endHit.pos !== gramEndPos) {
         const k = endHit.section || endHit.unit;
         diag.endExtendedByWord = `${k}（${[...(bySection.get(k)?.terms || [])].join('・')}）`;
       }
