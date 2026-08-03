@@ -3547,6 +3547,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const prev = findPrevTestEnd({ school: extractSchoolName(name), grade: r.grade, testDate });
       const prevEndPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
       if (!tooBlurry) refineRangeFromLibrary(r, { prevEndPos: (prevEndPos != null && prevEndPos >= 0) ? prevEndPos : null, testDate });
+      // 何を「前回のテスト」として使ったかを残す（一覧で確認できるようにする）
+      const prevInfo = prev ? { date: prev.date, range: prev.range } : null;
 
 
       // 範囲テキストを組み立て
@@ -3649,6 +3651,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
           testDate: extractTestDate(name),
+          prevTest: prevInfo,
           // 学年を画面で指定して分析した場合の印。
           // 指定された学年は正しいので、あとから「学年が怪しい」と警告しない。
           gradeSpecified: gradeWasPicked,
@@ -4050,6 +4053,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                      </div>`;
                   return (prev ? line(prev.grade ? esc(prev.grade) : '前学年', prev, false) : '')
                        + line(prev ? esc(h.grade||'') : '', cur, true)
+                       + (h.prevTest && h.prevTest.range
+                          ? `<div style="color:var(--muted);font-size:10px;margin-top:2px"
+                                title="範囲の始まりは、この前回のテストの終わりより後ろから探しています。前回が間違っていると、このテストもずれます">
+                               前回：${esc(h.prevTest.date||'')} ${esc(h.prevTest.range)} まで</div>` : '')
                        + (h.rangePrev && h.rangePrev !== h.range
                           ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</div>` : '')
                        + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${realIdx})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
@@ -4167,7 +4174,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     let skipped = 0;      // 判定材料がなく計算できなかった件数
     let cleaned = 0;      // 暴走した長文を掃除した件数
 
-    hist.forEach((h, idx) => {
+    // 古いテストから順に処理する。
+    // 範囲の始まりは「前回のテストの終わり」を手がかりにするため、
+    // 古いものを先に直さないと、その結果が次のテストに反映されない。
+    // 履歴は新しい順に並んでいるので、日付で並べ替えてから処理する。
+    const order = hist.map((h, idx) => ({ h, idx, d: h.testDate || extractTestDate(h.name || '') || '' }))
+      .sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
+
+    order.forEach(({ h, idx }) => {
       // 保存済みの暴走した長文もここで掃除する（保存データの肥大化を解消）
       const sizeBefore = JSON.stringify(h.question_types || []).length;
       sanitizeAiText(h);
@@ -4210,8 +4224,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const prev = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''), grade: r.grade, testDate: tDate });
       const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
       refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null, testDate: tDate });
+      h.prevTest = prev ? { date: prev.date, range: prev.range } : null;
       const after = buildRangeText(r);
       const before = h.range || '範囲不明';
+      // 計算した結果をその場で持たせる。
+      // 次のテストは「前回の終わり」としてこれを見るので、
+      // 古いものを直した効果がそのまま後続に伝わる。
+      if (after) h.rangeTemp = after;
       if ((after && after !== before) || inferredGrade) {
         changes.push({ idx, before, after, name: h.name || '', inferredGrade });
       }
@@ -4840,7 +4859,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   const VALID_LESSON_PATTERNS = [
     [/Part\s*([123])/i,                    n => `Part ${n}`],
     [/Read\s*and\s*Think\s*([12])/i,       n => `Read and Think ${n}`],
-    [/Scene\s*([12])/i,                    n => `Scene ${n}`],
     [/Grammar\s*for\s*Communication\s*(\d?)/i, n => `Grammar for Communication${n?' '+n:''}`],
     [/Real\s*Life\s*English\s*(\d?)/i,     n => `Real Life English${n?' '+n:''}`],
     [/Sounds\s*and\s*Letters\s*(\d?)/i,    n => `Sounds and Letters${n?' '+n:''}`],
@@ -4850,6 +4868,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     [/Let'?s\s*Write\s*(\d?)/i,            n => `Let's Write${n?' '+n:''}`],
     [/Learning\s*(?:\.\.\.\s*)?in\s*English\s*(\d?)/i, n => `Learning in English${n?' '+n:''}`],
     [/Over\s*the\s*Horizon/i,              () => 'Over the Horizon'],
+    // Unit Activity は実在する（Real Life English の前にあることが多い）
+    [/Unit\s*Activity\s*(\d?)/i,           n => `Unit Activity${n?' '+n:''}`],
   ];
 
   function normalizeUnitField(v) {
@@ -5272,18 +5292,32 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 長文に前回までの範囲の単語が出てくると、それだけで始まりが前に引っぱられるため、
     // ここで下限を決めておく（実例：後期中間のテストで、前期期末までの範囲の
     // hear of / national / bring together が長文に出て、始まりがUnit 3になっていた）。
+    // 前回のテストの終わりは「補助」として使う。
+    //
+    // 【なぜ絶対の下限にしないか】
+    // 前回のテストの範囲が間違っていると、その間違いが次のテストに伝染し、
+    // さらにその次にも伝わる。実例：前回がUnit 4までと誤判定されていたため、
+    // 次のテストの始まりがUnit 4に強制され、範囲が1点に潰れた。
+    //
+    // そこで、文法・単語から始まりが決まるならそちらを優先し、
+    // 前回の情報は「手がかりが前回の範囲内にしかないとき」だけ使う。
     const prevEndPos = (opts && opts.prevEndPos != null) ? opts.prevEndPos : null;
-    if (prevEndPos != null && prevEndPos >= 0) {
-      diag.prevEndPos = prevEndPos;
-      minUnit = Math.max(minUnit, Math.floor(prevEndPos));
-    }
-    const inWindow = allHits.filter(h => {
+    if (prevEndPos != null && prevEndPos >= 0) diag.prevEndPos = prevEndPos;
+
+    const inWindowAll = allHits.filter(h => {
       if (h.weak) return false;                    // 誤ヒットは開始の根拠にしない
       if (h.usedForEnd === false) return false;     // 回数が足りない文法は開始の根拠にもしない
-      if (prevEndPos != null && h.pos <= prevEndPos + 0.001) return false; // 前回の終わりまでは除く
       const u = Math.floor(h.pos);
       return u >= minUnit && u <= endUnit;
     });
+    // 前回の終わりより後ろの手がかりだけに絞る
+    const afterPrev = (prevEndPos != null && prevEndPos >= 0)
+      ? inWindowAll.filter(h => h.pos > prevEndPos + 0.001) : inWindowAll;
+    // 前回より後ろに手がかりがあるならそれを使い、なければ全体から選ぶ
+    const inWindow = afterPrev.length ? afterPrev : inWindowAll;
+    if (prevEndPos != null && !afterPrev.length && inWindowAll.length) {
+      diag.prevIgnored = '前回のテストより後ろに手がかりがないため、前回の範囲は使いませんでした';
+    }
     diag.minUnit = minUnit;
 
     // 窓の中の手がかりが乏しいときは無理に縮めない（AIの終端より後ろを示すときだけ伸ばす）。
@@ -5887,7 +5921,10 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
       if ((h.school||'') !== school) return;
       if (normalizeGrade(h.grade||'') !== normalizeGrade(grade)) return;
       if (!h.range || h.range === '範囲不明') return;
-      if (!best || d > best.date) best = { date: d, range: h.range, name: h.name || '' };
+      // 再判定中は、その場で計算し直した値（rangeTemp）を優先する。
+      // そうしないと、古いテストを直しても次のテストが古い値を見てしまう。
+      const useRange = h.rangeTemp || h.range;
+      if (!best || d > best.date) best = { date: d, range: useRange, name: h.name || '' };
     });
     return best;
   }
