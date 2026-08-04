@@ -2165,7 +2165,7 @@
             }
           }
           await db.collection(FB_CONFIG_COL).doc('test_history').delete();
-          localStorage.setItem(TEST_HIST_KEY, JSON.stringify(oldTests));
+          histSave(oldTests);
           try { renderTestHistory(); } catch {}
         }
 
@@ -2173,21 +2173,21 @@
         let firestoreTests = [];
         try {
           const snap = await db.collection(FB_TESTS_COL)
-            .orderBy('createdAt', 'desc').limit(2000).get();
+            .orderBy('createdAt', 'desc').limit(5000).get();
           snap.forEach(doc => firestoreTests.push({ ...doc.data(), firestoreId: doc.id }));
         } catch {
           // インデックスなし時のフォールバック（ソートなし）
-          const snap2 = await db.collection(FB_TESTS_COL).limit(2000).get();
+          const snap2 = await db.collection(FB_TESTS_COL).limit(5000).get();
           snap2.forEach(doc => firestoreTests.push({ ...doc.data(), firestoreId: doc.id }));
         }
         if (firestoreTests.length) {
           // localStorageと統合（firestoreIdで重複除去）
-          const localTests = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+          const localTests = histAll();
           const localIds = new Set(localTests.map(t=>t.firestoreId).filter(Boolean));
           const merged = [...localTests];
           firestoreTests.forEach(t => { if (!localIds.has(t.firestoreId)) merged.push(t); });
           merged.sort((a,b) => (b.date||'').localeCompare(a.date||''));
-          localStorage.setItem(TEST_HIST_KEY, JSON.stringify(merged.slice(0,2000)));
+          histSave(merged.slice(0,5000));
           try { renderTestHistory(); } catch {}
         }
         sessionStorage.setItem('nhscope_tests_loaded', '1');
@@ -3404,9 +3404,9 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   let histSaveQueue = Promise.resolve();
   function saveTestHistoryEntry(entry) {
     histSaveQueue = histSaveQueue.then(() => {
-      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY) || '[]');
+      const hist = histAll();
       hist.unshift(entry);
-      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0, 2000)));
+      histSave(hist.slice(0, 5000));
     }).catch(() => {});
     return histSaveQueue;
   }
@@ -3541,7 +3541,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         return mergeTestResults(results.filter(Boolean));
       });
       setSt(stEl,'ok','✅ 分析完了');
-      if (testAnalysisStopped) return; // 停止ボタンが押されていたら結果を保存しない
+      if (testAnalysisStopped) return { ok:false, name, stopped:true, reason:'停止しました' }; // 停止ボタンが押されていたら結果を保存しない
       if (r.grade) r.grade = normalizeGrade(r.grade);
       // 画面で学年が指定されていれば、それを最優先で使う。
       // 学年は範囲判定の土台なので、分かっているならAIの読み取りに頼る必要がない。
@@ -3588,7 +3588,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             <p style="font-size:13px;color:var(--muted)">問題形式が1つも読み取れなかったため、保存していません。PDFの画質が低い、解答用紙のみ、または読み取りに失敗した可能性があります。もう一度実行するか、別のPDFで試してください。</p>
             ${droppedFields.length?`<p style="font-size:11px;color:var(--muted);margin-top:6px">AIが範囲欄に不正な値を返していました：<br>${droppedFields.map(esc).join('<br>')}</p>`:''}
           </div>`;
-        return;
+        return { ok:false, name, reason:'問題形式を1つも読み取れませんでした（画質が低い／解答用紙のみの可能性）' };
       }
 
       // 画質が悪くて読み取れなかった場合の警告（範囲を出していないことを伝える）
@@ -3752,13 +3752,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
       // まとめて分析しているときは、1件ごとに結果カードを出すと画面が大きく動いて
       // 見づらいので出さない（結果は履歴で確認できる）
-      if (pendingTestGroups && pendingTestGroups.length > 1) return;
+      if (pendingTestGroups && pendingTestGroups.length > 1) return { ok:true, name };
       // 結果カードは出さない。必要な情報（学年・範囲・問題形式・警告）は
       // すべて履歴の表に出るので、そちらで確認する。
       rsEl.innerHTML = '';
 
       renderTestHistory();
-    } catch(e) { setSt(stEl,'err','❌ '+friendlyError(e)); }
+      return { ok:true, name };
+    } catch(e) {
+      // 失敗を握りつぶさない。まとめて分析しているときは、この表示が
+      // すぐ次の進捗に上書きされてしまうため、呼び出し元へ理由を返して最後にまとめて出す。
+      setSt(stEl,'err','❌ '+friendlyError(e));
+      return { ok:false, name, reason: friendlyError(e) };
+    }
   }
 
   // そのテストがどの年度のものかを返す（4月〜翌3月が1年度）。
@@ -3828,7 +3834,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 2学期制（西三河）の学校をチェックボックスで選ぶ
   function openSemester2() {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const schools = [...new Set(hist.map(h => h.school || extractSchoolName(h.name||'')).filter(Boolean))].sort();
     if (!schools.length) { alert('分析済みのテストがないため、学校の一覧を作れません。'); return; }
     const cur = getSemester2Schools();
@@ -3894,7 +3900,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const v = histFilter.school;
     if (!v) { box.innerHTML = ''; box.style.display = 'none'; return; }
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const schools = [...new Set(hist.map(h => h.school || extractSchoolName(h.name||'')).filter(Boolean))];
     const hits = schools.filter(s => s.includes(v)).sort().slice(0, 10);
     // 候補が1つだけで、それが入力そのものなら出さない（選び終わっている状態）
@@ -3945,7 +3951,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const el = document.getElementById('testHistory');
     if (!el) return;
     try {
-      const allHist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      const allHist = histAll();
       if (!allHist.length) { el.innerHTML=''; return; }
 
       // 年を抽出してタブ生成
@@ -4022,7 +4028,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const el = document.getElementById('testHistTable');
     if (!el) return;
     let allHist = [];
-    try { allHist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { allHist = histAll(); } catch {}
     const hist = filteredHist(allHist);
     const cnt = document.getElementById('histCount');
     if (cnt) cnt.textContent = `${hist.length}件`;
@@ -4196,7 +4202,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   async function rejudgeTestRanges() {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     if (!hist.length) { alert('保存されているテストがありません。'); return; }
     if (!getNHItems().length) {
       alert('教科書データが読み込まれていません。範囲の判定には教科書データが必要です。');
@@ -4280,7 +4286,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!changes.length) {
       // 範囲が変わらなくても、掃除した結果は保存する
       if (cleaned) {
-        try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); } catch {}
+        try { histSave(hist); } catch {}
         renderTestHistory();
       }
       alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件`
@@ -4303,7 +4309,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       hist[c.idx].range     = c.after;
       if (c.inferredGrade) { hist[c.idx].gradePrev = hist[c.idx].grade || ''; hist[c.idx].grade = c.inferredGrade; }
     });
-    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    try { histSave(hist); }
     catch { alert('ブラウザへの保存に失敗しました（容量オーバーの可能性）。'); return; }
 
     // Firestore側も書き換え
@@ -4388,7 +4394,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   function fixTestRange(idx) {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const h = hist[idx];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
     rangeEditIdx = idx;
@@ -4458,7 +4464,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   async function saveRangeEdit() {
     if (rangeEditIdx < 0) return;
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const h = hist[rangeEditIdx];
     if (!h) { closeRangeEdit(); return; }
     const mo = document.getElementById('rangeEditModal');
@@ -4492,7 +4498,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.prevGradeRange = prevText;
     h.prevGradeGrade = prevText ? mo.dataset.prevGrade : '';
     h.prevGradePages = prevText ? prev.pages : null;
-    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    try { histSave(hist); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力', rangePages: h.rangePages,
@@ -4504,7 +4510,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   async function fixTestGrade(idx) {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const h = hist[idx];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
 
@@ -4534,7 +4540,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.rangePrev = h.range || '';
     h.grade = g;
     h.range = newRange;
-    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); }
+    try { histSave(hist); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h.firestoreId, { grade: h.grade, range: h.range, gradePrev: h.gradePrev, rangePrev: h.rangePrev });
     renderTestHistory();
@@ -4548,7 +4554,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   function showRangeDiag(idx) {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const h = hist[idx];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
     if (!getNHItems().length) { alert('教科書データが読み込まれていません。'); return; }
@@ -4673,7 +4679,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   async function clearTestHistory() {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     if (!hist.length) { alert('テスト分析履歴はありません。'); return; }
     const ok = await showConfirm(
       `テスト分析履歴 ${hist.length}件をすべて削除します。\n\n` +
@@ -4681,7 +4687,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       `この操作は取り消せません。`, '全て削除する');
     if (!ok) return;
 
-    localStorage.removeItem(TEST_HIST_KEY);
+    histSave([]);
     const stEl = document.getElementById('testStatus');
     // Firestoreの個別文書を削除（件数が多いので進捗を出す）
     if (FIREBASE_READY && db) {
@@ -4700,11 +4706,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   function deleteTestHistoryItem(index) {
     try {
-      const hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      const hist = histAll();
       const entry = hist[index];
       if (entry?.firestoreId) deleteTestFromFirestore(entry.firestoreId);
       hist.splice(index, 1);
-      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist));
+      histSave(hist);
       renderTestHistory();
     } catch {}
   }
@@ -5488,7 +5494,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 履歴にある分析済みのテストの鍵を集める
   function analyzedKeySet() {
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const set = new Set();
     hist.forEach(h => {
       const k = analyzedKey(h.name || '', h.grade || '');
@@ -5518,7 +5524,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     prevEl.innerHTML = `自校の範囲：<b>${esc(myRange)}</b>（p.${from}〜${to}）`;
 
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
 
     const cands = [];
     hist.forEach(h => {
@@ -5753,7 +5759,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!row) return;
     const r = row.r;
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const match = findTestByDate(hist, row.school, row.grade, row.date);
     row.matchIdx = match ? match.idx : -1;
     row.unitText = (r.textbook_from || r.textbook_to)
@@ -5775,7 +5781,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     lastSyllabusResults = results;
     const el = document.getElementById('syllabusResult');
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
 
     const rows = results.map((res, i) => {
       if (res.error) {
@@ -5903,7 +5909,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const row = syllabusRows[i];
     if (!row || row.matchIdx < 0 || !row.unitText) return false;
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     const h = hist[row.matchIdx];
     if (!h) return false;
     const r = row.r;
@@ -5917,7 +5923,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.prevGradePages = row.prevUnitText ? { from: r.prev_grade_from, to: r.prev_grade_to } : null;
     h.otherMaterials = r.other_materials || '';
     h.syllabusTestName = r.test_name || '';
-    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); } catch { return false; }
+    try { histSave(hist); } catch { return false; }
     if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '範囲表', rangePages: h.rangePages,
       prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade, prevGradePages: h.prevGradePages,
@@ -6051,16 +6057,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // ページの同時処理と合わせて、1件あたりの時間を大きく短縮する。
     const TESTS_AT_ONCE = 2;
     let finished = 0;
+    // 成功と失敗を数える。以前は数えていなかったため、失敗しても
+    // 「◯件のテストを分析しました」と出て、抜けに気づけなかった。
+    let okCount = 0;
+    const failed = [];
     for (let base = 0; base < pendingTestGroups.length; base += TESTS_AT_ONCE) {
       if (testAnalysisStopped) break;
       const batch = pendingTestGroups.slice(base, base + TESTS_AT_ONCE);
-      await Promise.all(batch.map(g => analyzeTest(g)));
+      const rets = await Promise.all(batch.map(async g => {
+        // analyzeTestの中で拾いきれなかった例外も、ここで必ず受け止める
+        try { return await analyzeTest(g); }
+        catch(e) { return { ok:false, name:g.name, reason: friendlyError(e) }; }
+      }));
+      rets.forEach((r, i) => {
+        const nm = (r && r.name) || batch[i].key || batch[i].name || '';
+        if (r && r.ok) okCount++;
+        else if (!(r && r.stopped)) failed.push({ name: nm, reason: (r && r.reason) || '原因不明' });
+      });
       finished += batch.length;
       if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
         const per = (Date.now() - t0) / finished;
         const left = Math.round(per * (pendingTestGroups.length - finished) / 60000);
         setSt(stEl, 'load',
-          `【${finished}/${pendingTestGroups.length}件】完了 — 残り約${left}分`);
+          `【${finished}/${pendingTestGroups.length}件】完了（成功${okCount}件${failed.length?` ／ 失敗${failed.length}件`:''}） — 残り約${left}分`);
       }
     }
     if (stopBtn) stopBtn.style.display = 'none';
@@ -6069,8 +6088,35 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (pendingTestGroups.length > 1) renderTestHistory();
     if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
       const min = Math.round((Date.now() - t0) / 60000);
-      setSt(stEl, 'ok', `✅ ${pendingTestGroups.length}件のテストを分析しました（${min}分）`);
+      if (failed.length) {
+        setSt(stEl, 'err',
+          `⚠️ ${okCount}件を保存しました／${failed.length}件は失敗しました（${min}分）`);
+      } else {
+        setSt(stEl, 'ok', `✅ ${okCount}件のテストを保存しました（${min}分）`);
+      }
     }
+    // 失敗したテストは一覧で出す。何が抜けたか分からないまま終わらせない。
+    renderFailedTests(failed);
+  }
+
+  // 失敗したテストの一覧を画面に出す（ファイル名をコピーして選び直せるように）
+  function renderFailedTests(failed) {
+    const rsEl = document.getElementById('testResult');
+    if (!rsEl) return;
+    if (!failed || !failed.length) return;
+    rsEl.innerHTML = `
+      <div class="card" style="border-color:#FCA5A5;background:#FEF2F2">
+        <div class="card-title" style="color:#DC2626">⚠️ 分析できなかったテスト（${failed.length}件）</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px">
+          この${failed.length}件は保存されていません。原因を直したうえで、このファイルだけを選び直して分析してください。
+        </p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>テスト</th><th>理由</th></tr></thead>
+          <tbody>${failed.map(f =>
+            `<tr><td style="font-size:12px">${esc(f.name)}</td><td style="font-size:12px">${esc(f.reason)}</td></tr>`
+          ).join('')}</tbody>
+        </table></div>
+      </div>`;
   }
 
   // ── テスト分析 停止 ───────────────────────────────────────────────
@@ -6150,7 +6196,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 分析済みをスキップ（「再分析する」チェック時はスキップしない）
     const reanalyze = !!(document.getElementById('batchReanalyze')||{}).checked;
     const existing = new Set(
-      JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]').map(h => h.name)
+      histAll().map(h => h.name)
     );
     const pending = reanalyze ? names.slice() : names.filter(n => !existing.has(n));
     const skipped = names.length - pending.length;
@@ -6351,7 +6397,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
       };
       const firestoreId = await saveTestEntryToFirestore(entry);
       if (firestoreId) entry.firestoreId = firestoreId;
-      let hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]');
+      let hist = histAll();
       // 同名の古い分析結果を削除（再分析時の重複防止）
       const olds = hist.filter(h => h.name === name);
       for (const old of olds) {
@@ -6359,7 +6405,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
       }
       hist = hist.filter(h => h.name !== name);
       hist.unshift(entry);
-      localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist.slice(0,2000)));
+      histSave(hist.slice(0,5000));
     } catch {}
   }
 
@@ -6404,7 +6450,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     if (!school || !grade || !testDate) return null;
     const sy = schoolYearOf(testDate);
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
     let best = null;
     hist.forEach(h => {
       const d = h.testDate || extractTestDate(h.name || '');
@@ -7333,7 +7379,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     const rsEl      = document.getElementById('tsResults');
 
     let hist = [];
-    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    try { hist = histAll(); } catch {}
 
     if (!hist.length) {
       rsEl.innerHTML = `<div class="empty"><div class="empty-ico">📋</div><div class="empty-txt">テスト分析履歴がありません。先にテスト分析を行ってください。</div></div>`;
@@ -7515,6 +7561,98 @@ ${dataText}
   }
   const BACKUP_KEY    = 'nhscope_v1';
   const TEST_HIST_KEY = 'nhscope_tests';
+
+  // ── テスト分析履歴の保存先（IndexedDB） ────────────────────────────
+  // localStorageは5MBで頭打ちになる。超えたときに例外を投げるだけで、それを
+  // 握りつぶしていたため「保存できていないのに成功したように見える」状態が
+  // 起きていた（クラウド454件・手元367件という食い違いが実際に発生）。
+  // IndexedDBは数百MBまで入る。読み書きが非同期なので、起動時に一度だけ全件を
+  // メモリに読み込み、以後の読み出しはメモリから返す（画面側の書き方は変えない）。
+  const IDB_NAME  = 'nhscope';
+  const IDB_STORE = 'kv';
+  const IDB_TESTS = 'tests';
+  let _idb = null;
+  function idbOpen() {
+    if (_idb) return Promise.resolve(_idb);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => { _idb = req.result; resolve(_idb); };
+      req.onerror   = () => reject(req.error || new Error('IndexedDBを開けませんでした'));
+    });
+  }
+  function idbGet(key) {
+    return idbOpen().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const rq = tx.objectStore(IDB_STORE).get(key);
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror   = () => reject(rq.error);
+    }));
+  }
+  function idbSet(key, val) {
+    return idbOpen().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror    = () => reject(tx.error);
+      tx.onabort    = () => reject(tx.error || new Error('保存が中断されました'));
+    }));
+  }
+
+  // メモリ上の履歴（画面はここを読む）
+  let TESTHIST    = [];
+  let _histQueue  = Promise.resolve();
+  let _histWarned = false;
+
+  // 読み出し。写しを返すので、呼び出し側が並べ替えても元が壊れない
+  function histAll() { return TESTHIST.slice(); }
+
+  // 書き込み。メモリを先に更新し、IndexedDBへは順番待ちで書く
+  // （同時に書くと片方が消えるため）。失敗したら黙らずに画面へ出す。
+  function histSave(arr) {
+    TESTHIST = Array.isArray(arr) ? arr.slice() : [];
+    const snapshot = TESTHIST;
+    _histQueue = _histQueue
+      .then(() => idbSet(IDB_TESTS, snapshot))
+      .then(() => { _histWarned = false; })
+      .catch(e => {
+        console.error('テスト履歴の保存に失敗:', e);
+        if (!_histWarned) {
+          _histWarned = true;
+          try { showToast('⚠️ テスト分析の保存に失敗しました。ブラウザの空き容量を確認してください', 'error'); } catch {}
+        }
+      });
+    return _histQueue;
+  }
+
+  // 起動時に一度だけ呼ぶ。旧localStorageのデータもここで引っ越す。
+  async function histLoad() {
+    try {
+      const v = await idbGet(IDB_TESTS);
+      if (Array.isArray(v)) TESTHIST = v;
+    } catch(e) { console.warn('IndexedDBの読み込みに失敗:', e); }
+
+    // 旧localStorageからの引っ越し（初回のみ）。
+    // 引っ越したあとキーを消して、5MBの枠を教科書データのために空ける。
+    try {
+      const raw = localStorage.getItem(TEST_HIST_KEY);
+      if (raw) {
+        const old = JSON.parse(raw);
+        if (Array.isArray(old) && old.length) {
+          const seen = new Set(TESTHIST.map(t => t.firestoreId).filter(Boolean));
+          const add  = old.filter(t => !t.firestoreId || !seen.has(t.firestoreId));
+          if (add.length) {
+            TESTHIST = TESTHIST.concat(add);
+            await histSave(TESTHIST);
+          }
+        }
+        localStorage.removeItem(TEST_HIST_KEY);
+      }
+    } catch(e) { console.warn('旧データの引っ越しに失敗:', e); }
+  }
 
   function saveBackup() {
     if (!Array.isArray(library) || library.length === 0) return;
@@ -7887,7 +8025,11 @@ ${dataText}
   // 画面の途中から始まって分かりにくい。先頭から表示されるようにする。
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   window.scrollTo(0, 0);
-  (function() {
+  (async function() {
+    // 保存先をIndexedDBに移したので、画面を描く前に読み込みを終わらせる
+    // （旧localStorageのデータの引っ越しもここで済ませる）
+    try { await histLoad(); } catch(e) { console.error('histLoad:', e); }
+
     // 1. データ読み込み（優先順: localStorage > 埋め込みデータ > デフォルト）
     let loaded = false;
 
