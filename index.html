@@ -329,7 +329,6 @@
       <p style="font-size:12px;color:var(--muted);margin-top:8px">💡 WORD BOX・単語リストのページだけ指定すると高速・高精度</p>
       <div class="row" style="margin-top:14px;flex-wrap:wrap;gap:8px">
         <button class="btn btn-primary" onclick="startProcessing()">🤖 解析開始</button>
-        <button class="btn btn-secondary" onclick="autoSplitAnalyze()">📄 全ページ自動分割（30Pずつ）</button>
         <button class="btn btn-danger btn-sm" onclick="clearCurrentData()">🗑 クリアして解析</button>
         <span id="estLabel" style="font-size:12px;color:var(--muted)"></span>
       </div>
@@ -386,7 +385,6 @@
     <div class="card" style="border-color:#FDE68A;background:#FFFBEB">
       <div class="card-title" style="margin-bottom:8px">↺ 教科書リストを初期化</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">教科書のデータは残したまま、リスト表示が壊れた場合にリセットできます。</p>
-      <button class="btn btn-secondary btn-sm" onclick="resetLibrary()">↺ 中1・中2・中3に初期化する</button>
     </div>
   </div>
 
@@ -463,16 +461,16 @@
     <div class="card">
       <div class="card-title">📋 テスト範囲表の読み込み</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        学校が配るテスト範囲表の写真から、英語の範囲を読み取ります。<br>
+        学校が配るテスト範囲表から、英語の範囲を読み取ります。写真でも、スキャンしたPDFでも読めます。<br>
         推測ではなく実際の範囲がそのまま入るので、いちばん確実です。写真に学校名が書かれていれば自動で結びつけます。
       </p>
       <div class="upload-zone" id="syllabusZone" style="cursor:pointer">
         <div class="uz-ico">📋</div>
         <div class="uz-title" id="syllabusTitle">範囲表の写真をアップロード</div>
-        <div class="uz-sub" id="syllabusSub">複数枚可 — ドラッグ＆ドロップ、またはクリックして選択</div>
+        <div class="uz-sub" id="syllabusSub">写真・PDFどちらも可（複数まとめて）— ドラッグ＆ドロップ、またはクリックして選択</div>
       </div>
       <div id="syllabusFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-      <input type="file" id="syllabusFile" accept="image/*" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
+      <input type="file" id="syllabusFile" accept="image/*,.pdf" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
       <div class="row" style="margin-top:10px;gap:8px">
         <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('syllabusFile').click()">📂 写真を選択（複数可）</button>
         <button type="button" class="btn btn-primary" id="syllabusStartBtn" style="flex:1" disabled onclick="runSyllabusRead()">📋 範囲を読み取る</button>
@@ -482,27 +480,31 @@
       <div id="syllabusResult" style="margin-top:10px"></div>
     </div>
 
-    <div class="divider"><span>または — 複数校のPDFを一括分析</span></div>
+    <div class="divider"><span>または — 範囲から使える過去問を探す</span></div>
     <div class="card">
-      <div class="card-title">🏫 バッチ分析（複数校一括）</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">複数の中学校のテストPDFを一度に選択。同じファイル名のPDFをまとめて1テストとして分析します。</p>
-      <input type="file" id="batchFiles" accept=".pdf" multiple style="display:none" onchange="onBatchFilesSelected(this.files)">
-      <div class="row" style="gap:8px">
-        <button type="button" class="btn btn-secondary" onclick="document.getElementById('batchFiles').click()">📂 複数PDFを一括選択</button>
-        <button type="button" class="btn btn-primary" id="batchStartBtn" disabled onclick="runBatchAnalysis()">🏫 一括分析開始</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="clearBatchPDFs()" title="選択中のPDFを解除します">✕</button>
+      <div class="card-title">🎯 対策プリント用の過去問さがし</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        自校の範囲を入れると、その範囲で使える他校の過去問を探します。<br>
+        <b>範囲が同じか、それより狭いものだけ</b>を出します（未習の内容を生徒に解かせないため）。
+      </p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="ppGrade" style="padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+          <option value="中１">中1</option>
+          <option value="中２">中2</option>
+          <option value="中３" selected>中3</option>
+        </select>
+        <span style="font-size:13px">教科書 p.</span>
+        <input type="number" id="ppFrom" min="1" max="200" inputmode="numeric" placeholder="6"
+               style="width:70px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+        <span style="font-size:13px">〜 p.</span>
+        <input type="number" id="ppTo" min="1" max="200" inputmode="numeric" placeholder="23"
+               style="width:70px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+        <button class="btn btn-primary btn-sm" onclick="findPastPapers()">🎯 探す</button>
       </div>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--muted);cursor:pointer">
-        <input type="checkbox" id="batchReanalyze" style="cursor:pointer">
-        分析済みのテストも再分析する（同名の古い分析結果は新しい結果で置き換えられます）
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--muted);cursor:pointer">
-        <input type="checkbox" id="fastModeBatch" style="cursor:pointer">
-        ⚡ 高速モード — AIの思考量を制限して分析時間を短縮します（複雑なテストでは精度が下がる可能性あり）
-      </label>
-      <div id="batchFileList" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
-      <div id="batchStatus" style="margin-top:8px"></div>
+      <div id="ppUnitPreview" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      <div id="ppResult" style="margin-top:10px"></div>
     </div>
+
     <div id="testResult"></div>
     <div style="margin:6px 0 0"><button class="btn btn-secondary btn-sm" onclick="shareTestReport()" style="font-size:12px">🖨 共有レポート</button></div>
     <div id="testHistory"></div>
@@ -677,7 +679,6 @@
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:1" onclick="runTestSearch()">🔍 検索する</button>
-        <button class="btn btn-secondary" onclick="generateTrendSummary()" title="検索結果から学校・作成者の出題傾向をAIが要約します">📋 傾向サマリー</button>
       </div>
       <div id="tsSummary" style="display:none;margin-top:12px;padding:14px;background:#f0f7ff;border-radius:10px;border-left:4px solid var(--blue);font-size:13px;line-height:1.9"></div>
     </div>
@@ -2931,14 +2932,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         <div class="card-title">
           <span>📋 データプレビュー（先頭30件）</span>
           <div class="row" style="gap:6px;flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" onclick="exportDataHTML()">📦 データ入りHTMLを書き出す</button>
-            <button class="btn btn-secondary btn-sm" onclick="exportCSV()">📊 CSV出力</button>
-            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('csvImport').click()">📥 CSV取込</button>
             <input type="file" id="csvImport" accept=".csv" style="display:none" onchange="if(this.files[0])importCSV(this.files[0])">
-            <button class="btn btn-secondary btn-sm" onclick="exportUnitWordList()">📋 Unit別単語リスト</button>
             <button class="btn btn-secondary btn-sm" onclick="deduplicateData()">🔁 重複削除</button>
-            <button class="btn btn-secondary btn-sm" onclick="fillEmptyTranslations()">🔤 空の訳を一括補完</button>
-            <button class="btn btn-amber btn-sm" onclick="showJSON()">📋 JSONを表示・コピー</button>
           </div>
         </div>
         <div class="tbl-wrap">
@@ -3682,6 +3677,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           // 学年を画面で指定して分析した場合の印。
           // 指定された学年は正しいので、あとから「学年が怪しい」と警告しない。
           gradeSpecified: gradeWasPicked,
+          // 警告は履歴の行に出す（結果カードを廃止したため）
+          warnBlur:  (r.unreadablePages||0) > 0
+            ? `画質が悪く、${r.totalPages}ページ中${r.unreadablePages}ページが読み取れませんでした` : '',
+          warnGrade: (Object.keys(r.gradeVotes||{}).length > 1 && !gradeWasPicked)
+            ? `学年の判定が割れました（${Object.keys(r.gradeVotes||{}).map(k=>`${k}：${r.gradeVotes[k]}票`).join('／')}）` : '',
+          warnThin:  thin ? `読み取りが少なめです（${pageCount}ページから大問${qtCount}件・出題語${tvCount}語）` : '',
           prevGradeRange: prevGrade ? prevGrade.range : '',
           prevGradeGrade: prevGrade ? prevGrade.grade : '',
           year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
@@ -3689,7 +3690,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const firestoreId = await saveTestEntryToFirestore(entry);
         if (firestoreId) entry.firestoreId = firestoreId;
         await saveTestHistoryEntry(entry);
-        renderTestHistory();
+        // 分析中に表全体を描き直すと、画面が上下に動いて見づらい。
+        // まとめて分析しているときは、最後にまとめて描き直す。
+        if (!pendingTestGroups || pendingTestGroups.length <= 1) renderTestHistory();
       } catch {}
 
       // 大問を番号順にソート
@@ -3747,31 +3750,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             <p style="font-size:13px;line-height:1.7">${esc(r.cross_grade_notes)}</p>
           </div>` : '';
 
-      rsEl.innerHTML=`
-        <div class="result-hero">
-          <div class="result-grade">${esc(r.grade||'')}</div>
-          <div class="result-range">${esc(rangeStr)}</div>
-          ${(()=>{
-            const cur = rangeBothNotations(r.grade, rangeStr);
-            const prev = prevGrade ? rangeBothNotations(prevGrade.grade, prevGrade.range) : null;
-            const row = (label, b) => `<div style="display:flex;gap:10px;align-items:baseline;justify-content:center;flex-wrap:wrap;font-size:13px;margin-top:3px">
-                <span style="opacity:0.75">${esc(label)}</span><span>${esc(b.unit)}</span>${b.page?`<span style="opacity:0.85">／ ${esc(b.page)}</span>`:''}</div>`;
-            return (cur.page ? row(esc(r.grade||''), cur) : '')
-                 + (gradeNumOf(r.grade) > 1
-                    ? `<div style="font-size:12px;opacity:0.8;margin-top:4px">
-                         前学年の内容も範囲に入る場合は、履歴の「範囲を直す」から入力してください</div>` : '');
-          })()}
-        </div>
-        ${blurWarn}
-        ${gradeWarn}
-        ${thinWarn}
-        <div class="card"><div class="card-title">📌 サマリー</div><p style="font-size:14px;line-height:1.85">${esc(r.summary||'')}</p></div>
-        ${crossNote}
-        ${qtHtml}
-        ${(r.key_items||[]).length?`<div class="card"><div class="card-title">🔑 主な出題文法・語句</div><div class="pills">${(r.key_items||[]).map(k=>`<div class="pill tag">${esc(k)}</div>`).join('')}</div></div>`:''}`;
-
-      // 結果をlocalStorageに保存（タブを離れても復元できるように）
-      try { localStorage.setItem('nhscope_test_result', rsEl.innerHTML); } catch {}
+      // まとめて分析しているときは、1件ごとに結果カードを出すと画面が大きく動いて
+      // 見づらいので出さない（結果は履歴で確認できる）
+      if (pendingTestGroups && pendingTestGroups.length > 1) return;
+      // 結果カードは出さない。必要な情報（学年・範囲・問題形式・警告）は
+      // すべて履歴の表に出るので、そちらで確認する。
+      rsEl.innerHTML = '';
 
       renderTestHistory();
     } catch(e) { setSt(stEl,'err','❌ '+friendlyError(e)); }
@@ -4059,6 +4043,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         ${sq.phrases?`<span style="color:#dc2626;font-weight:600"> 🔗${esc(sq.phrases)}</span>`:''}
                       </div>`).join('')}
                     </div>`).join('')}
+                    ${h.summary ? `<div style="margin-top:6px;padding-top:6px;border-top:0.5px solid var(--color-border-secondary,#e2e8f0)">
+                        <b>まとめ</b><br><span style="color:var(--muted)">${esc(h.summary)}</span></div>` : ''}
+                    ${(h.key_items||[]).length ? `<div style="margin-top:6px">
+                        <b>主な出題文法・語句</b><br><span style="color:var(--muted)">${esc((h.key_items||[]).join('・'))}</span></div>` : ''}
+                    ${h.otherMaterials ? `<div style="margin-top:6px">
+                        <b>教科書以外の範囲</b><br><span style="color:var(--muted)">${esc(h.otherMaterials)}</span></div>` : ''}
                    </div>
                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 4px;margin-top:2px"
                      onclick="var d=document.getElementById('qt-d-${realIdx}');d.style.display=d.style.display==='none'?'block':'none'">詳細▼</button>`
@@ -4095,6 +4085,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                           ? `<div style="color:var(--muted);font-size:10px;margin-top:2px"
                                 title="範囲の始まりは、この前回のテストの終わりより後ろから探しています。前回が間違っていると、このテストもずれます">
                                前回：${esc(h.prevTest.date||'')} ${esc(h.prevTest.range)} まで</div>` : '')
+                       + (() => {
+                           const ws = [h.warnBlur, h.warnGrade, h.warnThin].filter(Boolean);
+                           return ws.length
+                             ? `<div style="color:#B45309;font-size:10px;margin-top:2px">⚠️ ${ws.map(w=>esc(w)).join('／')}</div>`
+                             : '';
+                         })()
                        + (h.rangePrev && h.rangePrev !== h.range
                           ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</div>` : '')
                        + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${realIdx})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
@@ -5501,31 +5497,122 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return set;
   }
 
+  // ── 対策プリント用の過去問さがし ────────────────────────────────
+  // 自校の範囲で使える他校の過去問を探す。
+  // 範囲が同じか、それより狭いものだけを出す。
+  // 広い範囲の過去問を使うと、まだ習っていない内容を生徒に解かせることになるため。
+  function findPastPapers() {
+    const grade = document.getElementById('ppGrade').value;
+    const from  = parseInt(document.getElementById('ppFrom').value);
+    const to    = parseInt(document.getElementById('ppTo').value);
+    const prevEl = document.getElementById('ppUnitPreview');
+    const el = document.getElementById('ppResult');
+    if (!from || !to) { alert('教科書のページを入れてください。'); return; }
+
+    const myRange = pagesToRangeText(grade, `${from}〜${to}`);
+    if (!myRange) { prevEl.textContent = 'このページは教科書の範囲外です'; el.innerHTML = ''; return; }
+    const my = parseRangeText(myRange);
+    const gradeN = gradeNumOf(grade);
+    const myFrom = rangePos([my.from_unit, my.from_lesson].filter(Boolean).join(' '), gradeN);
+    const myTo   = rangePos([my.to_unit,   my.to_lesson].filter(Boolean).join(' '), gradeN);
+    prevEl.innerHTML = `自校の範囲：<b>${esc(myRange)}</b>（p.${from}〜${to}）`;
+
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+
+    const cands = [];
+    hist.forEach(h => {
+      if (normalizeGrade(h.grade||'') !== grade) return;
+      if (!h.range || h.range === '範囲不明') return;
+      const p = parseRangeText(h.range);
+      const f = rangePos([p.from_unit, p.from_lesson].filter(Boolean).join(' '), gradeN);
+      const t = rangePos([p.to_unit,   p.to_lesson].filter(Boolean).join(' '), gradeN);
+      if (f < 0 || t < 0) return;
+      // 自校の範囲に収まっているものだけ（同じか、それより狭い）
+      if (f < myFrom - 0.001 || t > myTo + 0.001) return;
+      const exact = Math.abs(f - myFrom) < 0.001 && Math.abs(t - myTo) < 0.001;
+      cands.push({ h, f, t, exact, width: t - f });
+    });
+
+    // 完全一致を先に、そのあとは範囲が広い順（自校に近い順）
+    cands.sort((a, b) => (b.exact - a.exact) || (b.width - a.width));
+
+    if (!cands.length) {
+      el.innerHTML = `<div style="padding:12px;color:var(--muted);font-size:13px">
+        この範囲で使える過去問は見つかりませんでした。<br>
+        範囲が同じか、それより狭いテストがありません。</div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${cands.length}件見つかりました</div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>学校・日付</th><th>範囲</th><th style="width:90px">自校との差</th></tr></thead>
+        <tbody>${cands.map(c => {
+          const pg = rangeBothNotations(c.h.grade, c.h.range, c.h.rangePages);
+          const src = c.h.rangeEditedBy === '範囲表' ? '<span style="color:#059669;font-size:10px">範囲表</span>'
+                    : c.h.rangeEditedBy === '手入力' ? '<span style="color:#059669;font-size:10px">手入力</span>'
+                    : '<span style="color:var(--muted);font-size:10px">推定</span>';
+          return `<tr${c.exact ? ' style="background:#F0FDF4"' : ''}>
+            <td style="font-size:11px">
+              ${esc(c.h.school || extractSchoolName(c.h.name||''))} ${esc(c.h.teacher||'')}<br>
+              <span style="color:var(--muted)">${esc(c.h.testDate || extractTestDate(c.h.name||'') || '')}
+              ${esc(testTermOf(c.h))}</span>
+            </td>
+            <td style="font-size:11px">
+              <b>${esc(pg.unit)}</b>${pg.page ? `<br><span style="color:var(--muted)">${esc(pg.page)}</span>` : ''} ${src}
+            </td>
+            <td style="font-size:11px">
+              ${c.exact ? '<b style="color:#059669">完全一致</b>'
+                        : `<span style="color:var(--muted)">${(c.f - myFrom).toFixed(1)}〜${(c.t - myTo).toFixed(1)} Unit ぶん狭い</span>`}
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`;
+  }
+
   // ── テスト範囲表の読み込み ──────────────────────────────────────
   // 学校が配る範囲表の写真から英語の範囲を読み取る。
   // テストから範囲を推測するのと違い、実際に書かれている範囲がそのまま取れるので確実。
   let pendingSyllabus = null;
 
   async function onSyllabusFilesSelected(files) {
-    const arr = Array.from(files || []).filter(f => /^image\//.test(f.type));
+    // 写真（画像）でもPDFでも受け取る。事務所でスキャンしたPDFをそのまま読めるようにする。
+    const arr = Array.from(files || []).filter(f =>
+      /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
     const stEl = document.getElementById('syllabusStatus');
     const btn  = document.getElementById('syllabusStartBtn');
-    if (!arr.length) { setSt(stEl, 'err', '画像ファイルを選んでください'); return; }
+    if (!arr.length) { setSt(stEl, 'err', '画像またはPDFを選んでください'); return; }
 
     document.getElementById('syllabusFileList').innerHTML =
-      arr.map(f => `📷 ${esc(f.name)}（${(f.size/1024).toFixed(0)}KB）`).join('<br>');
-    document.getElementById('syllabusTitle').textContent = `${arr.length}枚の写真`;
-    setSt(stEl, 'load', `${arr.length}枚を読み込み中...`);
+      arr.map(f => `${/\.pdf$/i.test(f.name)?'📄':'📷'} ${esc(f.name)}（${(f.size/1024).toFixed(0)}KB）`).join('<br>');
+    document.getElementById('syllabusTitle').textContent = `${arr.length}件のファイル`;
+    setSt(stEl, 'load', `${arr.length}件を読み込み中...`);
     try {
       const imgs = [];
-      for (const f of arr) {
-        imgs.push({ name: f.name, b64: await fileToBase64(f) });
+      for (let i = 0; i < arr.length; i++) {
+        const f = arr[i];
+        setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
+        if (/^image\//.test(f.type)) {
+          imgs.push({ name: f.name, b64: await fileToBase64(f) });
+        } else {
+          // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+          const MAX_PAGES = 40;
+          for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
+            imgs.push({
+              name: pdf.numPages > 1 ? `${f.name}（${p}ページ目）` : f.name,
+              b64: await toBase64(await pdf.getPage(p), TEST_SCALE_HI)
+            });
+          }
+        }
       }
       pendingSyllabus = imgs;
       setSt(stEl, 'ok', `✅ ${imgs.length}枚読み込み完了 — 範囲を読み取るを押してください`);
       btn.disabled = false;
     } catch (e) {
-      setSt(stEl, 'err', '❌ 画像の読み込みに失敗しました: ' + e.message);
+      setSt(stEl, 'err', '❌ 読み込みに失敗しました: ' + e.message);
     }
   }
 
@@ -5978,6 +6065,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
     if (stopBtn) stopBtn.style.display = 'none';
     document.getElementById('testStartBtn').disabled = false;
+    // まとめて分析したあとに、一度だけ表を描き直す（途中では描き直さない）
+    if (pendingTestGroups.length > 1) renderTestHistory();
     if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
       const min = Math.round((Date.now() - t0) / 60000);
       setSt(stEl, 'ok', `✅ ${pendingTestGroups.length}件のテストを分析しました（${min}分）`);
@@ -7769,8 +7858,12 @@ ${dataText}
     el.textContent=n?`✓ ${n}件読込済`:'教科書データ未読込';
   }
   function setSt(el,type,msg) {
+    // 表示の高さが変わると、その下の内容が上下に動いて読みづらくなる。
+    // 高さを固定し、長い文言は1行に収める。
     const cls={load:'s-load',ok:'s-ok',err:'s-err'}[type]||'s-load';
-    el.innerHTML=`<div class="status-bar ${cls}">${type==='load'?'<div class="spinner"></div>':''}${msg}</div>`;
+    if (!msg) { el.innerHTML=''; return; }
+    el.innerHTML=`<div class="status-bar ${cls}" style="min-height:38px;align-items:center;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${type==='load'?'<div class="spinner"></div>':''}${msg}</div>`;
   }
   function esc(s) {
     if (s==null) return '';
@@ -7790,6 +7883,10 @@ ${dataText}
 
   // ── INIT ───────────────────────────────────────────────────────────
   // スクリプトはbody末尾にあるのでDOM構築済み。DOMContentLoaded不要。
+  // リロードすると、ブラウザが前回見ていた位置を復元してしまい、
+  // 画面の途中から始まって分かりにくい。先頭から表示されるようにする。
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  window.scrollTo(0, 0);
   (function() {
     // 1. データ読み込み（優先順: localStorage > 埋め込みデータ > デフォルト）
     let loaded = false;
@@ -7893,9 +7990,10 @@ ${dataText}
       sz.addEventListener('dragleave', () => sz.classList.remove('over'));
       sz.addEventListener('drop', e => {
         e.preventDefault(); sz.classList.remove('over');
-        const imgs = Array.from(e.dataTransfer.files).filter(f => /^image\//.test(f.type));
-        if (imgs.length) onSyllabusFilesSelected(imgs);
-        else setSt(document.getElementById('syllabusStatus'), 'err', '画像ファイルをドロップしてください');
+        const fs = Array.from(e.dataTransfer.files).filter(f =>
+          /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+        if (fs.length) onSyllabusFilesSelected(fs);
+        else setSt(document.getElementById('syllabusStatus'), 'err', '画像またはPDFをドロップしてください');
       });
       // 写真を貼り付けでも受け取れるようにする（スクリーンショットをそのまま貼れる）
       sz.addEventListener('click', () => document.getElementById('syllabusFile').click());
