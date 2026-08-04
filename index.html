@@ -466,10 +466,10 @@
         学校が配るテスト範囲表の写真から、英語の範囲を読み取ります。<br>
         推測ではなく実際の範囲がそのまま入るので、いちばん確実です。写真に学校名が書かれていれば自動で結びつけます。
       </p>
-      <div class="upload-zone" id="syllabusZone">
+      <div class="upload-zone" id="syllabusZone" style="cursor:pointer">
         <div class="uz-ico">📋</div>
         <div class="uz-title" id="syllabusTitle">範囲表の写真をアップロード</div>
-        <div class="uz-sub" id="syllabusSub">複数枚可 — 1枚に1テストぶん。学校名・学年・日付が写っているもの</div>
+        <div class="uz-sub" id="syllabusSub">複数枚可 — ドラッグ＆ドロップ、またはクリックして選択</div>
       </div>
       <div id="syllabusFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       <input type="file" id="syllabusFile" accept="image/*" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
@@ -7753,6 +7753,22 @@ ${dataText}
         const pdfs = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
         if (pdfs.length) onTestFilesSelected(pdfs);
       });
+      tz.addEventListener('click', () => document.getElementById('testFile').click());
+    }
+
+    // 範囲表の写真のD&D（画像ファイルを受け取る）
+    const sz = document.getElementById('syllabusZone');
+    if (sz) {
+      sz.addEventListener('dragover',  e => { e.preventDefault(); sz.classList.add('over'); });
+      sz.addEventListener('dragleave', () => sz.classList.remove('over'));
+      sz.addEventListener('drop', e => {
+        e.preventDefault(); sz.classList.remove('over');
+        const imgs = Array.from(e.dataTransfer.files).filter(f => /^image\//.test(f.type));
+        if (imgs.length) onSyllabusFilesSelected(imgs);
+        else setSt(document.getElementById('syllabusStatus'), 'err', '画像ファイルをドロップしてください');
+      });
+      // 写真を貼り付けでも受け取れるようにする（スクリーンショットをそのまま貼れる）
+      sz.addEventListener('click', () => document.getElementById('syllabusFile').click());
     }
 
     // 入試タブのD&D
