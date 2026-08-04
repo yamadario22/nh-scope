@@ -3777,6 +3777,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     } catch(e) { setSt(stEl,'err','❌ '+friendlyError(e)); }
   }
 
+  // そのテストがどの年度のものかを返す（4月〜翌3月が1年度）。
+  // 2026年2月のテストは2025年度。西暦ではなく年度でそろえる。
+  function testSchoolYear(h) {
+    const d = h.testDate || extractTestDate(h.name || '');
+    const y = schoolYearOf(d);
+    if (y) return String(y);
+    // 実施日が取れない場合は、保存されている年から推定する（旧データ向け）
+    const fallback = h.year || (h.date || '').split('/')[0];
+    return fallback || '不明';
+  }
+
   let selectedHistYear = 'all';
 
   function setHistYear(year) {
@@ -3938,7 +3949,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   function filteredHist(allHist) {
     let hist = selectedHistYear === 'all'
       ? allHist
-      : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
+      : allHist.filter(h => testSchoolYear(h) === selectedHistYear);
     if (histFilter.grade)  hist = hist.filter(h => normalizeGrade(h.grade||'') === histFilter.grade);
     if (histFilter.term)   hist = hist.filter(h => testTermOf(h) === histFilter.term);
     if (histFilter.school) hist = hist.filter(h =>
@@ -3954,20 +3965,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (!allHist.length) { el.innerHTML=''; return; }
 
       // 年を抽出してタブ生成
-      const years = [...new Set(allHist.map(h => h.year || (h.date||'').split('/')[0] || '不明'))].sort().reverse();
+      const years = [...new Set(allHist.map(testSchoolYear))].sort().reverse();
       const yearTabs = `<div class="pills" style="margin-bottom:12px">
         <div class="pill ${selectedHistYear==='all'?'active':''}" onclick="setHistYear('all')">全て（${allHist.length}件）</div>
-        ${years.map(y=>`<div class="pill ${selectedHistYear===y?'active':''}" onclick="setHistYear('${y}')">${y}年（${allHist.filter(h=>(h.year||(h.date||'').split('/')[0]||'不明')===y).length}件）</div>`).join('')}
+        ${years.map(y=>`<div class="pill ${selectedHistYear===y?'active':''}" onclick="setHistYear('${y}')">${/^\d{4}$/.test(y)?y+'年度':y}（${allHist.filter(h=>testSchoolYear(h)===y).length}件）</div>`).join('')}
       </div>`;
 
       // 年フィルター
       let hist = selectedHistYear === 'all'
         ? allHist
-        : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
+        : allHist.filter(h => testSchoolYear(h) === selectedHistYear);
 
       // しぼり込み欄に出す選択肢は、いまの年タブの中から作る
       const baseList = selectedHistYear === 'all' ? allHist
-        : allHist.filter(h => (h.year||(h.date||'').split('/')[0]||'不明') === selectedHistYear);
+        : allHist.filter(h => testSchoolYear(h) === selectedHistYear);
       const termList = [...new Set(baseList.map(testTermOf).filter(Boolean))]
         .sort((a,b) => {
           const ia = TERM_ORDER.indexOf(a), ib = TERM_ORDER.indexOf(b);
@@ -5608,10 +5619,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　　「十一月十三日」→ 11月13日　／　「二月九日」→ 2月9日
 　　　漢数字を正確に読むこと。十一月を1月、十四日を4日などと読み違えないよう注意する
 　　複数の日付がある場合（テスト一日目・二日目）は、【英語】の行にある日付を選ぶ
-　　年が書かれていない場合は、令和7年度＝2025年度として、4〜12月は2025年、1〜3月は2026年とする
+　　年が書かれていない場合は、令和7年度＝2025年度として次のように決める
+　　　4月〜12月 → 2025年（例：十一月十四日 → 2025-11-14）
+　　　1月〜3月　→ 2026年（例：二月九日 → 2026-02-09）
+　　　【重要】学年末テストは1〜3月なので、必ず2026年になる。2025年にしないこと
 ・textbook_from / textbook_to：英語の【教科書】のページ範囲（数字だけ）
 　　例：「教科書 P.6〜P.23」→ from=6, to=23
 　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
+　　【始まりが書かれていない場合】
+　　　「教科書 〜P18」「3年教科書 〜P.29」のように終わりだけ書かれていることがある。
+　　　その場合は from=0 として、to だけを書く。勝手に1ページ目から始まると決めつけないこと
 ・prev_grade_from / prev_grade_to：前学年の教科書のページ範囲（「教科書（1年）P.106〜121」のような記載がある場合のみ）
 ・other_materials：教科書以外の教材の範囲（「めきめきEnglish P.60〜91」「ワークノート P.16〜41」など）をそのまま書く
 ・date_raw：日付が写真にどう書かれていたか、そのまま書く（例：「十一月十四日（金）」）
@@ -5644,16 +5661,36 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (school && !/中(学校)?$/.test(school)) school += '中';   // 「岩津」→「岩津中」
       const date = String(r.test_date || '').trim();
       // 教科書ページ → 単元名
-      const unitText = (r.textbook_from || r.textbook_to)
-        ? (pagesToRangeText(grade, `${r.textbook_from||r.textbook_to}〜${r.textbook_to||r.textbook_from}`) || '')
+      // 始まりが書かれていない場合（from=0）は、前回のテストの終わりの続きから始まるとみなす。
+      // 学年最初のテストなら Unit 0 から。
+      const match = findTestByDate(hist, school, grade, date);
+      let fromPage = r.textbook_from || 0;
+      let startNote = '';
+      if (!fromPage && r.textbook_to) {
+        const prev = match ? findPrevTestEnd({
+          school, grade, testDate: match.h.testDate || extractTestDate(match.h.name||'') || date
+        }) : null;
+        if (prev && prev.range) {
+          // 前回の終わりの単元から、その次のページを始まりにする
+          const p = parseRangeText(prev.range);
+          const sp = sectionPages(grade, p.to_unit, p.to_lesson);
+          if (sp && sp.to) { fromPage = sp.to + 1; startNote = `前回（${prev.date} ${prev.range}）の続きから`; }
+        }
+        if (!fromPage) {
+          const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
+          fromPage = t.length ? t[0][0] : 1;
+          startNote = '学年最初のテストとみなし、教科書の最初から';
+        }
+      }
+      const unitText = (fromPage || r.textbook_to)
+        ? (pagesToRangeText(grade, `${fromPage||r.textbook_to}〜${r.textbook_to||fromPage}`) || '')
         : '';
       const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
       const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
         ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
         : '';
-      // 該当するテストを探す（学校＋学年＋日付±3日）
-      const match = findTestByDate(hist, school, grade, date);
-      syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText, matchIdx: match ? match.idx : -1 };
+      syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
+                          fromPage, startNote, matchIdx: match ? match.idx : -1 };
 
       return `<tr>
         <td style="font-size:11px">
@@ -5663,7 +5700,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
         </td>
         <td style="font-size:11px">
-          ${r.textbook_from||r.textbook_to ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
+          ${r.textbook_from||r.textbook_to ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
+          ${startNote ? `<br><span style="color:#B45309;font-size:10px">始まりが範囲表に書かれていないため、${esc(startNote)}</span>` : ''}
           ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
         </td>
@@ -5693,7 +5731,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   let syllabusRows = {};
 
-  // 学校＋学年＋日付（±3日）でテストを探す
+  // 学校＋学年＋日付（±10日）でテストを探す。
+  // 範囲表に書かれた日付と、テストのファイル名の日付がずれていることがあるため。
+  // 10日以内に中間と期末の両方が行われることはないので、これで一意に決まる。
   function findTestByDate(hist, school, grade, date) {
     if (!school || !date) return null;
     const target = new Date(date + 'T00:00:00');
@@ -5708,7 +5748,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const d = new Date(hd + 'T00:00:00');
       if (isNaN(d)) return;
       const diff = Math.abs((d - target) / 86400000);
-      if (diff > 3) return;
+      if (diff > 10) return;
       if (!best || diff < best.diff) best = { idx, h, diff };
     });
     return best;
@@ -5725,7 +5765,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.rangePrev      = h.range || '';
     h.range          = row.unitText;
     h.rangeEditedBy  = '範囲表';
-    h.rangePages     = { from: r.textbook_from || r.textbook_to, to: r.textbook_to || r.textbook_from };
+    h.rangePages     = { from: row.fromPage || r.textbook_from || r.textbook_to,
+                         to: r.textbook_to || row.fromPage || r.textbook_from };
     h.prevGradeRange = row.prevUnitText || '';
     h.prevGradeGrade = row.prevUnitText ? row.prevGrade : '';
     h.prevGradePages = row.prevUnitText ? { from: r.prev_grade_from, to: r.prev_grade_to } : null;
