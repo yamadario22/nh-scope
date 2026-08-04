@@ -459,6 +459,29 @@
       <div id="testStatus"></div>
     </div>
 
+    <div class="divider"><span>または — 範囲表の写真から範囲を取り込む</span></div>
+    <div class="card">
+      <div class="card-title">📋 テスト範囲表の読み込み</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        学校が配るテスト範囲表の写真から、英語の範囲を読み取ります。<br>
+        推測ではなく実際の範囲がそのまま入るので、いちばん確実です。写真に学校名が書かれていれば自動で結びつけます。
+      </p>
+      <div class="upload-zone" id="syllabusZone">
+        <div class="uz-ico">📋</div>
+        <div class="uz-title" id="syllabusTitle">範囲表の写真をアップロード</div>
+        <div class="uz-sub" id="syllabusSub">複数枚可 — 1枚に1テストぶん。学校名・学年・日付が写っているもの</div>
+      </div>
+      <div id="syllabusFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      <input type="file" id="syllabusFile" accept="image/*" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('syllabusFile').click()">📂 写真を選択（複数可）</button>
+        <button type="button" class="btn btn-primary" id="syllabusStartBtn" style="flex:1" disabled onclick="runSyllabusRead()">📋 範囲を読み取る</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="clearSyllabus()" title="選択中の写真を解除します">✕</button>
+      </div>
+      <div id="syllabusStatus"></div>
+      <div id="syllabusResult" style="margin-top:10px"></div>
+    </div>
+
     <div class="divider"><span>または — 複数校のPDFを一括分析</span></div>
     <div class="card">
       <div class="card-title">🏫 バッチ分析（複数校一括）</div>
@@ -4304,8 +4327,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const bookId = `default_c${gradeN}`;
     const unit = unitFromPage(bookId, page);
     if (!unit) return '';
-    // Unit 0 には Part などの区切りがないので、セクション名を付けない
+    // Unit 0 には Part などの区切りがない
     if (/^Unit\s*0$/i.test(unit.trim())) return unit;
+    // Let's Read にも Part / Scene などの下位区分はない
+    if (/Let'?s\s*Read/i.test(unit)) return unit;
+    // 出題されないセクション（Grammar for Communication など）は範囲の端に出さない
+    const aux = parseAuxName(unit);
+    if (aux && NOT_IN_RANGE_SECTIONS.includes(aux.base)) {
+      const ru = rangeUnitFromPage(bookId, page);
+      return ru || unit;
+    }
     // セクション名（Part 1 など）は教科書データの同じページの項目から拾う
     const book = bookById(bookId);
     const items = (book?.items || []).filter(it => it.page === page && it.lesson);
@@ -5457,6 +5488,236 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (k) set.add(k);
     });
     return set;
+  }
+
+  // ── テスト範囲表の読み込み ──────────────────────────────────────
+  // 学校が配る範囲表の写真から英語の範囲を読み取る。
+  // テストから範囲を推測するのと違い、実際に書かれている範囲がそのまま取れるので確実。
+  let pendingSyllabus = null;
+
+  async function onSyllabusFilesSelected(files) {
+    const arr = Array.from(files || []).filter(f => /^image\//.test(f.type));
+    const stEl = document.getElementById('syllabusStatus');
+    const btn  = document.getElementById('syllabusStartBtn');
+    if (!arr.length) { setSt(stEl, 'err', '画像ファイルを選んでください'); return; }
+
+    document.getElementById('syllabusFileList').innerHTML =
+      arr.map(f => `📷 ${esc(f.name)}（${(f.size/1024).toFixed(0)}KB）`).join('<br>');
+    document.getElementById('syllabusTitle').textContent = `${arr.length}枚の写真`;
+    setSt(stEl, 'load', `${arr.length}枚を読み込み中...`);
+    try {
+      const imgs = [];
+      for (const f of arr) {
+        imgs.push({ name: f.name, b64: await fileToBase64(f) });
+      }
+      pendingSyllabus = imgs;
+      setSt(stEl, 'ok', `✅ ${imgs.length}枚読み込み完了 — 範囲を読み取るを押してください`);
+      btn.disabled = false;
+    } catch (e) {
+      setSt(stEl, 'err', '❌ 画像の読み込みに失敗しました: ' + e.message);
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1]);
+      r.onerror = () => rej(new Error('読み込み失敗'));
+      r.readAsDataURL(file);
+    });
+  }
+
+  function clearSyllabus() {
+    pendingSyllabus = null;
+    const f = document.getElementById('syllabusFile'); if (f) f.value = '';
+    document.getElementById('syllabusTitle').textContent = '範囲表の写真をアップロード';
+    document.getElementById('syllabusFileList').innerHTML = '';
+    document.getElementById('syllabusResult').innerHTML = '';
+    document.getElementById('syllabusStartBtn').disabled = true;
+    setSt(document.getElementById('syllabusStatus'), '', '');
+  }
+
+  async function runSyllabusRead() {
+    if (!pendingSyllabus || !pendingSyllabus.length) return;
+    const stEl = document.getElementById('syllabusStatus');
+    const btn  = document.getElementById('syllabusStartBtn');
+    btn.disabled = true;
+    const results = [];
+
+    for (let i = 0; i < pendingSyllabus.length; i++) {
+      setSt(stEl, 'load', `${i+1}/${pendingSyllabus.length}枚目を読み取り中...`);
+      const img = pendingSyllabus[i];
+      try {
+        const r = await callGeminiJSON(
+          [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
+           { text: SYLLABUS_PROMPT }],
+          '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
+          {
+            type: 'OBJECT',
+            properties: {
+              school:      { type: 'STRING' },
+              grade:       { type: 'STRING' },
+              test_name:   { type: 'STRING' },
+              test_date:   { type: 'STRING' },
+              textbook_from: { type: 'INTEGER' },
+              textbook_to:   { type: 'INTEGER' },
+              prev_grade_from: { type: 'INTEGER' },
+              prev_grade_to:   { type: 'INTEGER' },
+              other_materials: { type: 'STRING' },
+              note:        { type: 'STRING' }
+            }
+          },
+          20000, getFastModeOpts());
+        results.push({ file: img.name, r });
+      } catch (e) {
+        results.push({ file: img.name, error: e.message });
+      }
+    }
+
+    setSt(stEl, 'ok', `✅ ${results.length}枚の読み取りが終わりました`);
+    btn.disabled = false;
+    renderSyllabusResult(results);
+  }
+
+  const SYLLABUS_PROMPT =
+`この写真は中学校が配布したテスト範囲表です。【英語】の範囲だけを読み取ってください。
+
+【読み取る項目】
+・school：中学校名（手書きやテキストボックスで書かれていることが多い。「上郷中1」なら「上郷中」）
+・grade：学年（「1年生」→「中1」、「2年生」→「中2」、「3年生」→「中3」）
+・test_name：テストの名前（「前期中間テスト」「1学期中間テスト」など、表題に書かれているもの）
+・test_date：英語のテストが行われる日（表の左端にある日付）。「2025-05-28」の形で書く。
+　　年が書かれていない場合は、令和7年度＝2025年度として、4〜12月は2025年、1〜3月は2026年とする
+・textbook_from / textbook_to：英語の【教科書】のページ範囲（数字だけ）
+　　例：「教科書 P.6〜P.23」→ from=6, to=23
+　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
+・prev_grade_from / prev_grade_to：前学年の教科書のページ範囲（「教科書（1年）P.106〜121」のような記載がある場合のみ）
+・other_materials：教科書以外の教材の範囲（「めきめきEnglish P.60〜91」「ワークノート P.16〜41」など）をそのまま書く
+・note：気づいたこと（読み取れない部分があればここに書く）
+
+【注意】
+・英語の欄だけを読む。国語・数学・理科・社会・技術・家庭・音楽・美術・保体の範囲は無視する
+・「教科書」と書かれているページだけを textbook_from / textbook_to にする。
+　　めきめきEnglish・ワークノート・単元テスト・プリントのページを教科書と混同しない
+・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`;
+
+  function renderSyllabusResult(results) {
+    const el = document.getElementById('syllabusResult');
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+
+    const rows = results.map((res, i) => {
+      if (res.error) {
+        return `<tr><td colspan="4" style="color:#DC2626;font-size:12px">${esc(res.file)}：読み取りに失敗しました（${esc(res.error)}）</td></tr>`;
+      }
+      const r = res.r || {};
+      const grade = normalizeGrade(r.grade || '');
+      const school = String(r.school || '').trim();
+      const date = String(r.test_date || '').trim();
+      // 教科書ページ → 単元名
+      const unitText = (r.textbook_from || r.textbook_to)
+        ? (pagesToRangeText(grade, `${r.textbook_from||r.textbook_to}〜${r.textbook_to||r.textbook_from}`) || '')
+        : '';
+      const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
+      const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
+        ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
+        : '';
+      // 該当するテストを探す（学校＋学年＋日付±3日）
+      const match = findTestByDate(hist, school, grade, date);
+      syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText, matchIdx: match ? match.idx : -1 };
+
+      return `<tr>
+        <td style="font-size:11px">
+          <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'')}<br>
+          <span style="color:var(--muted)">${esc(r.test_name||'')} ${esc(date||'')}</span>
+        </td>
+        <td style="font-size:11px">
+          ${r.textbook_from||r.textbook_to ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
+          ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
+          ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
+        </td>
+        <td style="font-size:11px">
+          ${match
+            ? `<span style="color:#059669">✓ ${esc(match.h.name||'')}</span><br><span style="color:var(--muted)">いまの範囲：${esc(match.h.range||'')}</span>`
+            : '<span style="color:#DC2626">該当するテストが見つかりません</span>'}
+        </td>
+        <td>
+          ${match && unitText
+            ? `<button class="btn btn-primary btn-sm" onclick="applySyllabus(${i})">反映する</button>`
+            : ''}
+        </td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>読み取り結果</th><th>英語の範囲</th><th>該当するテスト</th><th style="width:80px"></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div style="margin-top:8px">
+        <button class="btn btn-primary btn-sm" onclick="applyAllSyllabus()">すべて反映する</button>
+        <span style="font-size:11px;color:var(--muted);margin-left:8px">反映した範囲は手入力扱いになり、「範囲を再判定」で上書きされません</span>
+      </div>`;
+  }
+
+  let syllabusRows = {};
+
+  // 学校＋学年＋日付（±3日）でテストを探す
+  function findTestByDate(hist, school, grade, date) {
+    if (!school || !date) return null;
+    const target = new Date(date + 'T00:00:00');
+    if (isNaN(target)) return null;
+    let best = null;
+    hist.forEach((h, idx) => {
+      const hs = h.school || extractSchoolName(h.name||'');
+      if (!hs || !hs.includes(school) && !school.includes(hs)) return;
+      if (grade && normalizeGrade(h.grade||'') !== grade) return;
+      const hd = h.testDate || extractTestDate(h.name||'');
+      if (!hd) return;
+      const d = new Date(hd + 'T00:00:00');
+      if (isNaN(d)) return;
+      const diff = Math.abs((d - target) / 86400000);
+      if (diff > 3) return;
+      if (!best || diff < best.diff) best = { idx, h, diff };
+    });
+    return best;
+  }
+
+  async function applySyllabus(i, silent) {
+    const row = syllabusRows[i];
+    if (!row || row.matchIdx < 0 || !row.unitText) return false;
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const h = hist[row.matchIdx];
+    if (!h) return false;
+    const r = row.r;
+    h.rangePrev      = h.range || '';
+    h.range          = row.unitText;
+    h.rangeEditedBy  = '範囲表';
+    h.rangePages     = { from: r.textbook_from || r.textbook_to, to: r.textbook_to || r.textbook_from };
+    h.prevGradeRange = row.prevUnitText || '';
+    h.prevGradeGrade = row.prevUnitText ? row.prevGrade : '';
+    h.prevGradePages = row.prevUnitText ? { from: r.prev_grade_from, to: r.prev_grade_to } : null;
+    h.otherMaterials = r.other_materials || '';
+    h.syllabusTestName = r.test_name || '';
+    try { localStorage.setItem(TEST_HIST_KEY, JSON.stringify(hist)); } catch { return false; }
+    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
+      range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '範囲表', rangePages: h.rangePages,
+      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade, prevGradePages: h.prevGradePages,
+      otherMaterials: h.otherMaterials });
+    if (!silent) { renderTestHistory(); alert(`${h.name} の範囲を「${row.unitText}」に更新しました。`); }
+    return true;
+  }
+
+  async function applyAllSyllabus() {
+    const keys = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText);
+    if (!keys.length) { alert('反映できるものがありません。'); return; }
+    const ok = await showConfirm(`${keys.length}件の範囲を範囲表の内容に更新します。よろしいですか。`, '反映する');
+    if (!ok) return;
+    let n = 0;
+    for (const i of keys) { if (await applySyllabus(i, true)) n++; }
+    renderTestHistory();
+    alert(`${n}件の範囲を更新しました。`);
   }
 
   async function onTestFilesSelected(files) {
