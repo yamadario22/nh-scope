@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.0</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -2039,11 +2039,13 @@
     console.warn('Firebase SDK 5秒以内に読み込まれませんでした');
   }
 
-  function setSyncBadge(state) {
+  function setSyncBadge(state, note) {
     const el = document.getElementById('syncBadge');
     if (!el) return;
     const map = { syncing:'⏳ 同期中...', ok:'✅ 同期済み', error:'⚠️ オフライン', saving:'💾 保存中...' };
-    el.textContent = map[state] || '';
+    // noteを渡すと「いまどこで待っているか」が見える。
+    // 以前は全部「同期中...」だったため、詰まった場所が分からなかった。
+    el.textContent = (map[state] || '') + (note ? ` ${note}` : '');
     el.style.color = state === 'ok' ? 'rgba(255,255,255,.55)' : state === 'error' ? '#fbbf24' : 'rgba(255,255,255,.45)';
   }
 
@@ -2091,7 +2093,7 @@
   // Firestoreから全データを読み込む
   async function syncFromFirestore() {
     if (!FIREBASE_READY || !db) { setSyncBadge('error'); return; }
-    setSyncBadge('syncing');
+    setSyncBadge('syncing', '（設定）');
     try {
       // 設定（APIキー・モデル）を読み込み
       const cfgDoc = await db.collection(FB_CONFIG_COL).doc('settings').get();
@@ -2103,6 +2105,7 @@
       }
 
       // 教科書データを読み込み
+      setSyncBadge('syncing', '（教科書）');
       const libSnap = await db.collection(FB_LIBRARY_COL).get();
       let updated = false;
       libSnap.forEach(doc => {
@@ -2151,6 +2154,7 @@
 
       // テスト履歴を読み込み（セッション内キャッシュで読み取りコスト削減）
       if (!sessionStorage.getItem('nhscope_tests_loaded')) {
+        setSyncBadge('syncing', '（テスト）');
         // 旧形式（1文書）からマイグレーション
         const oldHistDoc = await db.collection(FB_CONFIG_COL).doc('test_history').get();
         if (oldHistDoc.exists && oldHistDoc.data().tests?.length) {
@@ -2181,7 +2185,8 @@
           snap2.forEach(doc => firestoreTests.push({ ...doc.data(), firestoreId: doc.id }));
         }
         if (firestoreTests.length) {
-          // localStorageと統合（firestoreIdで重複除去）
+          setSyncBadge('syncing', `（テスト${firestoreTests.length}件を保存中）`);
+          // 手元のデータと統合（firestoreIdで重複除去）
           const localTests = histAll();
           const localIds = new Set(localTests.map(t=>t.firestoreId).filter(Boolean));
           const merged = [...localTests];
@@ -2195,6 +2200,7 @@
 
       // 入試データを読み込み（セッション内キャッシュ）
       if (!sessionStorage.getItem('nhscope_exams_loaded')) {
+        setSyncBadge('syncing', '（入試）');
         let firestoreExams = [];
         try {
           const snap = await db.collection(FB_EXAMS_COL)
@@ -2219,8 +2225,9 @@
       setSyncBadge('ok');
       setTimeout(() => setSyncBadge('ok'), 3000);
     } catch(e) {
-      console.warn('Firestore sync error:', e);
+      console.error('Firestore sync error:', e);
       setSyncBadge('error');
+      try { showToast('⚠️ 同期に失敗しました：' + (e && e.message ? e.message : e), 'error'); } catch {}
     }
   }
 
