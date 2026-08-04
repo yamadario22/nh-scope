@@ -5641,7 +5641,51 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　めきめきEnglish・ワークノート・単元テスト・プリントのページを教科書と混同しない
 ・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`;
 
+  // 学校名や学年が読み取れなかった行を、手で直す
+  function fixSyllabusRow(i) {
+    const row = syllabusRows[i];
+    if (!row) return;
+    const s = prompt('中学校名を入れてください（例：上郷中）', row.school || '');
+    if (s === null) return;
+    const g = prompt('学年を入れてください（中1／中2／中3）', row.grade || '');
+    if (g === null) return;
+    const grade = normalizeGrade(String(g).trim());
+    if (!gradeNumOf(grade)) { alert('「中1」「中2」「中3」のいずれかを入れてください。'); return; }
+    let school = String(s).trim();
+    if (school && !/中(学校)?$/.test(school)) school += '中';
+    // 直した内容で、この行だけを作り直す
+    row.school = school;
+    row.grade  = grade;
+    row.fixedByHand = true;
+    reRenderSyllabusRow(i);
+  }
+
+  // 1行だけ計算し直して描き直す
+  function reRenderSyllabusRow(i) {
+    const row = syllabusRows[i];
+    if (!row) return;
+    const r = row.r;
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
+    const match = findTestByDate(hist, row.school, row.grade, row.date);
+    row.matchIdx = match ? match.idx : -1;
+    row.unitText = (r.textbook_from || r.textbook_to)
+      ? (pagesToRangeText(row.grade, `${r.textbook_from||r.textbook_to}〜${r.textbook_to||r.textbook_from}`) || '')
+      : '';
+    row.prevGrade = gradeNumOf(row.grade) > 1 ? normalizeGrade('中'+(gradeNumOf(row.grade)-1)) : '';
+    row.prevUnitText = (row.prevGrade && (r.prev_grade_from || r.prev_grade_to))
+      ? (pagesToRangeText(row.prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
+      : '';
+    alert(`${row.school} ${row.grade}\n範囲：${row.unitText || '（変換できません）'}\n`
+      + (match ? `該当するテスト：${match.h.name}` : '該当するテストが見つかりません'));
+    // 表全体を作り直す（元の読み取り結果を保持しているので再計算できる）
+    if (lastSyllabusResults) renderSyllabusResult(lastSyllabusResults);
+  }
+
+  let lastSyllabusResults = null;
+
   function renderSyllabusResult(results) {
+    lastSyllabusResults = results;
     const el = document.getElementById('syllabusResult');
     let hist = [];
     try { hist = JSON.parse(localStorage.getItem(TEST_HIST_KEY)||'[]'); } catch {}
@@ -5651,14 +5695,25 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         return `<tr><td colspan="4" style="color:#DC2626;font-size:12px">${esc(res.file)}：読み取りに失敗しました（${esc(res.error)}）</td></tr>`;
       }
       const r = res.r || {};
-      const grade = normalizeGrade(r.grade || '');
+      let grade = normalizeGrade(r.grade || '');
+      if (syllabusRows[i] && syllabusRows[i].fixedByHand) grade = syllabusRows[i].grade;
       // 学校名に学年の数字が残っていることがあるので取り除く
       //（例：「上郷中1」→「上郷中」「中1上郷」→「上郷」）
-      let school = String(r.school || '').trim()
-        .replace(/^中\s*[1-3１-３]\s*/, '')       // 先頭の「中1」
-        .replace(/[1-3１-３]\s*$/, '')             // 末尾の数字
-        .replace(/\s+/g, '').trim();
-      if (school && !/中(学校)?$/.test(school)) school += '中';   // 「岩津」→「岩津中」
+      // 読み取れなかった場合は空にする（"null" という文字が入ることがある）
+      let school = String(r.school ?? '').trim();
+      if (/^(null|undefined|なし|不明|記載なし)$/i.test(school)) school = '';
+      if (school) {
+        school = school
+          .replace(/^中\s*[1-3１-３]\s*/, '')
+          .replace(/[1-3１-３]\s*$/, '')
+          .replace(/\s+/g, '').trim();
+        if (school && !/中(学校)?$/.test(school)) school += '中';
+      }
+      const testName = /^(null|undefined)$/i.test(String(r.test_name ?? '').trim()) ? '' : String(r.test_name ?? '').trim();
+      // 手で直した内容があれば、それを優先する
+      if (syllabusRows[i] && syllabusRows[i].fixedByHand) {
+        school = syllabusRows[i].school;
+      }
       const date = String(r.test_date || '').trim();
       // 教科書ページ → 単元名
       // 始まりが書かれていない場合（from=0）は、前回のテストの終わりの続きから始まるとみなす。
@@ -5694,10 +5749,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
       return `<tr>
         <td style="font-size:11px">
-          <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'')}<br>
-          <span style="color:var(--muted)">${esc(r.test_name||'')} ${esc(date||'')}</span>
+          <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
+          <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(r.date_raw || r.grade_raw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
+          ${(!school || !grade)
+            ? `<br><button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 5px;margin-top:3px"
+                 onclick="fixSyllabusRow(${i})">学校・学年を入れる</button>` : ''}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
