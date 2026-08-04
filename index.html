@@ -454,6 +454,9 @@
         <input type="checkbox" id="hiResMode" style="cursor:pointer">
         📷 高画質で読み込む — 文字がつぶれて読み取れないPDF用。時間と料金が2倍前後になります
       </label>
+      <!-- 全体の進み具合。testStatusは1件ごとの進捗カードが毎秒上書きするため、
+           まとめて分析するときの「何件目か」はここに別枠で出す。 -->
+      <div id="testBatchStatus" style="margin-top:10px"></div>
       <div id="testStatus"></div>
     </div>
 
@@ -3954,6 +3957,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return hist;
   }
 
+  // 表を描き直さずに、年タブの「全て（◯件）」の数字だけを更新する。
+  // まとめて分析している最中に表ごと描き直すと画面が上下に動いてしまうため。
+  function refreshHistCount() {
+    const el = document.getElementById('histYearAll');
+    if (el) el.textContent = `全て（${histAll().length}件）`;
+  }
+
   function renderTestHistory() {
     const el = document.getElementById('testHistory');
     if (!el) return;
@@ -3964,7 +3974,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 年を抽出してタブ生成
       const years = [...new Set(allHist.map(testSchoolYear))].sort().reverse();
       const yearTabs = `<div class="pills" style="margin-bottom:12px">
-        <div class="pill ${selectedHistYear==='all'?'active':''}" onclick="setHistYear('all')">全て（${allHist.length}件）</div>
+        <div class="pill ${selectedHistYear==='all'?'active':''}" id="histYearAll" onclick="setHistYear('all')">全て（${allHist.length}件）</div>
         ${years.map(y=>`<div class="pill ${selectedHistYear===y?'active':''}" onclick="setHistYear('${y}')">${/^\d{4}$/.test(y)?y+'年度':y}（${allHist.filter(h=>testSchoolYear(h)===y).length}件）</div>`).join('')}
       </div>`;
 
@@ -5241,7 +5251,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                             h.maxCount   = maxPosCount; });
     diag.onceOnlyTerms = [...new Set(onceOnly.map(h => `${h.term}（${h.unit}／${h.posCount}回）`))];
     diag.gramDense     = useCount;
-    const endSource = repeatedGram.length ? repeatedGram : (gramHits.length ? gramHits : wordHits);
+    // 【誤ヒットは終わりの根拠にしない】
+    // 短い語がたまたま長い熟語の一部に含まれただけのもの（friend → 「Love, [Your friend.]」）は、
+    // 始まりの根拠からは外していたのに、終わりの根拠には使われたままだった。
+    // 実例（中1・5月のテスト）：friend の1語だけで Unit 9 Real Life English まで伸びた。
+    const solidWordHits = wordHits.filter(h => !h.weak);
+    const endSource = repeatedGram.length ? repeatedGram
+                    : (gramHits.length   ? gramHits
+                    : (solidWordHits.length ? solidWordHits : wordHits));
     let endHit = endSource[0];
     for (const h of endSource) if (h.pos > endHit.pos) endHit = h;
 
@@ -5254,7 +5271,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     //   → Unit 5 が空なので Unit 6 は飛び地。落として Unit 4 を採用する。
     // 実例（中2・正解はUnit 5まで）：Unit 2(10回) Unit 3(1回) Unit 4(7回) Unit 5(4回)
     //   → 間が埋まっているので Unit 5 は地続き。そのまま採用する。
-    if (gramHits.length > 1) {
+    // 文法が1つも拾えなかったテストでは、この判定がまるごと働いていなかった。
+    // 単語だけで決めるときこそ飛び地が起きやすいので、そちらでも効かせる。
+    if (gramHits.length > 1 || (!gramHits.length && solidWordHits.length > 1)) {
       // Unit単位で、文法か単語のどちらかの手がかりがあるかを調べる
       const filled = new Set();
       gramHits.forEach(h => filled.add(Math.floor(h.pos)));
@@ -5264,7 +5283,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         // ひとつ手前のUnitに手がかりがなければ飛び地とみなす
         return u >= 1 && !filled.has(u - 1);
       };
-      const cands = [...(repeatedGram.length ? repeatedGram : gramHits)].sort((a, b) => b.pos - a.pos);
+      const cands = [...(repeatedGram.length ? repeatedGram
+                       : (gramHits.length ? gramHits : solidWordHits))].sort((a, b) => b.pos - a.pos);
       const ok = cands.find(c => !isIsland(c));
       if (ok && ok.pos < endHit.pos && isIsland(endHit)) {
         diag.endDemoted = `${endHit.term}（${endHit.unit}）は、ひとつ手前のUnitに手がかりがない飛び地のため終わりにしませんでした`;
@@ -5322,7 +5342,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const isFirstTerm = testMonth >= 4 && testMonth <= 8;   // 4〜8月＝1学期
     if (isFirstTerm && endUnit >= 4) {
       const before = endHit;
-      const cands = [...(repeatedGram.length ? repeatedGram : gramHits)]
+      // 文法が拾えなかったときは候補が空になり、この歯止めが素通りしていた。
+      // 実例：5月のテストが Unit 9 のまま通過した。単語の手がかりでも効かせる。
+      const cands = [...(repeatedGram.length ? repeatedGram
+                       : (gramHits.length ? gramHits : solidWordHits))]
         .filter(h => Math.floor(h.pos) < 4).sort((a, b) => b.pos - a.pos);
       if (cands.length) {
         endHit = cands[0];
@@ -6058,7 +6081,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('testStartBtn').disabled = true;
     const stopBtn = document.getElementById('testStopBtn');
     if (stopBtn) stopBtn.style.display = 'inline-flex';
-    const stEl = document.getElementById('testStatus');
+    const stEl  = document.getElementById('testStatus');
+    const bStEl = document.getElementById('testBatchStatus');
+    if (bStEl) bStEl.innerHTML = '';
     const t0 = Date.now();
     // テストも複数同時に処理する。1件ずつ順番に待つと数百件で何十時間もかかる。
     // ページの同時処理と合わせて、1件あたりの時間を大きく短縮する。
@@ -6085,8 +6110,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
         const per = (Date.now() - t0) / finished;
         const left = Math.round(per * (pendingTestGroups.length - finished) / 60000);
-        setSt(stEl, 'load',
+        setSt(bStEl, 'load',
           `【${finished}/${pendingTestGroups.length}件】完了（成功${okCount}件${failed.length?` ／ 失敗${failed.length}件`:''}） — 残り約${left}分`);
+        // 履歴の表は描き直さない（画面が上下に動くため）。件数だけを更新する。
+        refreshHistCount();
       }
     }
     if (stopBtn) stopBtn.style.display = 'none';
@@ -6096,10 +6123,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (pendingTestGroups.length > 1 && !testAnalysisStopped) {
       const min = Math.round((Date.now() - t0) / 60000);
       if (failed.length) {
-        setSt(stEl, 'err',
+        setSt(bStEl, 'err',
           `⚠️ ${okCount}件を保存しました／${failed.length}件は失敗しました（${min}分）`);
       } else {
-        setSt(stEl, 'ok', `✅ ${okCount}件のテストを保存しました（${min}分）`);
+        setSt(bStEl, 'ok', `✅ ${okCount}件のテストを保存しました（${min}分）`);
       }
     }
     // 失敗したテストは一覧で出す。何が抜けたか分からないまま終わらせない。
