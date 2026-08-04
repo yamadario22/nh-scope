@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.2</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.3</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6540,6 +6540,12 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     hist.forEach(h => {
       const d = h.testDate || extractTestDate(h.name || '');
       if (!d || d >= testDate) return;                       // 未来・同日は対象外
+      // 【同じ時期の別クラス・別の先生のテストを「前回」と間違えない】
+      // 同じ学校でも先生が違えばファイルが分かれる（葵中ﾖｼｵｶ 5/19 と 葵中ﾋﾗｲｼ 5/20 など）。
+      // これを前回のテストとして扱うと、始まりが「その続きから」に押し出されてしまう。
+      // 実際の中間→期末の間隔は最短でも1か月ほど空くので、14日以内は同じ時期とみなす。
+      const gapDays = (new Date(testDate) - new Date(d)) / 86400000;
+      if (gapDays < 14) return;
       if (schoolYearOf(d) !== sy) return;                     // 別の年度は対象外
       if ((h.school||'') !== school) return;
       if (normalizeGrade(h.grade||'') !== normalizeGrade(grade)) return;
