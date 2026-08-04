@@ -1118,14 +1118,25 @@
       // Unit 4：Part 1 は how many、Part 2 は what time と what + 名詞
       [/how\s*many/i,                       'Unit 4','Part 1'],
       [/what\s*time|what\s*[+＋]?\s*名詞/i, 'Unit 4','Part 2'],
+      // How about you? は Unit 1 Part 3 の表現。how の一語で Unit 3 に飛ばさない。
+      [/how\s*about/i,                       'Unit 1','Part 3'],
       // Unit 3 は単純な疑問詞疑問文。Part 1 は what 単体と who、Part 2 は how と when、Part 3 は where
       [/\bwhere\b/i,                        'Unit 3','Part 3'],
       [/\bhow\b|\bwhen\b/i,                 'Unit 3','Part 2'],
       [/^(?!.*(関係代名詞|接触節|間接疑問)).*(\bwhat\b|\bwho\b|疑問詞)/i, 'Unit 3','Part 1'],
       [/this\s*is|that\s*is/i,              'Unit 2','Part 3'],
       [/\bcan\b/i,                          'Unit 2','Part 2'],
-      [/he\s*is|she\s*is/i,                 'Unit 2','Part 1']
-      // be動詞・一般動詞（Unit 1）は汎用的すぎるため対応表では扱わない（ライブラリ照合に委ねる）
+      [/he\s*is|she\s*is/i,                 'Unit 2','Part 1'],
+      // ── ここから下は「最後の受け皿」──────────────────────────────
+      // be動詞・一般動詞は汎用的すぎるとして対応表から外していたが、そのせいで
+      // Unit 0〜1が範囲の中1の1学期テストは、文法の根拠が1つも立たなかった。
+      // 結果、たまたま拾った can や疑問詞だけで終わりが決まっていた
+      // （実例：正解が Unit 1 Part 3 のテストで Unit 3 Part 2 まで伸びた）。
+      // He is / That is / can / 疑問詞 という細かい規則を先に判定したあとで拾うので、
+      // それらを飲み込む心配はない。
+      [/一般動詞.*(疑問|否定)|(疑問|否定).*一般動詞/, 'Unit 1','Part 2'],
+      [/一般動詞/,                          'Unit 1','Part 1'],
+      [/be\s*動詞|\bi\s*am\b|\byou\s*are\b/i, 'Unit 1','Part 1']
     ],
     2: [ // 中2
       [/be\s*going\s*to/i,                  'Unit 1','Part 1'],
