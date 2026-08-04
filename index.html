@@ -4546,7 +4546,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       key_items: h.key_items || [],
       from_unit:'', from_lesson:'', to_unit:'', to_lesson:''
     };
-    refineRangeFromLibrary(r);
+    const gTestDate = h.testDate || extractTestDate(h.name || '');
+    const gPrev     = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''),
+                                        grade: g, testDate: gTestDate });
+    const gPrevPos  = gPrev ? rangePos(String(gPrev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(g)) : null;
+    refineRangeFromLibrary(r, {
+      prevEndPos: (gPrevPos != null && gPrevPos >= 0) ? gPrevPos : null,
+      testDate: gTestDate
+    });
     const newRange = buildRangeText(r);
 
     const ok = await showConfirm(
@@ -4583,7 +4590,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       key_items: h.key_items || [],
       ...parseRangeText(h.range)
     };
-    const d = refineRangeFromLibrary(r) || {};
+    // 【実際の分析と同じ条件で計算する】
+    // ここだけ testDate も前回のテストも渡していなかったため、
+    // 「1学期にUnit 4以降は入らない」という歯止めも、前回の終わりを下限にする処理も
+    // 効かないまま計算されていた。その結果、保存済みの範囲より明らかに悪い値が
+    // 「いま計算し直すと」として表示されていた（5月のテストがUnit 7になる等）。
+    const dTestDate = h.testDate || extractTestDate(h.name || '');
+    const dPrev     = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''),
+                                        grade: h.grade || '', testDate: dTestDate });
+    const dPrevPos  = dPrev ? rangePos(String(dPrev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(h.grade||'')) : null;
+    const d = refineRangeFromLibrary(r, {
+      prevEndPos: (dPrevPos != null && dPrevPos >= 0) ? dPrevPos : null,
+      testDate: dTestDate
+    }) || {};
 
     const box = (title, inner) => `<div style="margin-bottom:14px">
       <div style="font-weight:600;font-size:13px;color:var(--navy);margin-bottom:4px">${title}</div>
