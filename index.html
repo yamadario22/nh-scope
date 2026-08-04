@@ -5564,6 +5564,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               prev_grade_from: { type: 'INTEGER' },
               prev_grade_to:   { type: 'INTEGER' },
               other_materials: { type: 'STRING' },
+              date_raw:    { type: 'STRING' },
+              grade_raw:   { type: 'STRING' },
               note:        { type: 'STRING' }
             }
           },
@@ -5583,16 +5585,37 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 `この写真は中学校が配布したテスト範囲表です。【英語】の範囲だけを読み取ってください。
 
 【読み取る項目】
-・school：中学校名（手書きやテキストボックスで書かれていることが多い。「上郷中1」なら「上郷中」）
-・grade：学年（「1年生」→「中1」、「2年生」→「中2」、「3年生」→「中3」）
+・school：中学校名（手書きやテキストボックスで書かれていることが多い）
+　　学年の数字が付いている場合は取り除く
+　　　「上郷中1」→「上郷中」　／　「上郷中2」→「上郷中」
+　　　「中1上郷」→「上郷中」　／　「中３岩津」→「岩津中」
+　　　「葵中3」→「葵中」　／　「岩津」→「岩津中」（「中」が省略されていれば補う）
+・grade：学年。次の順番で判断する
+　　1. 表題の「1年生」「2年生」「3年生」（これがあれば最優先）
+　　2. 手書きやテキストボックスの記載。次のような書き方がある
+　　　　「中1」「中３」「1年」「３年」
+　　　　「上郷中1」「上郷中2」（学校名のうしろに学年が付く形）
+　　　　「中1上郷」「中３岩津」（学年が先に来る形）
+　　3. 範囲の中身（「3年教科書」「2年 Get English」などの記載）
+　　4. 教科書のページ範囲から推定
+　　【重要】「1学期中間テスト」の「1学期」は学年ではない。学期と学年を取り違えないこと。
+　　表題が「1学期 中間テスト範囲」だけで学年が書かれていない場合は、範囲の中身から判断する
+　　結果は「中1」「中2」「中3」のいずれかで書く
 ・test_name：テストの名前（「前期中間テスト」「1学期中間テスト」など、表題に書かれているもの）
-・test_date：英語のテストが行われる日（表の左端にある日付）。「2025-05-28」の形で書く。
+・test_date：英語のテストが行われる日。「2025-05-28」の形で書く
+　　【重要】日付は縦書きの漢数字で書かれていることが多い
+　　　「十一月十四日」→ 11月14日　／　「五月二十八日」→ 5月28日
+　　　「十一月十三日」→ 11月13日　／　「二月九日」→ 2月9日
+　　　漢数字を正確に読むこと。十一月を1月、十四日を4日などと読み違えないよう注意する
+　　複数の日付がある場合（テスト一日目・二日目）は、【英語】の行にある日付を選ぶ
 　　年が書かれていない場合は、令和7年度＝2025年度として、4〜12月は2025年、1〜3月は2026年とする
 ・textbook_from / textbook_to：英語の【教科書】のページ範囲（数字だけ）
 　　例：「教科書 P.6〜P.23」→ from=6, to=23
 　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
 ・prev_grade_from / prev_grade_to：前学年の教科書のページ範囲（「教科書（1年）P.106〜121」のような記載がある場合のみ）
 ・other_materials：教科書以外の教材の範囲（「めきめきEnglish P.60〜91」「ワークノート P.16〜41」など）をそのまま書く
+・date_raw：日付が写真にどう書かれていたか、そのまま書く（例：「十一月十四日（金）」）
+・grade_raw：学年が写真にどう書かれていたか、そのまま書く（例：「1年生」「記載なし」）
 ・note：気づいたこと（読み取れない部分があればここに書く）
 
 【注意】
@@ -5612,7 +5635,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
       const r = res.r || {};
       const grade = normalizeGrade(r.grade || '');
-      const school = String(r.school || '').trim();
+      // 学校名に学年の数字が残っていることがあるので取り除く
+      //（例：「上郷中1」→「上郷中」「中1上郷」→「上郷」）
+      let school = String(r.school || '').trim()
+        .replace(/^中\s*[1-3１-３]\s*/, '')       // 先頭の「中1」
+        .replace(/[1-3１-３]\s*$/, '')             // 末尾の数字
+        .replace(/\s+/g, '').trim();
+      if (school && !/中(学校)?$/.test(school)) school += '中';   // 「岩津」→「岩津中」
       const date = String(r.test_date || '').trim();
       // 教科書ページ → 単元名
       const unitText = (r.textbook_from || r.textbook_to)
@@ -5630,6 +5659,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <td style="font-size:11px">
           <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'')}<br>
           <span style="color:var(--muted)">${esc(r.test_name||'')} ${esc(date||'')}</span>
+          ${(r.date_raw || r.grade_raw)
+            ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
