@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.0</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5865,6 +5865,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               textbook_to:   { type: 'INTEGER' },
               prev_grade_from: { type: 'INTEGER' },
               prev_grade_to:   { type: 'INTEGER' },
+              unit_range:  { type: 'STRING' },
               other_materials: { type: 'STRING' },
               date_raw:    { type: 'STRING' },
               grade_raw:   { type: 'STRING' },
@@ -5920,6 +5921,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　【始まりが書かれていない場合】
 　　　「教科書 〜P18」「3年教科書 〜P.29」のように終わりだけ書かれていることがある。
 　　　その場合は from=0 として、to だけを書く。勝手に1ページ目から始まると決めつけないこと
+・unit_range：範囲表に【単元名がそのまま書かれている場合】、その部分を書き写す
+　　例：「（メインはUnit4 Part3〜Unit6 Read and Think）」→「Unit 4 Part 3 〜 Unit 6 Read and Think」
+　　例：「（Unit4 Read and Think 1まで）」→「Unit 4 Read and Think 1」
+　　例：「Unit5〜6で学んだこと」→ 学習の助言なので書かない（範囲そのものではない）
+　　書かれていなければ空欄にする。ページから推測して書いてはいけない
 ・prev_grade_from / prev_grade_to：前学年の教科書のページ範囲（「教科書（1年）P.106〜121」のような記載がある場合のみ）
 ・other_materials：教科書以外の教材の範囲（「めきめきEnglish P.60〜91」「ワークノート P.16〜41」など）をそのまま書く
 ・date_raw：日付が写真にどう書かれていたか、そのまま書く（例：「十一月十四日（金）」）
@@ -5928,9 +5934,28 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
 【注意】
 ・英語の欄だけを読む。国語・数学・理科・社会・技術・家庭・音楽・美術・保体の範囲は無視する
-・「教科書」と書かれているページだけを textbook_from / textbook_to にする。
-　　めきめきEnglish・ワークノート・単元テスト・プリントのページを教科書と混同しない
+・【教科書は必ず NEW HORIZON】。「教科書」「◯年生の教科書」と書かれた行のページだけを
+　　textbook_from / textbook_to にする。次はすべて副教材なので、教科書と混同しない：
+　　　Get! English ／ めきめきEnglish ／ めきめき英単語 ／ 対話ドリル ／ ワークノート
+　　　単元テスト ／ 実力問題 ／ 基礎・基本ワーク ／ 授業プリント ／ 配られたプリント
+　　これらのページは other_materials にだけ書く。textbook には絶対に入れない
+　　例：「教科書〜p.77（メインはUnit4 Part3〜Unit6 Read and Think）／めきめきEnglish〜P88」
+　　　　→ textbook_to=77（88ではない）
 ・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`;
+
+  // 範囲表に書かれていた単元名を、アプリの表記にそろえる。
+  // 実在しない単元名が入ってきたら使わない（推測で埋められた場合の保険）。
+  function normalizeWrittenUnitRange(raw, grade) {
+    const t = String(raw || '').trim();
+    if (!t || /^(null|undefined|なし|記載なし)$/i.test(t)) return '';
+    const parts = t.split(/\s*[〜~－—-]\s*/).filter(Boolean);
+    const from = normalizeUnitField(parts[0] || '');
+    const to   = normalizeUnitField(parts[1] || parts[0] || '');
+    const gN   = gradeNumOf(grade);
+    if (rangePos(from, gN) < 0 || rangePos(to, gN) < 0) return '';
+    if (rangePos(from, gN) > rangePos(to, gN)) return '';
+    return from === to ? from : `${from} 〜 ${to}`;
+  }
 
   // 学校名や学年が読み取れなかった行を、手で直す
   function fixSyllabusRow(i) {
@@ -6028,9 +6053,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           startNote = '学年最初のテストとみなし、教科書の最初から';
         }
       }
-      const unitText = (fromPage || r.textbook_to)
+      // 【範囲表に単元名が書いてあれば、そちらを使う】
+      // ページからの変換は、副教材のページが混ざると大きく外れる。
+      // 範囲表に「Unit4 Part3〜Unit6 Read and Think」と直接書いてあるなら、それが正解。
+      const writtenUnits = normalizeWrittenUnitRange(r.unit_range, grade);
+      const unitText = writtenUnits || ((fromPage || r.textbook_to)
         ? (pagesToRangeText(grade, `${fromPage||r.textbook_to}〜${r.textbook_to||fromPage}`) || '')
-        : '';
+        : '');
+      if (writtenUnits) startNote = '範囲表に書かれていた単元名をそのまま使いました';
       const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
       const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
         ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
