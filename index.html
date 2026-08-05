@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.6</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4200,6 +4200,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return f && t ? (f === t ? f : `${f} 〜 ${t}`) : (f || t || '範囲不明');
   }
 
+  // 対応表から「そのUnitが占める正しいページ範囲」を求める。
+  // 例（中1）：Unit 6 は p.71 から始まり、次の Unit 7 が p.81 なので p.71〜80。
+  function unitPageSpan(bookId, unit) {
+    const table = PAGE_UNIT_TABLES[bookId];
+    if (!table || !unit) return null;
+    const name = String(unit).trim();
+    const idx = table.findIndex(e => e[1] === name);
+    if (idx < 0) return null;
+    // 次に現れる「別のUnit（またはLet's Read）の開始」までがこのUnitの範囲
+    let to = Infinity;
+    for (let i = idx + 1; i < table.length; i++) {
+      const label = table[i][1];
+      if (!label) { to = table[i][0] - 1; break; }            // 巻末の始まり
+      if (label !== name && !table[i][2]) { to = table[i][0] - 1; break; }
+    }
+    return { from: table[idx][0], to };
+  }
+
   // 単元名・セクション名から、教科書のページ範囲を逆引きする。
   // 範囲表は「中2教科書 p.15まで」のようにページで書かれているため、
   // 判定した範囲にページを併記すると、実物と照らし合わせやすくなる。
@@ -4217,8 +4235,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 「p.6〜152」のように巻末まで伸びてしまう（実際に中1の全テストで起きていた）。
     // 巻末が始まるページ以降は、範囲のページ計算からは外す。
     const appendixStart = (PAGE_UNIT_TABLES[bookId] || []).find(e => !e[1])?.[0] || Infinity;
+    // 【そのUnitの本来のページ範囲から外れた項目も外す】
+    // 教科書データには、ページ番号を取り違えた項目がまぎれている。
+    // 実例：Unit 6（本来 p.71〜80）の項目に p.24 のものが1件あり、
+    // 「Unit 6 Part 1 〜 Unit 7 Part 1 ／ p.24〜90」と表示されていた。
+    // 対応表が持っている「Unitごとの正しいページ範囲」の中だけを見る。
+    const span = unitPageSpan(bookId, unit);
     let hit = (book.items || []).filter(it =>
       it.page > 0 && it.page < appendixStart &&
+      (!span || (it.page >= span.from && it.page <= span.to)) &&
       norm(it.unit) === norm(unit) && (!lesson || norm(it.lesson) === norm(lesson)));
     // 本編に1件もなければ、やむを得ず巻末も含めて探す（表示が空になるより良い）
     if (!hit.length) {
@@ -4713,6 +4738,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.reason) decision.push(`<span style="color:#DC2626">${esc(d.reason)}</span>`);
     if (d.endDemoted) decision.push(esc(d.endDemoted));
     if (d.forcedStartUnit0) decision.push(esc(d.forcedStartUnit0));
+    if (d.endPulledUp)    decision.push(esc(d.endPulledUp));
+    if (d.endBeforePrev)  decision.push(esc(d.endBeforePrev));
     if (d.endExtendedByWord) decision.push(`新出文法のないセクションのため、出題語で終わりを伸ばしました：${esc(d.endExtendedByWord)}`);
     if (d.prevEndPos != null) decision.push(`前回のテストの終わりより前は範囲に入れていません（下限：${d.prevEndPos}）`);
     if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
@@ -5457,6 +5484,25 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 前回の情報は「手がかりが前回の範囲内にしかないとき」だけ使う。
     const prevEndPos = (opts && opts.prevEndPos != null) ? opts.prevEndPos : null;
     if (prevEndPos != null && prevEndPos >= 0) diag.prevEndPos = prevEndPos;
+
+    // 【前回のテストより手前に終わりが戻らないようにする】
+    // 実例：牟呂中の11/14が「Unit 0 〜 Unit 1 Part 1」となっていた。
+    // 前回（10/07）が Unit 4 Stage Activity 1 まで進んでおり、
+    // 次のテストがそれより手前だけで終わることはありえない。
+    // これまで前回の情報は「始まり」にしか使っておらず、終わりは素通りしていた。
+    if (prevEndPos != null && prevEndPos >= 0 && endHit && endHit.pos <= prevEndPos) {
+      const after = endSource
+        .filter(h => h.pos > prevEndPos + 0.001)
+        .sort((a, b) => b.pos - a.pos);
+      if (after.length) {
+        diag.endPulledUp = `${endHit.unit}${endHit.lesson ? ' ' + endHit.lesson : ''} は前回のテスト（${prevEndPos}）より手前のため、終わりにしませんでした`;
+        endHit = after[0];
+        endUnit = Math.floor(endHit.pos);
+        minUnit = Math.max(0, endUnit - (MAX_SPAN - 1));
+      } else {
+        diag.endBeforePrev = '⚠️ 前回のテストより手前で終わっています。範囲がずれている可能性があります';
+      }
+    }
 
     const inWindowAll = allHits.filter(h => {
       if (h.weak) return false;                    // 誤ヒットは開始の根拠にしない
