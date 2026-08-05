@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.0</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5889,16 +5889,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
 【読み取る項目】
 ・school：中学校名（手書きやテキストボックスで書かれていることが多い）
+　　【手書きの探し方】書き方はそろっていない。次を必ず全部見ること
+　　　・向きを問わない（縦書き・斜め・90度回転した文字もある）
+　　　・表の外側、紙の余白、写真の端、左右の縁も見る
+　　　・赤ペンなど、印刷とは違う色で書かれていることが多い
+　　　・印刷の表題に学校名がなくても、手書きがあればそれを使う
 　　学年の数字が付いている場合は取り除く
 　　　「上郷中1」→「上郷中」　／　「上郷中2」→「上郷中」
 　　　「中1上郷」→「上郷中」　／　「中３岩津」→「岩津中」
 　　　「葵中3」→「葵中」　／　「岩津」→「岩津中」（「中」が省略されていれば補う）
+　　　「益富2」→「益富中」（「中」が省略され、学年の数字だけが付く形。数字を消して「中」を補う）
+　　　「三好中1」→「三好中」
 ・grade：学年。次の順番で判断する
 　　1. 表題の「1年生」「2年生」「3年生」（これがあれば最優先）
 　　2. 手書きやテキストボックスの記載。次のような書き方がある
 　　　　「中1」「中３」「1年」「３年」
 　　　　「上郷中1」「上郷中2」（学校名のうしろに学年が付く形）
 　　　　「中1上郷」「中３岩津」（学年が先に来る形）
+　　　　「益富2」「三好中1」（学校名の直後に数字だけが付く形。この数字が学年）
 　　3. 範囲の中身（「3年教科書」「2年 Get English」などの記載）
 　　4. 教科書のページ範囲から推定
 　　【重要】「1学期中間テスト」の「1学期」は学年ではない。学期と学年を取り違えないこと。
@@ -5949,9 +5957,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const t = String(raw || '').trim();
     if (!t || /^(null|undefined|なし|記載なし)$/i.test(t)) return '';
     const parts = t.split(/\s*[〜~－—-]\s*/).filter(Boolean);
-    const from = normalizeUnitField(parts[0] || '');
-    const to   = normalizeUnitField(parts[1] || parts[0] || '');
+    // Unit番号とセクション名を別々に整えてから、ひとつの表記に戻す。
+    // normalizeUnitField はUnit番号だけを返すため、そのまま使うと
+    // 「Unit 4 Part 3」が「Unit 4」に潰れ、範囲表のいちばん大事な部分が落ちていた。
+    const build = str => {
+      const unit = normalizeUnitField(str);
+      if (!unit) return '';
+      const lesson = normalizeLessonField(str);
+      return lesson ? `${unit} ${lesson}` : unit;
+    };
+    const from = build(parts[0] || '');
+    const to   = build(parts[1] || parts[0] || '');
     const gN   = gradeNumOf(grade);
+    if (!from || !to) return '';
     if (rangePos(from, gN) < 0 || rangePos(to, gN) < 0) return '';
     if (rangePos(from, gN) > rangePos(to, gN)) return '';
     return from === to ? from : `${from} 〜 ${to}`;
