@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.3</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -3288,9 +3288,37 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         sq.theme   = collapseRunaway(sq.theme, 40);
       });
     });
-    r.key_items    = (r.key_items    || []).map(x => collapseRunaway(x, 60)).filter(Boolean).slice(0, 60);
-    r.tested_vocab = (r.tested_vocab || []).map(x => collapseRunaway(x, 60)).filter(Boolean).slice(0, 120);
+    r.key_items    = (r.key_items    || []).map(x => collapseRunaway(x, 60)).filter(Boolean).filter(v => !isTestPaperBoilerplate(v)).slice(0, 60);
+    r.tested_vocab = (r.tested_vocab || []).map(x => collapseRunaway(x, 60)).filter(Boolean).filter(v => !isTestPaperBoilerplate(v)).slice(0, 120);
     return r;
+  }
+
+  // ── テスト用紙の指示文・注意書きを出題語から外す ──────────────────────
+  // AIはリスニングの放送原稿や表紙の注意書きまで「出題語」として拾ってくる。
+  // 実例（葵中・中3）：60語のうち一致0件で、中身は
+  // 「リスニング・解答欄・かこみなさい・検査時間・不鮮明・ていねいな」ばかりだった。
+  // これらは教科書にないので照合できず、そのぶん本当の出題語が枠から押し出される。
+  // 判定の材料が文法だけになってしまうため、ここで落とす。
+  const BOILERPLATE_WORDS = [
+    'リスニング','放送','聞きます','聞き取り','読みます','続いて','もう一度','繰り返し','メモ',
+    '解答欄','解答用紙','問題用紙','答案','検査時間','試験時間','中間テスト','期末テスト',
+    '定期テスト','外国語','英語科','かこみ','囲みなさい','書きなさい','答えなさい','選びなさい',
+    '記号','番号','ページ','不鮮明','採点','読めない','ていねい','丁寧','大文字','小文字',
+    'アルファベット','正しい','誤っている','ありません','よろしい','それぞれ','すべて','従い',
+    '決められた','注意','氏名','出席番号','得点','配点','裏面','下線','空欄'
+  ];
+  // 文法名を守る条件。以前は「文」「用」「形」といった一文字で判定していたため、
+  // 「解答用紙」の"用"、「大文字」の"文"に反応して指示文まで守ってしまった。
+  // 実際に使われる文法名だけを、はっきり書き出して守る。
+  const GRAMMAR_LIKE = /比較級|最上級|比較|現在完了|過去完了|現在進行|過去進行|受動態|受け身|不定詞|動名詞|分詞|関係代名詞|関係副詞|接続詞|前置詞|助動詞|疑問詞|命令文|感嘆文|仮定法|使役|知覚動詞|間接疑問|付加疑問|be動詞|一般動詞|三単現|過去形|現在形|未来形|所有格|目的格|主格|形容詞|副詞|名詞|代名詞/;
+  function isTestPaperBoilerplate(v) {
+    const t = String(v || '').trim();
+    if (!t) return true;
+    // 日本語を含まないもの（英単語・熟語）は、そのまま通す
+    if (!/[ぁ-んァ-ヶ一-龥]/.test(t)) return false;
+    // はっきりした文法名は範囲判定に使うので残す
+    if (GRAMMAR_LIKE.test(t)) return false;
+    return BOILERPLATE_WORDS.some(w => t.includes(w));
   }
 
   function mergeTestResults(list) {
@@ -5157,13 +5185,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     // ── ステップ2の材料：出題された「単語・熟語」を教科書のUnitに照合（初出位置） ──
     const vocab = new Set();
-    (r.tested_vocab || []).forEach(v => { const t = v.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); });
+    // 【保存済みのデータにも指示文よけを効かせる】
+    // 分析のときにも同じふるいをかけているが、それ以前に保存された454件には
+    // 「リスニング」「解答欄」などが混ざったまま入っている。
+    // ここでも落とすことで、再判定を押せば保存済みのぶんにも効く（AIは使わないので費用ゼロ）。
+    const addWord = t => { if (t.length >= 3 && !isTestPaperBoilerplate(t)) vocab.add(t); };
+    (r.tested_vocab || []).forEach(v => addWord(v.trim().toLowerCase()));
     // key_items は「take advantage of」のような複数語の語句が入るため、空白では分割しない。
     // 空白で切ると熟語として照合できなくなり、さらに単語1個での誤ヒットも増える。
-    (r.key_items || []).forEach(v => String(v).split(/[・、,／/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); }));
+    (r.key_items || []).forEach(v => String(v).split(/[・、,／/]+/).forEach(w => addWord(w.trim().toLowerCase())));
     (r.question_types || []).forEach(qt => {
-      (qt.phrases || '').split(/[・、,\/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); });
-      (qt.sub_questions || []).forEach(sq => (sq.phrases || '').split(/[・、,\/]+/).forEach(w => { const t = w.trim().toLowerCase(); if (t.length >= 3) vocab.add(t); }));
+      (qt.phrases || '').split(/[・、,\/]+/).forEach(w => addWord(w.trim().toLowerCase()));
+      (qt.sub_questions || []).forEach(sq => (sq.phrases || '').split(/[・、,\/]+/).forEach(w => addWord(w.trim().toLowerCase())));
     });
     const wordHits = [];        // {pos, unit, lesson, term} 同学年で初出した位置
     const otherGradeHits = [];  // 他学年でのみ見つかった語（復習表示用）
