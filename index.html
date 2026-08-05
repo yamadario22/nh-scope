@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4200,6 +4200,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return f && t ? (f === t ? f : `${f} 〜 ${t}`) : (f || t || '範囲不明');
   }
 
+  // 前回のテストの終わり（位置）の、すぐ次にあたるセクションを返す。
+  // 教科書データに実在するセクションの中から、位置がいちばん近い「ひとつ後ろ」を選ぶ。
+  function nextSectionAfter(pos, gradeN) {
+    const book = bookById(`default_c${gradeN}`);
+    if (!book) return null;
+    let best = null;
+    (book.items || []).forEach(it => {
+      if (!it.unit) return;
+      const p = rangePos([it.unit, it.lesson].filter(Boolean).join(' '), gradeN);
+      if (p == null || p < 0 || p <= pos + 0.001) return;
+      if (!best || p < best.pos) best = { pos: p, unit: it.unit, lesson: it.lesson || '', term: '前回の続き' };
+    });
+    return best;
+  }
+
   // 対応表から「そのUnitが占める正しいページ範囲」を求める。
   // 例（中1）：Unit 6 は p.71 から始まり、次の Unit 7 が p.81 なので p.71〜80。
   function unitPageSpan(bookId, unit) {
@@ -4740,6 +4755,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (d.forcedStartUnit0) decision.push(esc(d.forcedStartUnit0));
     if (d.endPulledUp)    decision.push(esc(d.endPulledUp));
     if (d.endBeforePrev)  decision.push(esc(d.endBeforePrev));
+    if (d.startFromPrev)  decision.push(esc(d.startFromPrev));
     if (d.endExtendedByWord) decision.push(`新出文法のないセクションのため、出題語で終わりを伸ばしました：${esc(d.endExtendedByWord)}`);
     if (d.prevEndPos != null) decision.push(`前回のテストの終わりより前は範囲に入れていません（下限：${d.prevEndPos}）`);
     if ((d.outOfRange||[]).length) decision.push(`テスト範囲に入らないセクションのため外した語：${esc((d.outOfRange||[]).slice(0,10).join('・'))}`);
@@ -5494,9 +5510,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const after = endSource
         .filter(h => h.pos > prevEndPos + 0.001)
         .sort((a, b) => b.pos - a.pos);
-      if (after.length) {
-        diag.endPulledUp = `${endHit.unit}${endHit.lesson ? ' ' + endHit.lesson : ''} は前回のテスト（${prevEndPos}）より手前のため、終わりにしませんでした`;
-        endHit = after[0];
+      // 文法の候補に前回より後ろのものがなければ、単語も見る。
+      // 実例（牟呂中11/14）：文法は be動詞（Unit 1）が4回しか拾えず、
+      // 前回（Unit 4）より手前で終わっていた。一方で単語には
+      // owner・restaurant・everything・mine・funny など Unit 5〜7 の手がかりが
+      // 20件近く並んでいた。文法が多数派を取ると単語をまったく見ない作りだったため、
+      // 目の前にある正解を使えていなかった。
+      // これは「明らかにおかしいときの救済」なので、普段の判定には影響しない。
+      // 単語で救済するときは、1語だけの飛び地を終わりにしない。
+      // 実例（牟呂中11/14）：Unit 8 に always が1語あるだけで Unit 8 まで伸びた。
+      // 本体は Unit 5〜7 に固まっているので、2語以上ある Unit だけを終わりの候補にする。
+      const wordCountByUnit = {};
+      solidWordHits.forEach(h => {
+        const u = Math.floor(h.pos);
+        wordCountByUnit[u] = (wordCountByUnit[u] || 0) + 1;
+      });
+      const rescue = after.length ? after
+        : solidWordHits
+            .filter(h => h.pos > prevEndPos + 0.001 && wordCountByUnit[Math.floor(h.pos)] >= 2)
+            .sort((a, b) => b.pos - a.pos);
+      if (rescue.length) {
+        diag.endPulledUp = `${endHit.unit}${endHit.lesson ? ' ' + endHit.lesson : ''} は前回のテストより手前のため、終わりにしませんでした`
+          + (after.length ? '' : '（文法に候補がないため単語で決め直しました）');
+        endHit = rescue[0];
         endUnit = Math.floor(endHit.pos);
         minUnit = Math.max(0, endUnit - (MAX_SPAN - 1));
       } else {
@@ -5533,6 +5569,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 窓の中で最も前にある手がかり＝開始
     let startHit = inWindow[0];
     for (const h of inWindow) if (h.pos < startHit.pos) startHit = h;
+    // 【前回の続きから始める】
+    // 手がかりが見つかった場所を始まりにしていたため、前回の次のセクションに
+    // 手がかりがないと、そこを飛ばして先から始まっていた。
+    // 実例（南稜中6/19）：前回が Unit 1 Part 2 までなのに、Unit 1 Part 3 の手がかりが
+    // 拾えず「Unit 2 〜 Unit 2 Part 2」となり、Unit 1 Part 3 が抜けていた。
+    // テストは前回の続きから出るので、手がかりの有無にかかわらず続きから始める。
+    if (prevEndPos != null && prevEndPos >= 0 && afterPrev.length) {
+      const next = nextSectionAfter(prevEndPos, gradeNum);
+      if (next && next.pos < startHit.pos && next.pos <= endHit.pos) {
+        diag.startFromPrev = `前回の続き（${next.unit}${next.lesson ? ' ' + next.lesson : ''}）から始まりにしました（判定では ${startHit.unit}${startHit.lesson ? ' ' + startHit.lesson : ''}）`;
+        startHit = next;
+      }
+    }
     // 始まりが終わりより後ろになることはありえない。
     // 実例：「Unit 4 Read and Think 2 〜 Unit 4 Read and Think 1（p.53〜52）」と逆転していた。
     if (startHit.pos > endHit.pos) startHit = endHit;
