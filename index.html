@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.2</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.4</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6028,6 +6028,118 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 学校名や学年が読み取れなかった行を、手で直す
+  // 学校名・学年が読めなかった行に出すパネル。
+  // 写真そのものを見ないと判断できないので、写真を一緒に出す。
+  // 写真はこの場で見るためだけのもので、保存はしない。
+  function syllabusFixPanel(i, school, grade) {
+    const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
+    if (!syllabusPick[i]) syllabusPick[i] = { school: school || '', grade: grade || '' };
+    const pick = syllabusPick[i];
+    return `
+      <div style="margin-top:6px;padding:8px;border:1px solid var(--amber);border-radius:6px;background:#FFFBEB">
+        <div style="font-size:11px;font-weight:600;color:#B45309;margin-bottom:6px">
+          学校名か学年が読み取れませんでした。写真を見て入れてください
+        </div>
+        ${img ? `<img src="data:image/jpeg;base64,${img.b64}" alt="範囲表"
+             style="width:100%;max-width:420px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:6px"
+             onclick="openSyllabusPhoto(${i})">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">画像をクリックすると大きく表示します</div>` : ''}
+        <div style="margin-bottom:6px">
+          <input type="text" id="sylSchool${i}" value="${esc(pick.school)}"
+                 placeholder="中学校名を入力（例：三好）"
+                 oninput="syllabusSchoolTyped(${i})"
+                 style="width:100%;max-width:260px;padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:4px">
+          <div id="sylCand${i}" style="margin-top:4px"></div>
+        </div>
+        <div style="margin-bottom:6px">
+          ${['中1','中2','中3'].map(g => `
+            <button class="btn btn-sm ${normalizeGrade(pick.grade)===normalizeGrade(g)?'btn-primary':'btn-secondary'}"
+                    style="font-size:11px;padding:3px 10px;margin-right:4px"
+                    onclick="syllabusPickGrade(${i},'${g}')">${g}</button>`).join('')}
+        </div>
+        <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="syllabusConfirmFix(${i})">決定</button>
+      </div>`;
+  }
+
+  // 入力のたびに候補だけを描き直す。
+  // 表ごと描き直すと入力欄が作り直されてカーソルが外れ、1文字しか打てなくなる。
+  function syllabusSchoolTyped(i) {
+    const el = document.getElementById('sylSchool' + i);
+    if (!el) return;
+    const v = String(el.value || '').trim();
+    if (!syllabusPick[i]) syllabusPick[i] = { school:'', grade:'' };
+    syllabusPick[i].school = v;
+    const box = document.getElementById('sylCand' + i);
+    if (!box) return;
+    if (!v) { box.innerHTML = ''; return; }
+    const names = knownSchoolNames().filter(n => n.includes(v)).slice(0, 8);
+    box.innerHTML = names.length
+      ? names.map(n => `<button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px;margin:2px 3px 0 0"
+           onclick="syllabusPickSchool(${i},'${esc(n)}')">${esc(n)}</button>`).join('')
+      : `<span style="font-size:10px;color:var(--muted)">候補なし（このまま「${esc(v)}」で登録できます）</span>`;
+  }
+
+  // これまでに分析したテストから、学校名の一覧を作る
+  function knownSchoolNames() {
+    const set = new Set();
+    try {
+      histAll().forEach(h => {
+        const n = (h.school || extractSchoolName(h.name || '') || '').trim();
+        if (n) set.add(n);
+      });
+    } catch {}
+    return [...set].sort();
+  }
+
+  function syllabusPickSchool(i, name) {
+    if (!syllabusPick[i]) syllabusPick[i] = { school:'', grade:'' };
+    syllabusPick[i].school = name;
+    const el = document.getElementById('sylSchool' + i);
+    if (el) el.value = name;
+    const box = document.getElementById('sylCand' + i);
+    if (box) box.innerHTML = `<span style="font-size:10px;color:#059669">「${esc(name)}」を選びました</span>`;
+  }
+
+  function syllabusPickGrade(i, g) {
+    if (!syllabusPick[i]) syllabusPick[i] = { school:'', grade:'' };
+    syllabusPick[i].grade = g;
+    // 学年ボタンの色だけを塗り替える（入力欄には触らない）
+    const row = document.getElementById('sylSchool' + i);
+    if (!row) return;
+    const wrap = row.closest('div').parentElement;
+    if (!wrap) return;
+    [...wrap.querySelectorAll('button')].forEach(b => {
+      const t = b.textContent.trim();
+      if (['中1','中2','中3'].includes(t)) {
+        b.className = 'btn btn-sm ' + (t === g ? 'btn-primary' : 'btn-secondary');
+      }
+    });
+  }
+
+  // 写真を大きく見る
+  function openSyllabusPhoto(i) {
+    const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
+    if (!img) return;
+    const w = window.open('');
+    if (w) w.document.write(`<img src="data:image/jpeg;base64,${img.b64}" style="max-width:100%">`);
+  }
+
+  function syllabusConfirmFix(i) {
+    const pick = syllabusPick[i] || {};
+    const el = document.getElementById('sylSchool' + i);
+    let school = String((el ? el.value : pick.school) || '').trim();
+    const grade = normalizeGrade(String(pick.grade || '').trim());
+    if (!school) { alert('中学校名を入れてください。'); return; }
+    if (!gradeNumOf(grade)) { alert('学年（中1／中2／中3）を選んでください。'); return; }
+    if (!/中(学校)?$/.test(school)) school += '中';
+    const row = syllabusRows[i];
+    if (!row) return;
+    row.school = school;
+    row.grade  = grade;
+    row.fixedByHand = true;
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
   function fixSyllabusRow(i) {
     const row = syllabusRows[i];
     if (!row) return;
@@ -6144,9 +6256,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(r.date_raw || r.grade_raw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
-          ${(!school || !grade)
-            ? `<br><button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 5px;margin-top:3px"
-                 onclick="fixSyllabusRow(${i})">学校・学年を入れる</button>` : ''}
+          ${(!school || !grade) ? syllabusFixPanel(i, school, grade) : ''}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
@@ -6179,6 +6289,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   let syllabusRows = {};
+  let syllabusPick = {};   // 手直しパネルで選んでいる途中の内容
 
   // 学校＋学年＋日付（±10日）でテストを探す。
   // 範囲表に書かれた日付と、テストのファイル名の日付がずれていることがあるため。
