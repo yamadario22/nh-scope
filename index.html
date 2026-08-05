@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.5</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6259,10 +6259,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const startNotWritten = w ? !w.hasStart : !r.textbook_from;
       let analyzedStart = '';
       if (startNotWritten && match && match.h && match.h.range && match.h.range !== '範囲不明') {
-        const prevForThis = findPrevTestEnd({
-          school, grade, testDate: match.h.testDate || extractTestDate(match.h.name||'') || date
-        });
-        if (prevForThis) {   // 学年最初のテストではない
+        // 【学年最初のテストかどうか】
+        // 前のテストが記録にあれば、最初ではない（それが確実）。
+        // 記録にないときは月で判断するが、6月の扱いが学期制で変わる。
+        //   3学期制：5月に1学期中間 → 6月下旬の1学期期末は【2回目】
+        //   2学期制：5月末〜6月中旬に前期中間 → 6月のテストは【最初】
+        // 学校ごとの学期制はアプリに登録済みなので、それを使う。
+        const tDate = match.h.testDate || extractTestDate(match.h.name||'') || date;
+        const prevForThis = findPrevTestEnd({ school, grade, testDate: tDate });
+        const m = String(tDate).match(/^\d{4}-(\d{2})/);
+        const month = m ? parseInt(m[1], 10) : 0;
+        const firstMonthEnd = isSemester2(school) ? 6 : 5;   // 最初のテストがある月の上限
+        const isFirstOfYear = !prevForThis && month >= 4 && month <= firstMonthEnd;
+        if (!isFirstOfYear) {
           const ap = parseRangeText(match.h.range);
           const cand = [ap.from_unit, ap.from_lesson].filter(Boolean).join(' ');
           if (cand && rangePos(cand, gradeNumOf(grade)) >= 0) analyzedStart = cand;
