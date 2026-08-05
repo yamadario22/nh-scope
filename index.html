@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6233,12 +6233,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           // 前回の終わりの単元から、その次のページを始まりにする
           const p = parseRangeText(prev.range);
           const sp = sectionPages(grade, p.to_unit, p.to_lesson);
-          if (sp && sp.to) { fromPage = sp.to + 1; startNote = `前回（${prev.date} ${prev.range}）の続きから`; }
+          if (sp && sp.to) { fromPage = sp.to + 1; startNote = `始まりが範囲表に書かれていないため、前回（${prev.date} ${prev.range}）の続きからとしました`; }
         }
         if (!fromPage) {
           const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
           fromPage = t.length ? t[0][0] : 1;
-          startNote = '学年最初のテストとみなし、教科書の最初から';
+          startNote = '始まりが範囲表に書かれていないため、学年最初のテストとみなして教科書の最初からとしました';
         }
       }
       // 【範囲表に単元名が書いてあれば、そちらを使う】
@@ -6316,7 +6316,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
-          ${startNote ? `<br><span style="color:#B45309;font-size:10px">始まりが範囲表に書かれていないため、${esc(startNote)}</span>` : ''}
+          ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
           ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
         </td>
