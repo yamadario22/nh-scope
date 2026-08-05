@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.4</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6018,13 +6018,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const lesson = normalizeLessonField(str);
       return lesson ? `${unit} ${lesson}` : unit;
     };
-    const from = build(parts[0] || '');
-    const to   = build(parts[1] || parts[0] || '');
     const gN   = gradeNumOf(grade);
-    if (!from || !to) return '';
-    if (rangePos(from, gN) < 0 || rangePos(to, gN) < 0) return '';
-    if (rangePos(from, gN) > rangePos(to, gN)) return '';
-    return from === to ? from : `${from} 〜 ${to}`;
+    // 「Unit4 Part3〜Unit6 Read and Think」のように2つ書かれていれば始まりあり。
+    // 「Unit4 Read and Think 1まで」のように1つだけなら、それは【終わりだけ】の記載。
+    // これまでは1つだけのときも始まりとして扱っていたため、範囲が1点に潰れていた。
+    const hasStart = parts.length >= 2;
+    const to   = build(parts[parts.length - 1] || '');
+    const from = hasStart ? build(parts[0] || '') : '';
+    if (!to || rangePos(to, gN) < 0) return null;
+    if (hasStart) {
+      if (!from || rangePos(from, gN) < 0) return null;
+      if (rangePos(from, gN) > rangePos(to, gN)) return null;
+    }
+    return { from, to, hasStart };
   }
 
   // 学校名や学年が読み取れなかった行を、手で直す
@@ -6238,11 +6244,52 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 【範囲表に単元名が書いてあれば、そちらを使う】
       // ページからの変換は、副教材のページが混ざると大きく外れる。
       // 範囲表に「Unit4 Part3〜Unit6 Read and Think」と直接書いてあるなら、それが正解。
-      const writtenUnits = normalizeWrittenUnitRange(r.unit_range, grade);
-      const unitText = writtenUnits || ((fromPage || r.textbook_to)
+      const w = normalizeWrittenUnitRange(r.unit_range, grade);
+      // ページから出した範囲（単元名がないときの控え）
+      const pageText = (fromPage || r.textbook_to)
         ? (pagesToRangeText(grade, `${fromPage||r.textbook_to}〜${r.textbook_to||fromPage}`) || '')
-        : '');
-      if (writtenUnits) startNote = '範囲表に書かれていた単元名をそのまま使いました';
+        : '';
+
+      // 【始まりが書かれていないときは、テスト分析が出した始まりを使う】
+      // 範囲表には「〜P71」「Unit 4 Read and Think 1まで」のように
+      // 終わりしか書かれていないことがある。その場合、実際の範囲は
+      // 「前回の終わりの次から」だが、前回の終わりも判定値なので確かではない。
+      // テスト自体を分析して出した始まりのほうが、実物に基づいていて確かなので、
+      // 始まりだけはそちらを採る。ただし学年最初のテストは Unit 0 からと決まっているので除く。
+      const startNotWritten = w ? !w.hasStart : !r.textbook_from;
+      let analyzedStart = '';
+      if (startNotWritten && match && match.h && match.h.range && match.h.range !== '範囲不明') {
+        const prevForThis = findPrevTestEnd({
+          school, grade, testDate: match.h.testDate || extractTestDate(match.h.name||'') || date
+        });
+        if (prevForThis) {   // 学年最初のテストではない
+          const ap = parseRangeText(match.h.range);
+          const cand = [ap.from_unit, ap.from_lesson].filter(Boolean).join(' ');
+          if (cand && rangePos(cand, gradeNumOf(grade)) >= 0) analyzedStart = cand;
+        }
+      }
+
+      let unitText = '';
+      if (w) {
+        const endText = w.to;
+        const st = w.hasStart ? w.from : analyzedStart;
+        unitText = st && st !== endText ? `${st} 〜 ${endText}` : endText;
+        startNote = w.hasStart
+          ? '範囲表に書かれていた単元名をそのまま使いました'
+          : (analyzedStart
+              ? `終わり（${endText}）は範囲表どおり。始まりは範囲表に書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
+              : `範囲表には終わり（${endText}）しか書かれていません`);
+      } else {
+        unitText = pageText;
+        if (analyzedStart && pageText) {
+          const pt = parseRangeText(pageText);
+          const endText = [pt.to_unit, pt.to_lesson].filter(Boolean).join(' ');
+          if (endText && rangePos(analyzedStart, gradeNumOf(grade)) <= rangePos(endText, gradeNumOf(grade))) {
+            unitText = analyzedStart === endText ? endText : `${analyzedStart} 〜 ${endText}`;
+            startNote = `終わりは範囲表のページどおり。始まりは書かれていないため、テスト分析が出した ${analyzedStart} を使いました`;
+          }
+        }
+      }
       const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
       const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
         ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
