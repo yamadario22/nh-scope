@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.2</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5021,7 +5021,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 取り出せない場合は空にする（誤った情報を残すより、空のほうが害が小さい）。
   const VALID_LESSON_PATTERNS = [
     [/Part\s*([123])/i,                    n => `Part ${n}`],
-    [/Read\s*and\s*Think\s*([12])/i,       n => `Read and Think ${n}`],
+    // 中1の Read and Think には番号がない（中2・中3は 1 / 2 が付く）。
+    // 数字を必須にしていたため、中1の「Unit 6 Read and Think」が
+    // セクション名として一度も拾えていなかった。数字は任意にする。
+    [/Read\s*and\s*Think\s*([12]?)/i,      n => `Read and Think${n ? ' ' + n : ''}`],
     [/Grammar\s*for\s*Communication\s*(\d?)/i, n => `Grammar for Communication${n?' '+n:''}`],
     [/Real\s*Life\s*English\s*(\d?)/i,     n => `Real Life English${n?' '+n:''}`],
     [/Sounds\s*and\s*Letters\s*(\d?)/i,    n => `Sounds and Letters${n?' '+n:''}`],
@@ -5873,6 +5876,32 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             }
           },
           20000, getFastModeOpts());
+        // 【手書きが読めなかったときだけ、探し直す】
+        // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
+        // （縦向き・表の外・赤ペンなど）。1回目は表の中身を読むのが主目的なので
+        // 見落としやすい。そこで、読めなかったときに限り「手書きを探すことだけ」を
+        // 頼む2回目を送る。目的を1つに絞ったほうが見つかりやすい。
+        // 読めている写真では走らないので、余分な費用はかからない。
+        const missing = !String(r.school || '').trim()
+          || /^(null|undefined|なし|不明|記載なし)$/i.test(String(r.school || '').trim())
+          || !gradeNumOf(normalizeGrade(String(r.grade || '')));
+        if (missing) {
+          try {
+            const h = await callGeminiJSON(
+              [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
+               { text: HANDWRITING_PROMPT }],
+              '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
+              { type: 'OBJECT', properties: {
+                  school: { type: 'STRING' }, grade: { type: 'STRING' },
+                  found_text: { type: 'STRING' }, where: { type: 'STRING' } } },
+              4000, {});
+            if (h) {
+              if (h.school && !String(r.school || '').trim()) r.school = h.school;
+              if (h.grade  && !gradeNumOf(normalizeGrade(String(r.grade || '')))) r.grade = h.grade;
+              if (h.found_text) r.grade_raw = `${r.grade_raw || ''}${r.grade_raw ? ' ／ ' : ''}手書き：${h.found_text}${h.where ? `（${h.where}）` : ''}`;
+            }
+          } catch(e) { console.warn('手書きの探し直しに失敗:', e); }
+        }
         results.push({ file: img.name, r });
       } catch (e) {
         results.push({ file: img.name, error: e.message });
@@ -5883,6 +5912,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     btn.disabled = false;
     renderSyllabusResult(results);
   }
+
+  // 手書き探し専用の指示文。表の中身は一切読まない。
+  const HANDWRITING_PROMPT =
+`この写真は中学校のテスト範囲表です。**手書きで書き込まれた文字だけ**を探してください。
+表に印刷されている内容は読まなくて構いません。
+
+【探し方】
+・写真全体をすみずみまで見る。表の外側、紙の余白、写真の左右の縁、上下の端も必ず見る
+・文字の向きは問わない。縦書き、斜め、90度回転した文字もある
+・赤・青など、印刷とは違う色のペンで大きく書かれていることが多い
+・鉛筆やボールペンの小さな書き込みのこともある
+
+【読み取る項目】
+・found_text：見つけた手書き文字を、そのまま書く（例：「三好中1」「益富2」）
+・where：どこにあったか（例：「左端に縦向き」「右上」）
+・school：そこから読み取れる中学校名。「中」が省略されていれば補う
+　　「三好中1」→「三好中」　／　「益富2」→「益富中」　／　「岩津」→「岩津中」
+　　学年の数字は取り除く
+・grade：そこから読み取れる学年。「中1」「中2」「中3」のいずれかで書く
+　　「三好中1」→「中1」　／　「益富2」→「中2」　／　「中３岩津」→「中3」
+　　学校名の直後に付く数字は学年を表す
+
+手書きが1つも見つからなければ、すべて空欄にする。推測で埋めないこと。`;
 
   const SYLLABUS_PROMPT =
 `この写真は中学校が配布したテスト範囲表です。【英語】の範囲だけを読み取ってください。
