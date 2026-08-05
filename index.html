@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6206,6 +6206,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 読み取れなかった場合は空にする（"null" という文字が入ることがある）
       let school = String(r.school ?? '').trim();
       if (/^(null|undefined|なし|不明|記載なし)$/i.test(school)) school = '';
+      // 【手書きが1〜2文字しかないときの照合】
+      // 範囲表の手書きは「岩」「北」のように1文字だけのことがある。
+      // これまでに分析したテストの学校名と突き合わせて、1つに絞れるときだけ当てる。
+      // 2つ以上に当てはまるときは、どれか分からないので当てない。
+      if (!school && r.grade_raw) {
+        const hint = String(r.grade_raw).match(/手書き：([^（(]+)/);
+        const frag = hint ? hint[1].replace(/[0-9０-９\s中学年生]/g, '').trim() : '';
+        if (frag && frag.length <= 3) {
+          const cands = knownSchoolNames().filter(n => n.includes(frag[0]));
+          if (cands.length === 1) {
+            school = cands[0];
+            r.note = `${r.note || ''}${r.note ? ' ／ ' : ''}手書きの「${frag}」から ${school} と判断しました`;
+          }
+        }
+      }
       if (school) {
         school = school
           .replace(/^中\s*[1-3１-３]\s*/, '')
@@ -6315,7 +6330,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${(!school || !grade) ? syllabusFixPanel(i, school, grade) : ''}
         </td>
         <td style="font-size:11px">
-          ${r.textbook_from||r.textbook_to ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>` : '<span style="color:#DC2626">教科書ページが読み取れませんでした</span>'}
+          ${r.textbook_from||r.textbook_to || unitText
+            ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
+            : `<span style="color:var(--muted)">英語の範囲が写っていません<br>
+                 <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`}
           ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
           ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
