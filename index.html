@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.5</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v4.6</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4211,8 +4211,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const book = bookById(bookId);
     if (!book) return null;
     const norm = s => String(s || '').trim().toLowerCase();
-    const hit = (book.items || []).filter(it =>
-      it.page > 0 && norm(it.unit) === norm(unit) && (!lesson || norm(it.lesson) === norm(lesson)));
+    // 【巻末のページを混ぜない】
+    // 巻末には各Unitの基本文まとめが載っており、その項目にも正しく「Unit 2 Part 2」という
+    // ラベルが付いている。そのままページの最小〜最大を取ると、本編p.20台のUnit 2が
+    // 「p.6〜152」のように巻末まで伸びてしまう（実際に中1の全テストで起きていた）。
+    // 巻末が始まるページ以降は、範囲のページ計算からは外す。
+    const appendixStart = (PAGE_UNIT_TABLES[bookId] || []).find(e => !e[1])?.[0] || Infinity;
+    let hit = (book.items || []).filter(it =>
+      it.page > 0 && it.page < appendixStart &&
+      norm(it.unit) === norm(unit) && (!lesson || norm(it.lesson) === norm(lesson)));
+    // 本編に1件もなければ、やむを得ず巻末も含めて探す（表示が空になるより良い）
+    if (!hit.length) {
+      hit = (book.items || []).filter(it =>
+        it.page > 0 && norm(it.unit) === norm(unit) && (!lesson || norm(it.lesson) === norm(lesson)));
+    }
     if (!hit.length) {
       if (lesson) return sectionPages(grade, unit, '');   // セクションで見つからなければUnit全体
       const table = PAGE_UNIT_TABLES[bookId] || [];
