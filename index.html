@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.3</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5855,7 +5855,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       try {
         const r = await callGeminiJSON(
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-           { text: SYLLABUS_PROMPT }],
+           { text: withSchoolCandidates(SYLLABUS_PROMPT) }],
           '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
           SYLLABUS_SCHEMA, 20000, getFastModeOpts());
         // 【手書きが読めなかったときだけ、探し直す】
@@ -5871,7 +5871,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           try {
             const h = await callGeminiJSON(
               [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-               { text: HANDWRITING_PROMPT }],
+               { text: withSchoolCandidates(HANDWRITING_PROMPT) }],
               '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
               { type: 'OBJECT', properties: {
                   school: { type: 'STRING' }, grade: { type: 'STRING' },
@@ -5893,6 +5893,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     setSt(stEl, 'ok', `✅ ${results.length}枚の読み取りが終わりました`);
     btn.disabled = false;
     renderSyllabusResult(results);
+  }
+
+  // 【学校名の候補を、AIに先に渡す】
+  // 手書きの字が潰れていると誤読する（「葵」→「変」など）。
+  // これまでに分析した505件の学校名を候補として見せれば、
+  // 「この中で一番近いもの」を選べばよくなり、当たりやすくなる。
+  // 候補は数十校なので、送る量はごくわずかで費用はほぼ変わらない。
+  function withSchoolCandidates(prompt) {
+    const names = knownSchoolNames();
+    if (!names.length) return prompt;
+    return prompt + `
+
+【中学校名の候補】
+これまでに登録されている中学校は次のとおりです。
+手書きの字が潰れていて読みにくいときは、**この一覧の中で一番形が近いもの**を選んでください。
+一覧のどれにも当てはまらないと判断したときだけ、読み取ったままの名前を書いてください。
+
+${names.join('・')}`;
   }
 
   // 範囲表から読み取る項目の一覧（読み直しでも同じものを使う）
@@ -6050,7 +6068,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 写真はこの場で見るためだけのもので、保存はしない。
   function syllabusFixPanel(i, school, grade) {
     const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
-    if (!syllabusPick[i]) syllabusPick[i] = { school: school || '', grade: grade || '' };
+    // 候補が多いときは、手書きの1文字を入力欄に先に入れておく。
+    // 打ち足すだけで絞り込めるので、全部打ち直さずに済む。
+    if (!syllabusPick[i]) {
+      const hintFrag = (syllabusHint[i] && syllabusHint[i].cands.length > 5) ? syllabusHint[i].frag : '';
+      syllabusPick[i] = { school: school || hintFrag || '', grade: grade || '' };
+    }
     const pick = syllabusPick[i];
     return `
       <div style="margin-top:6px;padding:8px;border:1px solid var(--amber);border-radius:6px;background:#FFFBEB">
@@ -6061,12 +6084,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
              style="width:100%;max-width:420px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:6px"
              onclick="openSyllabusPhoto(${i})">
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px">画像をクリックすると大きく表示します</div>` : ''}
+        ${(syllabusHint[i] && syllabusHint[i].cands.length) ? `
+          <div style="margin-bottom:6px;padding:6px;background:#EFF6FF;border-radius:4px">
+            ${syllabusHint[i].cands.length <= 5
+              ? `<div style="font-size:11px;color:#1D4ED8;margin-bottom:4px">
+                   手書きの「${esc(syllabusHint[i].frag)}」から、この中のどれかだと思われます
+                 </div>
+                 ${syllabusHint[i].cands.map(n => `
+                   <button class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 10px;margin:2px 4px 0 0"
+                           onclick="syllabusPickSchool(${i},'${esc(n)}')">${esc(n)}</button>`).join('')}`
+              : `<div style="font-size:11px;color:#1D4ED8">
+                   手書きの「${esc(syllabusHint[i].frag)}」を含む学校が ${syllabusHint[i].cands.length} 校あります。<br>
+                   下の欄にもう1文字打ち足すと絞り込めます（例：「${esc(syllabusHint[i].cands[0])}」）
+                 </div>`}
+          </div>` : ''}
         <div style="margin-bottom:6px">
           <input type="text" id="sylSchool${i}" value="${esc(pick.school)}"
                  placeholder="中学校名を入力（例：三好）"
                  oninput="syllabusSchoolTyped(${i})"
                  style="width:100%;max-width:260px;padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:4px">
-          <div id="sylCand${i}" style="margin-top:4px"></div>
+          <div id="sylCand${i}" style="margin-top:4px">${
+            pick.school ? knownSchoolNames().filter(n => n.includes(pick.school)).slice(0,8).map(n =>
+              `<button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px;margin:2px 3px 0 0"
+                 onclick="syllabusPickSchool(${i},'${esc(n)}')">${esc(n)}</button>`).join('') : ''
+          }</div>
         </div>
         <div style="margin-bottom:6px">
           ${['中1','中2','中3'].map(g => `
@@ -6166,7 +6207,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     setSt(stEl, 'load', `${i+1}枚目を読み直しています...`);
     try {
       const r = await callGeminiJSON(
-        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
+        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: withSchoolCandidates(SYLLABUS_PROMPT) }],
         '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
         SYLLABUS_SCHEMA, 20000, getFastModeOpts());
       lastSyllabusResults[i] = { file: img.name, r };
@@ -6266,6 +6307,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           if (cands.length === 1) {
             school = cands[0];
             r.note = `${r.note || ''}${r.note ? ' ／ ' : ''}手書きの「${frag}」から ${school} と判断しました`;
+          } else if (cands.length > 1) {
+            // 1つに絞れないときは当てないが、候補は手直しパネルに出す。
+            // 「北」なら3校に絞れているので、ボタン1回で選べる。
+            syllabusHint[i] = { frag, cands };
           }
         }
       }
@@ -6469,6 +6514,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   let syllabusRows = {};
   let syllabusPick = {};   // 手直しパネルで選んでいる途中の内容
+  let syllabusHint = {};   // 手書きから絞り込めた学校名の候補
 
   // 学校＋学年＋日付（±10日）でテストを探す。
   // 範囲表に書かれた日付と、テストのファイル名の日付がずれていることがあるため。
