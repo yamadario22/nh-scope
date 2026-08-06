@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.3</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.4</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5855,7 +5855,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       try {
         const r = await callGeminiJSON(
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-           { text: withSchoolCandidates(SYLLABUS_PROMPT) }],
+           { text: SYLLABUS_PROMPT }],
           '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
           SYLLABUS_SCHEMA, 20000, getFastModeOpts());
         // 【手書きが読めなかったときだけ、探し直す】
@@ -5871,7 +5871,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           try {
             const h = await callGeminiJSON(
               [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-               { text: withSchoolCandidates(HANDWRITING_PROMPT) }],
+               { text: HANDWRITING_PROMPT }],
               '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
               { type: 'OBJECT', properties: {
                   school: { type: 'STRING' }, grade: { type: 'STRING' },
@@ -5895,23 +5895,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(results);
   }
 
-  // 【学校名の候補を、AIに先に渡す】
-  // 手書きの字が潰れていると誤読する（「葵」→「変」など）。
-  // これまでに分析した505件の学校名を候補として見せれば、
-  // 「この中で一番近いもの」を選べばよくなり、当たりやすくなる。
-  // 候補は数十校なので、送る量はごくわずかで費用はほぼ変わらない。
-  function withSchoolCandidates(prompt) {
-    const names = knownSchoolNames();
-    if (!names.length) return prompt;
-    return prompt + `
-
-【中学校名の候補】
-これまでに登録されている中学校は次のとおりです。
-手書きの字が潰れていて読みにくいときは、**この一覧の中で一番形が近いもの**を選んでください。
-一覧のどれにも当てはまらないと判断したときだけ、読み取ったままの名前を書いてください。
-
-${names.join('・')}`;
-  }
+  // 【学校名の候補をAIに渡すのは、やめた】
+  // 指示文の末尾に数十校の一覧を足したところ、「甲山」は読めるようになったが、
+  // 代わりに日付が読み取れない行が5件出た（指示文が長くなり、日付の指示が薄まった）。
+  // 差し引きで悪くなったため取りやめ。手書きの候補は、読み取ったあとに
+  // アプリ側で照合してボタンとして出す（そちらは費用も副作用もない）。
 
   // 範囲表から読み取る項目の一覧（読み直しでも同じものを使う）
   const SYLLABUS_SCHEMA = {
@@ -6207,7 +6195,7 @@ ${names.join('・')}`;
     setSt(stEl, 'load', `${i+1}枚目を読み直しています...`);
     try {
       const r = await callGeminiJSON(
-        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: withSchoolCandidates(SYLLABUS_PROMPT) }],
+        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
         '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
         SYLLABUS_SCHEMA, 20000, getFastModeOpts());
       lastSyllabusResults[i] = { file: img.name, r };
