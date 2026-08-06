@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6300,6 +6300,50 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults);
   }
 
+  // 【定期テストでない行を消す】
+  // 学習診断テスト・学力検査・実力テストなどは、学校の授業進度に沿った
+  // 「テスト範囲」ではないので、範囲の記録としては使わない。
+  // 名前だけで決めず、どれを消すかを先に見せてから消す。
+  const NOT_REGULAR_TEST = /(学習診断|学力検査|学力テスト|実力テスト|実力問題|模試|模擬|診断テスト|到達度|全国学力)/;
+
+  async function deleteNonRegularSyllabusRows() {
+    const targets = Object.keys(syllabusRows).filter(i => {
+      const row = syllabusRows[i];
+      if (!row) return false;
+      const name = String((row.r && row.r.test_name) || '');
+      return NOT_REGULAR_TEST.test(name);
+    });
+    if (!targets.length) { alert('定期テストでない行は見つかりませんでした。'); return; }
+    const list = targets.slice(0, 12).map(i => {
+      const row = syllabusRows[i];
+      return `・${row.school || '（学校名なし）'} ${row.grade || ''}　${(row.r && row.r.test_name) || ''}`;
+    }).join('\n');
+    const more = targets.length > 12 ? `\n…ほか ${targets.length - 12} 件` : '';
+    const ok = await showConfirm(
+      `定期テストでない行が ${targets.length} 件あります。まとめて消しますか。\n（あとで戻せます）\n\n${list}${more}`, '消す');
+    if (!ok) return;
+    targets.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
+  // 【同じテストが2行以上あるものを見つける】
+  // 同じ範囲表を2回撮ったり、表を分けて撮ったりすると同じテストの行が並ぶ。
+  // どれを残すかはページ数や単元名が微妙に違うので、機械が勝手に選ぶと間違える。
+  // そこで消さずに、2件目以降のチェックだけ外して、印を付けて見せる。
+  function syllabusDupGroups() {
+    const map = {};
+    Object.keys(syllabusRows).forEach(i => {
+      const row = syllabusRows[i];
+      if (!row || !row.school || !row.grade || !row.date) return;
+      const key = `${row.school}|${row.grade}|${row.date}`;
+      (map[key] = map[key] || []).push(i);
+    });
+    const out = {};
+    Object.keys(map).forEach(k => { if (map[k].length > 1) out[k] = map[k]; });
+    return out;
+  }
+
   // 範囲が写っていない行・単元に変換できない行を、まとめて消す
   async function deleteUselessSyllabusRows() {
     const targets = Object.keys(syllabusRows).filter(i => {
@@ -6620,7 +6664,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
                           safe, fixedByHand: !!(fx.school || fx.grade) };
 
-      return `<tr>
+      return `<tr data-row="${i}">
         <td style="font-size:11px">
           <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
@@ -6685,7 +6729,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     el.innerHTML = `
       <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="deleteUselessSyllabusRows()">
-          範囲が使えない行をまとめて消す
+          範囲が使えない行を消す
+        </button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="deleteNonRegularSyllabusRows()">
+          定期テストでない行を消す
         </button>
         ${nDeleted ? `<button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="restoreSyllabusRows()">
           消した ${nDeleted} 件を戻す</button>` : ''}
@@ -6708,6 +6755,35 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           反映した範囲は手入力扱いになり、「範囲を再判定」で上書きされません。
         </div>
       </div>`;
+
+    // 【同じテストの行が2つ以上あるとき】
+    // 同じ範囲表を2回撮った、表を分けて撮った、などで起きる。
+    // どれを残すかはページや単元名が微妙に違うので、機械が選ぶと間違える。
+    // 消さずに印を付け、2件目以降のチェックだけ外して、人が選べるようにする。
+    const dups = syllabusDupGroups();
+    let dupRows = 0;
+    Object.keys(dups).forEach(key => {
+      const group = dups[key];
+      dupRows += group.length;
+      group.forEach((i, n) => {
+        const chk = el.querySelector(`.sylChk[data-i="${i}"]`);
+        if (n > 0 && chk) chk.checked = false;
+        const tr = chk ? chk.closest('tr') : el.querySelector(`tr[data-row="${i}"]`);
+        const td = tr ? tr.querySelector('td') : null;
+        if (!td) return;
+        const tag = document.createElement('div');
+        tag.style.cssText = 'font-size:10px;color:#B45309;font-weight:600;margin-bottom:3px';
+        tag.textContent = `⚠️ 同じテストの行が ${group.length} 件あります（${n + 1} 件目）。1つだけ反映してください`;
+        td.insertBefore(tag, td.firstChild);
+      });
+    });
+    if (dupRows) {
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:8px;padding:8px;border:1px solid #FCD34D;border-radius:6px;background:#FFFBEB;font-size:11px;color:#B45309';
+      note.textContent = `同じテストを指している行が ${dupRows} 件あります（${Object.keys(dups).length} 組）。`
+        + '2件目以降はチェックを外してあります。どれを残すか、範囲を見比べて決めてください。';
+      el.insertBefore(note, el.firstChild);
+    }
   }
 
   let syllabusRows = {};
