@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.6</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6183,6 +6183,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!school) { alert('中学校名を入れてください。'); return; }
     if (!gradeNumOf(grade)) { alert('学年（中1／中2／中3）を選んでください。'); return; }
     if (!/中(学校)?$/.test(school)) school += '中';
+    school = canonSchool(school);
     const row = syllabusRows[i];
     if (!row) return;
     row.school = school;
@@ -6329,6 +6330,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           .replace(/[1-3１-３]\s*$/, '')
           .replace(/\s+/g, '').trim();
         if (school && !/中(学校)?$/.test(school)) school += '中';
+        // 「岡崎市立葵中学校」→「葵中」。書き方をそろえないと同じ学校が別扱いになる
+        school = canonSchool(school);
       }
       const testName = /^(null|undefined)$/i.test(String(r.test_name ?? '').trim()) ? '' : String(r.test_name ?? '').trim();
       // 手で直した内容があれば、それを優先する
@@ -6339,7 +6342,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 教科書ページ → 単元名
       // 始まりが書かれていない場合（from=0）は、前回のテストの終わりの続きから始まるとみなす。
       // 学年最初のテストなら Unit 0 から。
-      const match = findTestByDate(hist, school, grade, date);
+      const found = findTestByDateEx(hist, school, grade, date);
+      const match = found.match;
       let fromPage = r.textbook_from || 0;
       let startNote = '';
       if (!fromPage && r.textbook_to) {
@@ -6466,6 +6470,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           }
         }
       }
+      // ⑤ 学校名が2校以上に当てはまり、どれか決められない
+      //    ここで無理に結びつけると、黙って別の学校に範囲を書き込んでしまう
+      if (found.ambiguous.length > 1) {
+        warns.push({ text: `「${school}」に当てはまる学校が ${found.ambiguous.length} 校あります`
+                         + `（${found.ambiguous.join('／')}）。`
+                         + `どれか決められないので結びつけていません。学校名を直してください`,
+                     needFix: true });
+      }
 
       // 【重要】手で直した印を必ず引き継ぐ。
       // ここで書き写し忘れると、次に別の行を直したときに
@@ -6482,10 +6494,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
           ${syllabusRows[i] && syllabusRows[i].fixedByHand
             ? `<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>` : ''}
-          ${(((!school || !grade) && (r.textbook_from || r.textbook_to || unitText)) || syllabusEditOpen[i])
-            ? syllabusFixPanel(i, school, grade)
-            : `<br><button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
-                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>`}
+          ${(() => {
+            const hasRange = !!(r.textbook_from || r.textbook_to || unitText);
+            if (!hasRange) return '';                       // 反映できない行には出さない
+            if (syllabusEditOpen[i] || !school || !grade) return syllabusFixPanel(i, school, grade);
+            return `<br><button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>`;
+          })()}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
@@ -6501,8 +6516,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               <div style="margin-top:5px">
                 <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
                         onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
-                ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px"
+                ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
                         onclick="swapSyllabusGradePages(${i})">前学年ぶんと入れ替える</button>` : ''}
+                ${warns.some(w => w.needFix) && !syllabusEditOpen[i] ? `<button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 7px"
+                        onclick="openSyllabusEdit(${i})">学校名を直す</button>` : ''}
               </div>
             </div>` : ''}
         </td>
@@ -6538,14 +6555,50 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 学校＋学年＋日付（±10日）でテストを探す。
   // 範囲表に書かれた日付と、テストのファイル名の日付がずれていることがあるため。
   // 10日以内に中間と期末の両方が行われることはないので、これで一意に決まる。
-  function findTestByDate(hist, school, grade, date) {
-    if (!school || !date) return null;
+  // 学校名の書き方をそろえる。
+  // 「岡崎市立常磐中学校」も「常磐中」も、同じ「常磐中」として扱う。
+  // そろえないと同じ学校が別の学校になり、前回のテストが見つからなくなる。
+  function canonSchool(s) {
+    let t = String(s || '').trim().replace(/\s+/g, '');
+    t = t.replace(/^.{1,6}?[市町村区]立/, '');
+    t = t.replace(/中学校$/, '中');
+    return t;
+  }
+
+  // 学校名・学年・日付（±10日）でテストを探す。
+  // 【部分一致で違う学校に結びつけない】
+  //   「南中」は 豊南中・章南中・安城南中・みよし南中 のどれにも当てはまる。
+  //   そのまま近い日付で選ぶと、黙って別の学校のテストに書き込んでしまう。
+  //   そこで、まず名前がぴったり同じものだけで探し、
+  //   1つもなければ部分一致に頼るが、当てはまる学校が2つ以上なら結びつけない。
+  //   （どの学校か分からないことを画面に出して、手で直してもらう）
+  function findTestByDateEx(hist, school, grade, date) {
+    const empty = { match: null, ambiguous: [] };
+    if (!school || !date) return empty;
     const target = new Date(date + 'T00:00:00');
-    if (isNaN(target)) return null;
+    if (isNaN(target)) return empty;
+    const sc = canonSchool(school);
+    if (!sc) return empty;
+
+    const nameOf = h => canonSchool(h.school || extractSchoolName(h.name || ''));
+    const exact = hist.filter(h => nameOf(h) === sc);
+
+    let pool = exact;
+    if (!exact.length) {
+      const loose = hist.filter(h => {
+        const hs = nameOf(h);
+        return hs && (hs.includes(sc) || sc.includes(hs));
+      });
+      const names = [...new Set(loose.map(nameOf))];
+      if (names.length > 1) return { match: null, ambiguous: names.sort() };
+      pool = loose;
+    }
+    if (!pool.length) return empty;
+
+    const idxOf = new Map(hist.map((h, idx) => [h, idx]));
     let best = null;
-    hist.forEach((h, idx) => {
-      const hs = h.school || extractSchoolName(h.name||'');
-      if (!hs || !hs.includes(school) && !school.includes(hs)) return;
+    pool.forEach(h => {
+      const idx = idxOf.get(h);
       if (grade && normalizeGrade(h.grade||'') !== grade) return;
       const hd = h.testDate || extractTestDate(h.name||'');
       if (!hd) return;
@@ -6555,8 +6608,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (diff > 10) return;
       if (!best || diff < best.diff) best = { idx, h, diff };
     });
-    return best;
+    return { match: best, ambiguous: [] };
   }
+
+  function findTestByDate(hist, school, grade, date) {
+    return findTestByDateEx(hist, school, grade, date).match;
+  }
+
 
   async function applySyllabus(i, silent) {
     const row = syllabusRows[i];
