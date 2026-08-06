@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v5.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5857,25 +5857,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
            { text: SYLLABUS_PROMPT }],
           '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
-          {
-            type: 'OBJECT',
-            properties: {
-              school:      { type: 'STRING' },
-              grade:       { type: 'STRING' },
-              test_name:   { type: 'STRING' },
-              test_date:   { type: 'STRING' },
-              textbook_from: { type: 'INTEGER' },
-              textbook_to:   { type: 'INTEGER' },
-              prev_grade_from: { type: 'INTEGER' },
-              prev_grade_to:   { type: 'INTEGER' },
-              unit_range:  { type: 'STRING' },
-              other_materials: { type: 'STRING' },
-              date_raw:    { type: 'STRING' },
-              grade_raw:   { type: 'STRING' },
-              note:        { type: 'STRING' }
-            }
-          },
-          20000, getFastModeOpts());
+          SYLLABUS_SCHEMA, 20000, getFastModeOpts());
         // 【手書きが読めなかったときだけ、探し直す】
         // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
         // （縦向き・表の外・赤ペンなど）。1回目は表の中身を読むのが主目的なので
@@ -5912,6 +5894,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     btn.disabled = false;
     renderSyllabusResult(results);
   }
+
+  // 範囲表から読み取る項目の一覧（読み直しでも同じものを使う）
+  const SYLLABUS_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      school:      { type: 'STRING' },
+      grade:       { type: 'STRING' },
+      test_name:   { type: 'STRING' },
+      test_date:   { type: 'STRING' },
+      textbook_from: { type: 'INTEGER' },
+      textbook_to:   { type: 'INTEGER' },
+      prev_grade_from: { type: 'INTEGER' },
+      prev_grade_to:   { type: 'INTEGER' },
+      unit_range:  { type: 'STRING' },
+      other_materials: { type: 'STRING' },
+      date_raw:    { type: 'STRING' },
+      grade_raw:   { type: 'STRING' },
+      note:        { type: 'STRING' }
+    }
+  };
 
   // 手書き探し専用の指示文。表の中身は一切読まない。
   const HANDWRITING_PROMPT =
@@ -6008,7 +6010,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   function normalizeWrittenUnitRange(raw, grade) {
     const t = String(raw || '').trim();
     if (!t || /^(null|undefined|なし|記載なし)$/i.test(t)) return '';
-    const parts = t.split(/\s*[〜~－—-]\s*/).filter(Boolean);
+    // 「Unit 0,1」「Unit 0・1」のような区切りもある。〜と同じ扱いにする。
+    // 実例（甲山中）：「Unit0,1」を1つと読んで「Unit 0」だけになっていた。
+    const parts = t.split(/\s*[〜~－—\-,、・]\s*/).filter(Boolean)
+      // 「Unit 0,1」の「1」だけの断片には Unit を補う
+      .map((v, idx, arr) => {
+        if (idx === 0) return v;
+        if (/[A-Za-z]/.test(v)) return v;
+        const head = String(arr[0]).match(/^\s*(Unit|Lesson)\s*/i);
+        return head ? `${head[1]} ${v}` : v;
+      });
     // Unit番号とセクション名を別々に整えてから、ひとつの表記に戻す。
     // normalizeUnitField はUnit番号だけを返すため、そのまま使うと
     // 「Unit 4 Part 3」が「Unit 4」に潰れ、範囲表のいちばん大事な部分が落ちていた。
@@ -6146,6 +6157,43 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults);
   }
 
+  // この1枚だけをAIに読ませ直す（AIの返事にはばらつきがあり、
+  // もう一度読ませると直ることが多い。1枚あたり数円）
+  async function rereadSyllabusRow(i) {
+    const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
+    if (!img) { alert('この写真はもう手元にありません。読み込みからやり直してください。'); return; }
+    const stEl = document.getElementById('syllabusStatus');
+    setSt(stEl, 'load', `${i+1}枚目を読み直しています...`);
+    try {
+      const r = await callGeminiJSON(
+        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
+        '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
+        SYLLABUS_SCHEMA, 20000, getFastModeOpts());
+      lastSyllabusResults[i] = { file: img.name, r };
+      // 手で入れた学校名・学年は消さない
+      setSt(stEl, 'ok', `${i+1}枚目を読み直しました`);
+      renderSyllabusResult(lastSyllabusResults);
+    } catch(e) {
+      setSt(stEl, 'err', '❌ 読み直しに失敗しました：' + friendlyError(e));
+    }
+  }
+
+  // 当年ぶんと前学年ぶんのページが入れ替わっていたときに、手で戻す
+  function swapSyllabusGradePages(i) {
+    const res = lastSyllabusResults[i];
+    if (!res || !res.r) return;
+    const r = res.r;
+    const a = r.textbook_from, b = r.textbook_to;
+    r.textbook_from = r.prev_grade_from || 0;
+    r.textbook_to   = r.prev_grade_to   || 0;
+    r.prev_grade_from = a || 0;
+    r.prev_grade_to   = b || 0;
+    // 単元名はページと合わなくなるので捨てる（ページから出し直す）
+    r.unit_range = '';
+    r.note = `${r.note || ''}${r.note ? ' ／ ' : ''}当年ぶんと前学年ぶんのページを手で入れ替えました`;
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
   function fixSyllabusRow(i) {
     const row = syllabusRows[i];
     if (!row) return;
@@ -6272,6 +6320,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // テスト自体を分析して出した始まりのほうが、実物に基づいていて確かなので、
       // 始まりだけはそちらを採る。ただし学年最初のテストは Unit 0 からと決まっているので除く。
       const startNotWritten = w ? !w.hasStart : !r.textbook_from;
+      // ※ wUse（ページと食い違うときに無効化した版）は下で判定する
       let analyzedStart = '';
       if (startNotWritten && match && match.h && match.h.range && match.h.range !== '範囲不明') {
         // 【学年最初のテストかどうか】
@@ -6293,8 +6342,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         }
       }
 
+      let wUse = w;
+
       let unitText = '';
-      if (w) {
+      if (wUse) {
+        const w = wUse;
         const endText = w.to;
         const st = w.hasStart ? w.from : analyzedStart;
         unitText = st && st !== endText ? `${st} 〜 ${endText}` : endText;
@@ -6318,8 +6370,51 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
         ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
         : '';
+      // ── 明らかにおかしいところに警告を出す ────────────────────────
+      // 直すのはアプリではなく凌央さん。推測で書き換えると、外したときに黙って
+      // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
+      const warns = [];
+      const gN2 = gradeNumOf(grade);
+      const tbl = PAGE_UNIT_TABLES[`default_c${gN2}`] || [];
+      const lastPage = tbl.length ? tbl[tbl.length-1][0] : 0;
+      const mm = String(date).match(/^\d{4}-(\d{2})/);
+      const mon = mm ? parseInt(mm[1], 10) : 0;
+      const isFirstTerm = mon >= 4 && mon <= 6;
+
+      // ① 1学期なのに当年の範囲が教科書の後半から始まっている（前学年ぶんと入れ替わりの疑い）
+      if (isFirstTerm && lastPage && r.textbook_from && r.textbook_from > lastPage * 0.4
+          && (r.prev_grade_from || r.prev_grade_to)) {
+        warns.push({
+          text: `1学期のテストなのに、当年の範囲が p.${r.textbook_from} から始まっています。前学年ぶん（p.${r.prev_grade_from||'?'}〜${r.prev_grade_to||'?'}）と入れ替わっている可能性があります`,
+          swap: true
+        });
+      }
+      // ② 範囲が1点に潰れている
+      if (unitText && !/〜/.test(unitText)) {
+        warns.push({ text: `範囲が「${unitText}」の1点になっています。読み落としの可能性があります` });
+      }
+      // ③ 範囲が広すぎる
+      if (unitText && /〜/.test(unitText)) {
+        const pr = parseRangeText(unitText);
+        const a = rangePos([pr.from_unit, pr.from_lesson].filter(Boolean).join(' '), gN2);
+        const b = rangePos([pr.to_unit,   pr.to_lesson  ].filter(Boolean).join(' '), gN2);
+        if (a >= 0 && b >= 0 && Math.floor(b) - Math.floor(a) >= 4) {
+          warns.push({ text: `範囲が ${Math.floor(b)-Math.floor(a)+1} Unit 分に広がっています。定期テストとしては広すぎます` });
+        }
+      }
+      // ④ 範囲表の日付と、結びついたテストの日付が離れている
+      if (match && date) {
+        const td = match.h.testDate || extractTestDate(match.h.name||'') || '';
+        if (td) {
+          const gap = Math.abs((new Date(td) - new Date(date)) / 86400000);
+          if (gap >= 5) {
+            warns.push({ text: `範囲表の日付（${date}）と、結びついたテストの日付（${td}）が ${Math.round(gap)} 日離れています。別のテストに結びついている可能性があります` });
+          }
+        }
+      }
+
       syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
-                          fromPage, startNote, matchIdx: match ? match.idx : -1 };
+                          fromPage, startNote, warns, matchIdx: match ? match.idx : -1 };
 
       return `<tr>
         <td style="font-size:11px">
@@ -6337,6 +6432,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
           ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
+          ${warns.length ? `
+            <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
+              ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}</div>`).join('')}
+              <div style="margin-top:5px">
+                <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
+                        onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
+                ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px"
+                        onclick="swapSyllabusGradePages(${i})">前学年ぶんと入れ替える</button>` : ''}
+              </div>
+            </div>` : ''}
         </td>
         <td style="font-size:11px">
           ${match
