@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.4</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6455,7 +6455,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(r.date_raw || r.grade_raw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
-          ${(!school || !grade) ? syllabusFixPanel(i, school, grade) : ''}
+          ${(!school || !grade) && (r.textbook_from || r.textbook_to || unitText)
+            ? syllabusFixPanel(i, school, grade) : ''}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
