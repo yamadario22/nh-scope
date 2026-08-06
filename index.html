@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.0</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -860,6 +860,24 @@
 <!-- 【消す行を、写真を見ながら選ぶ画面】
      文字の一覧だけを出して「消しますか」と聞いても、使う人は判断できない。
      元の範囲表の写真をその場に並べ、クリックで拡大できるようにする。 -->
+<!-- 【直した内容を、写真と並べて確かめる画面】
+     手で入れた学校名・学年・日付・範囲が本当に合っているかは、
+     元の範囲表を見ないと判断できない。決定の前に必ずここで見比べてもらう。 -->
+<div class="modal-ov" id="fixCheckModal" style="display:none">
+  <div class="modal" style="max-width:760px;width:94vw">
+    <div class="modal-head">
+      <div class="modal-title">この内容で直します。よろしいですか</div>
+    </div>
+    <div class="modal-body" style="max-height:70vh;overflow:auto">
+      <div id="fixCheckBody"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="resolveFixCheck(false)">戻ってやり直す</button>
+      <button class="btn btn-primary btn-sm" onclick="resolveFixCheck(true)">この内容で決定</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-ov" id="pickRowsModal" style="display:none">
   <div class="modal" style="max-width:860px;width:94vw">
     <div class="modal-head">
@@ -6250,7 +6268,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (w) w.document.write(`<img src="data:image/jpeg;base64,${img.b64}" style="max-width:100%">`);
   }
 
-  function syllabusConfirmFix(i) {
+  async function syllabusConfirmFix(i) {
     const pick = syllabusPick[i] || {};
     const el = document.getElementById('sylSchool' + i);
     let school = String((el ? el.value : pick.school) || '').trim();
@@ -6272,15 +6290,87 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       alert('範囲を直すときは、始まりと終わりの両方を選んでください。');
       return;
     }
+    // 順番が逆に見えても、こちらの読み違いということがある。
+    // 頭ごなしに止めず、警告を出して写真を見て決めてもらう。
+    let warn = '';
     if (from && to && rangePos(from, gradeNumOf(grade)) > rangePos(to, gradeNumOf(grade))) {
-      alert('範囲の始まりが終わりより後になっています。選び直してください。');
-      return;
+      warn = `「${from}」より「${to}」のほうが教科書の前に来ています。`
+           + '選び間違いでなければ、そのまま決定して構いません。';
     }
+
+    // 【決定の前に、写真と並べて見比べてもらう】
+    const before = syllabusRows[i] || {};
+    const ok = await showFixCheck(i, {
+      school: { now: before.school || '（なし）', next: school },
+      grade:  { now: before.grade  || '（なし）', next: grade },
+      date:   { now: before.date   || '（なし）', next: date || '（なし）' },
+      range:  { now: before.unitText || '（なし）',
+                next: (from && to) ? (from === to ? to : `${from} 〜 ${to}`) : '（変えない）' }
+    }, warn);
+    if (!ok) return;
 
     syllabusFix[i] = Object.assign({}, syllabusFix[i], { school, grade, date, from, to });
     delete syllabusEditOpen[i];
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
+  }
+
+  let _fixCheckResolve = null;
+
+  function showFixCheck(i, diff, warn) {
+    const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
+    const line = (label, d) => {
+      const changed = String(d.now) !== String(d.next) && d.next !== '（変えない）';
+      return `<tr>
+        <td style="padding:5px 8px;font-size:12px;color:var(--muted);white-space:nowrap">${label}</td>
+        <td style="padding:5px 8px;font-size:12px;color:var(--muted)">${esc(String(d.now))}</td>
+        <td style="padding:5px 4px;font-size:12px;color:var(--muted)">→</td>
+        <td style="padding:5px 8px;font-size:13px;font-weight:${changed?'700':'400'};
+                   color:${changed?'#059669':'var(--muted)'}">${esc(String(d.next))}</td>
+      </tr>`;
+    };
+    document.getElementById('fixCheckBody').innerHTML = `
+      ${warn ? `<div style="padding:8px 10px;border:1px solid #FCD34D;background:#FFFBEB;border-radius:6px;
+                            font-size:12px;color:#B45309;margin-bottom:10px">⚠️ ${esc(warn)}</div>` : ''}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:none">
+          ${img ? `<img src="data:image/jpeg;base64,${img.b64}"
+                     style="width:280px;max-height:340px;object-fit:contain;border:1px solid var(--line);
+                            border-radius:6px;cursor:zoom-in" onclick="openSyllabusPhoto(${i})">
+                   <div style="font-size:10px;color:var(--muted);text-align:center;margin-top:2px">
+                     クリックで拡大</div>`
+                : `<div style="width:280px;height:200px;border:1px dashed var(--line);border-radius:6px;
+                               display:flex;align-items:center;justify-content:center;
+                               font-size:11px;color:var(--muted)">写真がありません</div>`}
+        </div>
+        <div style="flex:1;min-width:260px">
+          <table style="border-collapse:collapse">
+            <thead><tr>
+              <th></th>
+              <th style="font-size:10px;color:var(--muted);text-align:left;padding:0 8px">いま</th>
+              <th></th>
+              <th style="font-size:10px;color:var(--muted);text-align:left;padding:0 8px">直したあと</th>
+            </tr></thead>
+            <tbody>
+              ${line('学校名', diff.school)}
+              ${line('学年',   diff.grade)}
+              ${line('日付',   diff.date)}
+              ${line('範囲',   diff.range)}
+            </tbody>
+          </table>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.7">
+            写真の範囲表と見比べてください。緑の文字が変わるところです。<br>
+            決定したあとでも、同じボタンから何度でも直せます。
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('fixCheckModal').style.display = 'flex';
+    return new Promise(resolve => { _fixCheckResolve = resolve; });
+  }
+
+  function resolveFixCheck(ok) {
+    document.getElementById('fixCheckModal').style.display = 'none';
+    if (_fixCheckResolve) { _fixCheckResolve(ok); _fixCheckResolve = null; }
   }
 
   // 読み取れている行でも、手で直せるようにパネルを開く。
@@ -8445,6 +8535,29 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
 
   // Unit + Part/Lesson を小数値に変換（範囲の精密比較用）
   // 例: "Unit 2 Part 1" → 2.1, "Unit 2 Read and Think 1" → 2.3
+  // 【Unit番号が書かれていない単元名の位置を、教科書の表から引く】
+  // 「Stage Activity 1」「Real Life English 3」などの数字は通し番号であって
+  // Unit番号ではない。数字をUnit番号とみなすと位置が大きくずれ、たとえば
+  // 「Unit 3 Part 1 〜 Stage Activity 1」が逆転していると誤判定されていた。
+  // 教科書の表には各項目がどのUnitに属するかが入っているので、それを使う。
+  function sectionParentUnit(name, gradeN) {
+    const t = PAGE_UNIT_TABLES['default_c' + gradeN];
+    if (!t) return null;
+    const norm = x => String(x || '').replace(/\s+/g, '').toLowerCase();
+    const target = norm(name);
+    let best = null, bestLen = 0;
+    t.forEach(row => {
+      const nm = norm(row[1]);
+      if (!nm || !row[2]) return;
+      // 「Stage Activity 1 Sports in Canada」のように後ろに題名が付くので、前方一致で見る
+      if (target.startsWith(nm) && nm.length > bestLen) {
+        const m = String(row[2]).match(/[Uu]nit\s*(\d+)/);
+        if (m) { best = parseInt(m[1]); bestLen = nm.length; }
+      }
+    });
+    return best;
+  }
+
   function rangePos(str, gradeN) {
     const s = (str||'');
     // 位置が判定できない文字列は -1 を返す。
@@ -8465,10 +8578,25 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
       if (n === 3) return gradeN === 3 ? 6.95 : 7.9;
       return 10.9;
     }
-    const unit = um ? parseInt(um[1]) : (s.match(/(\d+)/) ? parseInt(s.match(/(\d+)/)[1]) : 0);
+    // Unit番号が書かれていないときは、まず教科書の表で本当の位置を探す。
+    // 見つからないときだけ、最後の手段として文字列中の数字を使う。
+    let unit;
+    if (um) {
+      unit = parseInt(um[1]);
+    } else {
+      const p = sectionParentUnit(s, gradeN);
+      unit = (p !== null) ? p
+           : (s.match(/(\d+)/) ? parseInt(s.match(/(\d+)/)[1]) : 0);
+    }
     let sub = 0;
+    // 「Stage Activity 1 Part 1」のように後ろに Part が付くことがある。
+    // 先頭がその項目名なら、後ろの Part より項目名を優先する。
+    const head = s.replace(/^[Uu]nit\s*\d+\s*/, '').trim();
+    if      (/^Stage\s*Activity/i.test(head))            sub = 0.7;
+    else if (/^Real\s*Life\s*English/i.test(head))       sub = 0.6;
+    else if (/^Grammar\s*for\s*Communication/i.test(head)) sub = 0.5;
     // セクションの順序を小数で表現
-    if (/Part\s*1/i.test(s))                       sub = 0.1;
+    else if (/Part\s*1/i.test(s))                  sub = 0.1;
     else if (/Part\s*2/i.test(s))                  sub = 0.2;
     else if (/Part\s*3/i.test(s))                  sub = 0.25;
     else if (/Read\s*and\s*Think\s*1/i.test(s))    sub = 0.3;
