@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.0</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -857,6 +857,29 @@
 </div>
 
 <!-- CONFIRM MODAL -->
+<!-- 【消す行を、写真を見ながら選ぶ画面】
+     文字の一覧だけを出して「消しますか」と聞いても、使う人は判断できない。
+     元の範囲表の写真をその場に並べ、クリックで拡大できるようにする。 -->
+<div class="modal-ov" id="pickRowsModal" style="display:none">
+  <div class="modal" style="max-width:860px;width:94vw">
+    <div class="modal-head">
+      <div class="modal-title" id="pickRowsTitle">消す行を選ぶ</div>
+    </div>
+    <div class="modal-body" style="max-height:70vh;overflow:auto">
+      <div id="pickRowsNote" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
+      <div style="margin-bottom:8px">
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="pickRowsAll(true)">すべて選ぶ</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px" onclick="pickRowsAll(false)">すべて外す</button>
+      </div>
+      <div id="pickRowsList"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="resolvePickRows(null)">キャンセル</button>
+      <button class="btn btn-danger btn-sm" id="pickRowsOkBtn" onclick="resolvePickRows('ok')">選んだ行を消す</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-ov" id="confirmModal" style="display:none">
   <div class="modal" style="max-width:340px">
     <div class="modal-head">
@@ -6294,35 +6317,133 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults);
   }
 
-  function restoreSyllabusRows() {
-    Object.keys(syllabusFix).forEach(k => { if (syllabusFix[k]) delete syllabusFix[k].deleted; });
+  // 消した行を、写真を見て選んで戻す
+  async function restoreSyllabusRows() {
+    const idx = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted);
+    if (!idx.length) { alert('消した行はありません。'); return; }
+    // 消した行は表に出ていないので、読み取り結果から中身を組み立てる
+    const items = idx.map(i => {
+      const res = (lastSyllabusResults || [])[i] || {};
+      const r   = res.r || {};
+      const fx  = syllabusFix[i] || {};
+      return {
+        i,
+        school: fx.school || String(r.school || '').trim(),
+        grade:  fx.grade  || normalizeGrade(r.grade || ''),
+        date:   fx.date   || String(r.test_date || '').trim(),
+        testName: String(r.test_name || '').replace(/^(null|undefined)$/i, ''),
+        range: String(r.unit_range || '').replace(/^(null|undefined)$/i, ''),
+        pages: (r.textbook_from || r.textbook_to) ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}` : '',
+        raw: [r.grade_raw, r.date_raw].filter(x => x && !/^(null|undefined)$/i.test(x)).join(' ')
+      };
+    });
+    const picked = await openPickRows(
+      '消した行を選んで戻す',
+      '写真を見て、戻したいものにチェックを入れてください。',
+      items, () => false);
+    if (!picked || !picked.length) return;
+    picked.forEach(i => { if (syllabusFix[i]) delete syllabusFix[i].deleted; });
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
   }
 
-  // 【定期テストでない行を消す】
-  // 学習診断テスト・学力検査・実力テストなどは、学校の授業進度に沿った
-  // 「テスト範囲」ではないので、範囲の記録としては使わない。
-  // 名前だけで決めず、どれを消すかを先に見せてから消す。
-  const NOT_REGULAR_TEST = /(学習診断|学力検査|学力テスト|実力テスト|実力問題|模試|模擬|診断テスト|到達度|全国学力)/;
+  // ── 消す行を、写真を見ながら選ぶ ────────────────────────────────
+  // 【設計の前提】
+  // 「学習診断テスト 3件を消しますか」と文字だけ出しても、使う人は判断できない。
+  // 実物の範囲表がその場に見えて、初めて「これは消していい／これは定期テストだ」と
+  // 決められる。判断を求める画面には、必ず判断材料を添える。
+  let _pickRowsResolve = null;
+
+  function openPickRows(title, note, items, preChecked) {
+    document.getElementById('pickRowsTitle').textContent = title;
+    document.getElementById('pickRowsNote').textContent  = note;
+    const list = document.getElementById('pickRowsList');
+    list.innerHTML = items.map(it => {
+      const img = (pendingSyllabus && pendingSyllabus[it.i]) ? pendingSyllabus[it.i] : null;
+      const on  = (typeof preChecked === 'function') ? preChecked(it) : true;
+      return `
+        <label style="display:flex;gap:10px;align-items:flex-start;padding:8px;border:1px solid var(--line);
+                      border-radius:6px;margin-bottom:6px;cursor:pointer;background:var(--bg)">
+          <input type="checkbox" class="pickChk" data-i="${it.i}" ${on ? 'checked' : ''}
+                 style="width:18px;height:18px;margin-top:2px;flex:none;cursor:pointer">
+          <div style="flex:none">
+            ${img ? `<img src="data:image/jpeg;base64,${img.b64}"
+                       style="width:150px;height:110px;object-fit:cover;border:1px solid var(--line);
+                              border-radius:4px;cursor:zoom-in"
+                       onclick="event.preventDefault();event.stopPropagation();openSyllabusPhoto(${it.i})">
+                     <div style="font-size:9px;color:var(--muted);text-align:center">クリックで拡大</div>`
+                  : `<div style="width:150px;height:110px;border:1px dashed var(--line);border-radius:4px;
+                                 display:flex;align-items:center;justify-content:center;
+                                 font-size:10px;color:var(--muted)">写真なし</div>`}
+          </div>
+          <div style="font-size:12px;line-height:1.6;min-width:0">
+            <b>${esc(it.school || '（学校名なし）')}</b> ${esc(it.grade || '（学年不明）')}
+            　<span style="color:var(--muted)">${esc(it.testName || '')} ${esc(it.date || '')}</span><br>
+            <span style="color:${it.range ? 'var(--fg)' : '#DC2626'}">
+              ${esc(it.range || '英語の範囲が読み取れていません')}
+            </span>
+            ${it.pages ? `<br><span style="font-size:11px;color:var(--muted)">${esc(it.pages)}</span>` : ''}
+            ${it.raw   ? `<br><span style="font-size:10px;color:var(--muted)">写真の記載：${esc(it.raw)}</span>` : ''}
+          </div>
+        </label>`;
+    }).join('');
+    document.getElementById('pickRowsModal').style.display = 'flex';
+    return new Promise(resolve => { _pickRowsResolve = resolve; });
+  }
+
+  function pickRowsAll(on) {
+    document.querySelectorAll('#pickRowsList .pickChk').forEach(c => { c.checked = on; });
+  }
+
+  function resolvePickRows(result) {
+    let picked = null;
+    if (result === 'ok') {
+      picked = [...document.querySelectorAll('#pickRowsList .pickChk')]
+        .filter(c => c.checked).map(c => c.dataset.i);
+    }
+    document.getElementById('pickRowsModal').style.display = 'none';
+    if (_pickRowsResolve) { _pickRowsResolve(picked); _pickRowsResolve = null; }
+  }
+
+  // 行の中身を、選ぶ画面に出す形にまとめる
+  function pickItemOf(i) {
+    const row = syllabusRows[i] || {};
+    const r   = row.r || {};
+    return {
+      i,
+      school: row.school, grade: row.grade, date: row.date,
+      testName: String(r.test_name || '').replace(/^(null|undefined)$/i, ''),
+      range: row.unitText,
+      pages: (r.textbook_from || r.textbook_to) ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}` : '',
+      raw: [r.grade_raw, r.date_raw].filter(x => x && !/^(null|undefined)$/i.test(x)).join(' ')
+    };
+  }
+
+  // 【定期テストでない行を選んで消す】
+  // 学習診断テスト・実力問題は、学校の進度に沿った範囲ではないので使わない。
+  // ただし「学力テスト」「学力検査」は、学校によっては定期テストそのものとして
+  // 運用されている（附属中・新香山中など実例あり）。名前だけで機械が決めず、
+  // 候補に出したうえで最初からチェックを外し、写真を見て決めてもらう。
+  const NOT_REGULAR_SURE  = /(学習診断|実力問題|実力テスト|模試|模擬|到達度|全国学力)/;
+  const NOT_REGULAR_MAYBE = /(学力検査|学力テスト|診断テスト)/;
 
   async function deleteNonRegularSyllabusRows() {
-    const targets = Object.keys(syllabusRows).filter(i => {
-      const row = syllabusRows[i];
-      if (!row) return false;
-      const name = String((row.r && row.r.test_name) || '');
-      return NOT_REGULAR_TEST.test(name);
-    });
-    if (!targets.length) { alert('定期テストでない行は見つかりませんでした。'); return; }
-    const list = targets.slice(0, 12).map(i => {
-      const row = syllabusRows[i];
-      return `・${row.school || '（学校名なし）'} ${row.grade || ''}　${(row.r && row.r.test_name) || ''}`;
-    }).join('\n');
-    const more = targets.length > 12 ? `\n…ほか ${targets.length - 12} 件` : '';
-    const ok = await showConfirm(
-      `定期テストでない行が ${targets.length} 件あります。まとめて消しますか。\n（あとで戻せます）\n\n${list}${more}`, '消す');
-    if (!ok) return;
-    targets.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
+    const items = Object.keys(syllabusRows).map(i => {
+      const it = pickItemOf(i);
+      const name = it.testName || '';
+      it._sure  = NOT_REGULAR_SURE.test(name);
+      it._maybe = NOT_REGULAR_MAYBE.test(name);
+      return it;
+    }).filter(it => it._sure || it._maybe);
+
+    if (!items.length) { alert('定期テストでない行は見つかりませんでした。'); return; }
+    const picked = await openPickRows(
+      '定期テストでない行を選んで消す',
+      '写真を見て、消していいものにチェックを入れてください。'
+      + '「学力テスト」「学力検査」は学校によっては定期テストなので、最初からチェックを外してあります。',
+      items, it => it._sure);
+    if (!picked || !picked.length) return;
+    picked.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
   }
@@ -6331,12 +6452,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 同じ範囲表を2回撮ったり、表を分けて撮ったりすると同じテストの行が並ぶ。
   // どれを残すかはページ数や単元名が微妙に違うので、機械が勝手に選ぶと間違える。
   // そこで消さずに、2件目以降のチェックだけ外して、印を付けて見せる。
+  // 日付が読めていない行は、日付の代わりにテスト名で照らし合わせる。
   function syllabusDupGroups() {
     const map = {};
     Object.keys(syllabusRows).forEach(i => {
       const row = syllabusRows[i];
-      if (!row || !row.school || !row.grade || !row.date) return;
-      const key = `${row.school}|${row.grade}|${row.date}`;
+      if (!row || !row.school || !row.grade) return;
+      const r = row.r || {};
+      const name = String(r.test_name || '').replace(/^(null|undefined)$/i, '').replace(/\s+/g, '');
+      const key = row.date ? `${row.school}|${row.grade}|${row.date}`
+                : (name ? `${row.school}|${row.grade}|名:${name}` : '');
+      if (!key) return;
       (map[key] = map[key] || []).push(i);
     });
     const out = {};
@@ -6344,16 +6470,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return out;
   }
 
-  // 範囲が写っていない行・単元に変換できない行を、まとめて消す
+  // 範囲が写っていない行・単元に変換できない行を、写真を見て選んで消す
   async function deleteUselessSyllabusRows() {
-    const targets = Object.keys(syllabusRows).filter(i => {
-      const row = syllabusRows[i];
-      return row && !row.unitText;
-    });
-    if (!targets.length) { alert('消せる行はありません。'); return; }
-    const ok = await showConfirm(`英語の範囲が使えない行が ${targets.length} 件あります。まとめて消しますか。\n（あとで戻せます）`, '消す');
-    if (!ok) return;
-    targets.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
+    const items = Object.keys(syllabusRows)
+      .filter(i => syllabusRows[i] && !syllabusRows[i].unitText)
+      .map(i => pickItemOf(i));
+    if (!items.length) { alert('消せる行はありません。'); return; }
+    const picked = await openPickRows(
+      '英語の範囲が使えない行を選んで消す',
+      '写真を見て、消していいものにチェックを入れてください。'
+      + '表を分けて撮った片方など、範囲が読み取れていない行が並んでいます。',
+      items, () => true);
+    if (!picked || !picked.length) return;
+    picked.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
   }
@@ -6676,10 +6805,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
           ${(() => {
             const hasRange = !!(r.textbook_from || r.textbook_to || unitText);
-            if (!hasRange) return '';                       // 反映できない行には出さない
-            if (syllabusEditOpen[i] || !school || !grade) return syllabusFixPanel(i, school, grade);
-            return `<br><button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
-                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>`;
+            const photo = (pendingSyllabus && pendingSyllabus[i])
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
+                         onclick="openSyllabusPhoto(${i})">📷 範囲表を見る</button>` : '';
+            if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
+            return `<br>${photo}${hasRange
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`;
           })()}
         </td>
         <td style="font-size:11px">
