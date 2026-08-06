@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.5</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v6.6</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6066,7 +6066,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return `
       <div style="margin-top:6px;padding:8px;border:1px solid var(--amber);border-radius:6px;background:#FFFBEB">
         <div style="font-size:11px;font-weight:600;color:#B45309;margin-bottom:6px">
-          学校名か学年が読み取れませんでした。写真を見て入れてください
+          ${syllabusEditOpen[i]
+            ? '学校名・学年を手で直します。写真を見て入れてください'
+            : '学校名か学年が読み取れませんでした。写真を見て入れてください'}
         </div>
         ${img ? `<img src="data:image/jpeg;base64,${img.b64}" alt="範囲表"
              style="width:100%;max-width:420px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:6px"
@@ -6104,6 +6106,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                     onclick="syllabusPickGrade(${i},'${g}')">${g}</button>`).join('')}
         </div>
         <button class="btn btn-primary btn-sm" style="font-size:11px" onclick="syllabusConfirmFix(${i})">決定</button>
+        ${syllabusEditOpen[i]
+          ? `<button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px"
+                     onclick="closeSyllabusEdit(${i})">やめる</button>` : ''}
       </div>`;
   }
 
@@ -6183,6 +6188,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     row.school = school;
     row.grade  = grade;
     row.fixedByHand = true;
+    delete syllabusEditOpen[i];
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
+  // 読み取れている行でも、手で直せるようにパネルを開く。
+  // AIが自信をもって間違えることがあるため（例：「梅中2」→「うめ中」）。
+  function openSyllabusEdit(i) {
+    const row = syllabusRows[i];
+    syllabusPick[i] = { school: (row && row.school) || '', grade: (row && row.grade) || '' };
+    syllabusEditOpen[i] = true;
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
+  function closeSyllabusEdit(i) {
+    delete syllabusEditOpen[i];
+    delete syllabusPick[i];
     renderSyllabusResult(lastSyllabusResults);
   }
 
@@ -6446,8 +6467,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         }
       }
 
+      // 【重要】手で直した印を必ず引き継ぐ。
+      // ここで書き写し忘れると、次に別の行を直したときに
+      // この行の手直しがAIの読み取りに戻ってしまう。
       syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
-                          fromPage, startNote, warns, matchIdx: match ? match.idx : -1 };
+                          fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
+                          fixedByHand: !!(syllabusRows[i] && syllabusRows[i].fixedByHand) };
 
       return `<tr>
         <td style="font-size:11px">
@@ -6455,8 +6480,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(r.date_raw || r.grade_raw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
-          ${(!school || !grade) && (r.textbook_from || r.textbook_to || unitText)
-            ? syllabusFixPanel(i, school, grade) : ''}
+          ${syllabusRows[i] && syllabusRows[i].fixedByHand
+            ? `<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>` : ''}
+          ${(((!school || !grade) && (r.textbook_from || r.textbook_to || unitText)) || syllabusEditOpen[i])
+            ? syllabusFixPanel(i, school, grade)
+            : `<br><button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>`}
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
@@ -6503,6 +6532,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   let syllabusRows = {};
   let syllabusPick = {};   // 手直しパネルで選んでいる途中の内容
+  let syllabusEditOpen = {}; // 読めている行でも、手で直すパネルを開いているもの
   let syllabusHint = {};   // 手書きから絞り込めた学校名の候補
 
   // 学校＋学年＋日付（±10日）でテストを探す。
