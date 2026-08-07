@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.2</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.3</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5935,14 +5935,25 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     });
   }
 
+  // 【×ボタン】これから読み取る写真の選択だけを取り消す。
+  // 以前は読み取り済みの一覧まで画面から消していたため、
+  // 「表が丸ごと消えた・手直しがどこにもない」という状態になっていた。
+  // 保存は消えていないので、読み取り済みの一覧はそのまま描き直す。
   function clearSyllabus() {
-    pendingSyllabus = null;
+    pendingSyllabus = (lastSyllabusResults && lastSyllabusResults.length) ? pendingSyllabus : null;
     const f = document.getElementById('syllabusFile'); if (f) f.value = '';
-    document.getElementById('syllabusTitle').textContent = '範囲表の写真をアップロード';
+    document.getElementById('syllabusTitle').textContent =
+      (lastSyllabusResults && lastSyllabusResults.length)
+        ? `${lastSyllabusResults.length}件のファイル（読み取り済み）`
+        : '範囲表の写真をアップロード';
     document.getElementById('syllabusFileList').innerHTML = '';
-    document.getElementById('syllabusResult').innerHTML = '';
     document.getElementById('syllabusStartBtn').disabled = true;
     setSt(document.getElementById('syllabusStatus'), '', '');
+    if (lastSyllabusResults && lastSyllabusResults.length) {
+      renderSyllabusResult(lastSyllabusResults);   // 読み取り済みの一覧は消さない
+    } else {
+      document.getElementById('syllabusResult').innerHTML = '';
+    }
   }
 
   async function runSyllabusRead() {
@@ -7348,8 +7359,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 手直しだけを保存（軽い）。続けて押しても最後の1回にまとめる。
     clearTimeout(_sylSaveTimer);
     _sylSaveTimer = setTimeout(() => {
+      // 【空の状態で上書きしない】
+      // 読み取り結果が無いときに保存すると、保存済みの491件を空で潰してしまう。
+      if (!lastSyllabusResults || !lastSyllabusResults.length) return;
       idbSet(IDB_SYLLABUS, {
-        results: lastSyllabusResults || null,
+        results: lastSyllabusResults,
         fix: syllabusFix,
         savedAt: new Date().toISOString()
       }).catch(e => {
