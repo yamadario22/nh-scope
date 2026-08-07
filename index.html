@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.5</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.6</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6212,9 +6212,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             : '学校名か学年が読み取れませんでした。写真を見て入れてください'}
         </div>
         ${img ? `<img src="data:image/jpeg;base64,${img.b64}" alt="範囲表"
-             style="width:100%;max-width:420px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:6px"
+             style="width:100%;max-width:230px;max-height:170px;object-fit:cover;object-position:top;
+                    border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:2px"
              onclick="openSyllabusPhoto(${i})">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">画像をクリックすると大きく表示します</div>` : ''}
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+            クリックで大きく表示（入力欄がすぐ下に来るよう小さくしてあります）</div>` : ''}
         ${(syllabusHint[i] && syllabusHint[i].cands.length) ? `
           <div style="margin-bottom:6px;padding:6px;background:#EFF6FF;border-radius:4px">
             ${syllabusHint[i].cands.length <= 5
@@ -7419,19 +7421,32 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const box = document.createElement('div');
         box.style.cssText = 'font-size:11px;color:#B45309;border:1px solid #FCD34D;background:#FFFBEB;'
                           + 'border-radius:5px;padding:6px 7px;margin-bottom:5px;line-height:1.7';
+        // 修正パネルを開いている行では警告を畳む（縦に長くなりすぎて決定ボタンまで遠くなるため）
+        const opened = !!syllabusEditOpen[i];
+        if (opened) {
+          box.style.cssText += ';padding:4px 7px';
+          box.innerHTML = `<b>⚠️ 同じテストの範囲表が ${group.length} 枚あります（これは ${n + 1} 枚目）</b>`
+            + '<span style="font-weight:400"> — 別の学校の紙なら、消さずに学校名を直してください</span>';
+          td.insertBefore(box, td.firstChild);
+          return;
+        }
         box.innerHTML =
           `<b>⚠️ 同じテストの範囲表が ${group.length} 枚あります（これは ${n + 1} 枚目）</b><br>`
           + '同じ範囲表を2回撮った、表を分けて撮った、などで起きます。'
-          + '<b>写真を見比べて、正しいほうを残してください。</b>'
+          + '<b>写真を見比べてください。</b><br>'
+          + '<span style="color:#92400E">別の学校の範囲表が、同じ日に並んでいるだけのこともあります。'
+          + 'その場合は消さずに、それぞれ正しい学校名に直してください。</span>'
           + `<div style="margin-top:3px;padding:4px 6px;background:#fff;border:1px solid #FDE68A;border-radius:4px">
                <span style="color:var(--muted)">この行：</span><b>${esc(me.unitText || '範囲なし')}</b>
                <span style="color:var(--muted)">／ ${esc((me.r && (me.r.textbook_from || me.r.textbook_to))
                    ? `教科書 p.${me.r.textbook_from || '?'}〜${me.r.textbook_to || '?'}` : 'ページの記載なし')}</span>
              </div>`
           + others
-          + `<div style="margin-top:5px">
+          + `<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
+               <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 8px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す（別の学校だった場合）</button>
                <button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 8px"
-                       onclick="keepThisSyllabusRow(${i})">この行を残して、他を消す</button>
+                       onclick="keepThisSyllabusRow(${i})">この行を残して、他を消す（同じ紙だった場合）</button>
              </div>`;
         td.insertBefore(box, td.firstChild);
       });
