@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6012,9 +6012,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 ・textbook_from / textbook_to：英語の【教科書】のページ範囲（数字だけ）
 　　例：「教科書 P.6〜P.23」→ from=6, to=23
 　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
-　　【始まりが書かれていない場合】
-　　　「教科書 〜P18」「3年教科書 〜P.29」のように終わりだけ書かれていることがある。
-　　　その場合は from=0 として、to だけを書く。勝手に1ページ目から始まると決めつけないこと
+　　【始まりが書かれていない場合】※これを守らないと範囲が大きく狂う
+　　　「教科書 〜P18」「3年教科書 〜P.29」「NEW HORIZON 〜P112」のように
+　　　終わりだけ書かれていることが非常に多い。
+　　　その場合は必ず from=0 とし、to だけを書く。
+　　　教科書の最初のページ（6など）を勝手に入れてはいけない。
+　　　「範囲表のどこかに開始ページの数字が書かれている」ときだけ from に数字を入れる。
+　　　迷ったら from=0 にすること。0 のほうが安全で、アプリ側が正しく補える。
 ・unit_range：範囲表に【単元名がそのまま書かれている場合】、その部分を書き写す
 　　例：「（メインはUnit4 Part3〜Unit6 Read and Think）」→「Unit 4 Part 3 〜 Unit 6 Read and Think」
 　　例：「（Unit4 Read and Think 1まで）」→「Unit 4 Read and Think 1」
@@ -6842,7 +6846,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 学年最初のテストなら Unit 0 から。
       const found = findTestByDateEx(hist, school, grade, date);
       const match = found.match;
-      let fromPage = r.textbook_from || 0;
+      // 【AIが勝手に入れた「教科書の最初のページ」を、ここで打ち消す】
+      // 範囲表に「NEW HORIZON 〜P112」と終わりしか書いていないのに、
+      // AIが from=6（教科書の最初のページ）を埋めてくることがある。
+      // これを紙に書いてあった値として扱うと、
+      //   ・始まりが書かれている扱いになり、前のテストからの引き継ぎが働かない
+      //   ・「Unit 0 〜」という、ありえない広さの範囲になる
+      // という二重の誤りになる。
+      // 同じ学校・学年で前のテストが束の中にあるなら、学年最初のはずがないので打ち消す。
+      const bookTop = (PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [[0]])[0][0];
+      const prevList = (_manualEnds[`${school}|${grade}`] || []).filter(x => date && x.date < date);
+      let fromRaw = r.textbook_from || 0;
+      let fromFaked = false;
+      if (fromRaw && fromRaw === bookTop && prevList.length) { fromRaw = 0; fromFaked = true; }
+
+      let fromPage = fromRaw || 0;
       let startNote = '';
       if (!fromPage && r.textbook_to) {
         const prev = match ? findPrevTestEnd({
@@ -6875,7 +6893,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 「前回の終わりの次から」だが、前回の終わりも判定値なので確かではない。
       // テスト自体を分析して出した始まりのほうが、実物に基づいていて確かなので、
       // 始まりだけはそちらを採る。ただし学年最初のテストは Unit 0 からと決まっているので除く。
-      const startNotWritten = w ? !w.hasStart : !r.textbook_from;
+      const startNotWritten = w ? !w.hasStart : !fromRaw;
 
       // 【前のテストの範囲を手で直してあれば、その続きを始まりにする】
       // 手で直した範囲は凌央さんが実物を見て決めたものなので、分析値より確か。
@@ -6893,13 +6911,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           //   例）保見中2の範囲表は p.36〜 なのに、引き継ぎが Let's Read 1（p.44付近）を
           //       出していた。ページより後ろから始まる、ありえない範囲になっていた。
           let fitsPage = true;
-          if (st && r.textbook_from) {
+          // 【AIが勝手に入れた開始ページは、証拠として使わない】
+          // 範囲表に「NEW HORIZON 〜P112」と終わりしか書いていないのに、
+          // AIが from=6（教科書の最初のページ）を埋めてくることがある。
+          // これを「紙に書いてあった」と信じると、正しい引き継ぎまで止めてしまう。
+          const writtenFrom = fromFaked ? 0 : fromRaw;
+          if (st && writtenFrom) {
             const sp = sectionPages(grade, ...(() => {
               const q = parseRangeText(st);
               return [q.from_unit || q.to_unit, q.from_lesson || q.to_lesson];
             })());
             // 引き継ぎの始まりが、範囲表の先頭ページより後ろに来ていたら採用しない
-            if (sp && sp.from && sp.from > r.textbook_from + 2) fitsPage = false;
+            if (sp && sp.from && sp.from > writtenFrom + 2) fitsPage = false;
           }
           if (st && fitsPage) {
             chainStart = st;
