@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.2</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -474,6 +474,8 @@
       </div>
       <div id="syllabusFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       <input type="file" id="syllabusFile" accept="image/*,.pdf" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
+      <!-- 読み取り結果はそのままに、写真だけを貼り直す（AIに送らないので費用ゼロ） -->
+      <input type="file" id="syllabusPhotoFix" accept="image/*,.pdf" multiple style="display:none" onchange="onSyllabusPhotosReattach(this.files)">
       <div class="row" style="margin-top:10px;gap:8px">
         <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('syllabusFile').click()">📂 写真を選択（複数可）</button>
         <button type="button" class="btn btn-primary" id="syllabusStartBtn" style="flex:1" disabled onclick="runSyllabusRead()">📋 範囲を読み取る</button>
@@ -5829,6 +5831,61 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // テストから範囲を推測するのと違い、実際に書かれている範囲がそのまま取れるので確実。
   let pendingSyllabus = null;
 
+  // 【写真だけを付け直す（AIには送らないので費用ゼロ）】
+  // 手直しは残したまま、消えてしまった写真だけを元のファイルから貼り直す。
+  // 読み取り結果のファイル名と照らし合わせて、同じ名前のものに割り当てる。
+  async function onSyllabusPhotosReattach(files) {
+    const stEl = document.getElementById('syllabusStatus');
+    if (!lastSyllabusResults || !lastSyllabusResults.length) {
+      setSt(stEl, 'err', '先に範囲表を読み取ってください'); return;
+    }
+    const arr = Array.from(files || []).filter(f =>
+      /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    if (!arr.length) { setSt(stEl, 'err', '画像またはPDFを選んでください'); return; }
+
+    setSt(stEl, 'load', `${arr.length}件を読み込み中...（AIには送らないので費用はかかりません）`);
+    const byName = {};
+    try {
+      for (let i = 0; i < arr.length; i++) {
+        const f = arr[i];
+        setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
+        if (/^image\//.test(f.type)) {
+          byName[f.name] = [{ name: f.name, b64: await fileToBase64(f) }];
+        } else {
+          // 読み取ったときとまったく同じ名前・同じ順序になるようにそろえる
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+          const MAX_PAGES = 40;
+          const pages = [];
+          for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
+            pages.push({
+              name: pdf.numPages > 1 ? `${f.name}（${p}ページ目）` : f.name,
+              b64: await toBase64(await pdf.getPage(p), TEST_SCALE_HI)
+            });
+          }
+          byName[f.name] = pages;
+        }
+      }
+    } catch (e) { setSt(stEl, 'err', '読み込みに失敗しました：' + (e.message || e)); return; }
+
+    // 読み取り結果の並びに合わせて写真を置き直す
+    const flat = [];
+    Object.keys(byName).forEach(k => byName[k].forEach(x => flat.push(x)));
+    const next = [];
+    let hit = 0;
+    lastSyllabusResults.forEach((res, i) => {
+      const want = String((res && res.file) || '');
+      const found = flat.find(x => x.name === want);
+      if (found) { next[i] = found; hit++; } else { next[i] = (pendingSyllabus||[])[i] || null; }
+    });
+    pendingSyllabus = next;
+    saveSyllabusState(true);
+    renderSyllabusResult(lastSyllabusResults);
+    setSt(stEl, hit ? 'ok' : 'err',
+      hit ? `${hit}件の写真を貼り直しました（費用はかかっていません）`
+          : '同じファイル名の写真が見つかりませんでした。読み取ったときと同じファイルを選んでください');
+  }
+
   async function onSyllabusFilesSelected(files) {
     // 写真（画像）でもPDFでも受け取る。事務所でスキャンしたPDFをそのまま読めるようにする。
     const arr = Array.from(files || []).filter(f =>
@@ -7196,6 +7253,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }).join('');
 
     const nDeleted = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted).length;
+    // 写真が無い行の数。範囲を精査している間は、写真がないと正しいか判断できない。
+    const nNoPhoto = results.filter((res, i) => !(syllabusFix[i] && syllabusFix[i].deleted)
+                                             && !(pendingSyllabus && pendingSyllabus[i])).length;
     const nCheck   = Object.keys(syllabusRows).filter(i => syllabusRows[i].safe).length;
     const nTotal   = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
 
@@ -7209,6 +7269,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         </button>
         ${nDeleted ? `<button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="restoreSyllabusRows()">
           消した ${nDeleted} 件を戻す</button>` : ''}
+        ${nNoPhoto ? `<button class="btn btn-secondary btn-sm" style="font-size:11px"
+          onclick="document.getElementById('syllabusPhotoFix').click()">
+          📷 写真を貼り直す（${nNoPhoto}件ぶんが表示できません・費用ゼロ）</button>` : ''}
         <button class="btn btn-secondary btn-sm" style="font-size:11px;color:#B91C1C" onclick="clearSyllabusState()">
           読み取り結果を全部消す
         </button>
@@ -7315,8 +7378,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!data || !data.results || !data.results.length) return false;
     // 写真は別に保存してある（古い保存形式なら data.images に入っている）
     try { imgs = await idbGet(IDB_SYLLABUS_IMG); } catch (e) { imgs = null; }
-    pendingSyllabus      = Array.isArray(imgs) ? imgs
-                         : (Array.isArray(data.images) ? data.images : []);
+    if (!Array.isArray(imgs) && Array.isArray(data.images) && data.images.length) {
+      // 【古い形で入っている写真を、すぐ新しい置き場へ移す】
+      // これを移さないまま手直しを保存すると、古い置き場ごと上書きされて
+      // 写真が消えてしまう（実際にその不具合を出した）。読み込んだ時点で移しておく。
+      imgs = data.images;
+      try { await idbSet(IDB_SYLLABUS_IMG, imgs); } catch (e) { console.warn('写真の引っ越しに失敗:', e); }
+    }
+    pendingSyllabus      = Array.isArray(imgs) ? imgs : [];
     lastSyllabusResults  = data.results;
     syllabusFix          = data.fix || {};
     const t = document.getElementById('syllabusTitle');
