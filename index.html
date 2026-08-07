@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6886,7 +6886,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         if (list.length) {
           const prevM = list[list.length - 1];
           const st = startAfterEnd(grade, prevM.end);
-          if (st) {
+          // 【範囲表に書いてあるページが最優先】
+          // 引き継ぎは「前がここまでなら次はここから」という推測にすぎない。
+          // 範囲表のページは先生が紙に書いた一次情報なので、そちらが必ず正しい。
+          // 推測がページと食い違うときは、推測のほうを捨てる。
+          //   例）保見中2の範囲表は p.36〜 なのに、引き継ぎが Let's Read 1（p.44付近）を
+          //       出していた。ページより後ろから始まる、ありえない範囲になっていた。
+          let fitsPage = true;
+          if (st && r.textbook_from) {
+            const sp = sectionPages(grade, ...(() => {
+              const q = parseRangeText(st);
+              return [q.from_unit || q.to_unit, q.from_lesson || q.to_lesson];
+            })());
+            // 引き継ぎの始まりが、範囲表の先頭ページより後ろに来ていたら採用しない
+            if (sp && sp.from && sp.from > r.textbook_from + 2) fitsPage = false;
+          }
+          if (st && fitsPage) {
             chainStart = st;
             chainNote  = prevM.sure
               ? `前のテスト（${prevM.date} 〜${prevM.end}）を手で直してあるので、その続きから始めました`
