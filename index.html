@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.3</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.4</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6887,7 +6887,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     syllabusRows = {};
     // 手で直した範囲を、学校・学年ごとに日付順で控えておく（次のテストの始まりに使う）
     const _manualEnds = manualEndsBySchool();
-    const rows = results.map((res, i) => {
+    const rowHtml = results.map((res, i) => {
       // 手で消した行は表に出さない（消した件数は下にまとめて出し、戻せるようにする）
       if (syllabusFix[i] && syllabusFix[i].deleted) return '';
       if (res.error) {
@@ -7261,7 +7261,64 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             : ''}
         </td>
       </tr>`;
-    }).join('');
+    });
+
+    // ── 怪しい行を上に集める ───────────────────────────────
+    // 491行を目で追うのは無理。機械が拾えるものは機械に拾わせる。
+    // 順番は凌央さんと決めたとおり：
+    //   ①同じテストの重複 ②4 Unit 以上に広がっている ③1点に潰れている
+    //   ④日付が離れている ⑤始まりが推測のまま ⑥問題なし
+    const dupGroups = syllabusDupGroups();
+    const dupIdx = new Set();
+    Object.keys(dupGroups).forEach(k => dupGroups[k].forEach(i => dupIdx.add(String(i))));
+
+    function issueOf(i) {
+      const row = syllabusRows[i];
+      if (!row) return null;
+      if (dupIdx.has(String(i))) return { prio: 1, label: '同じテストが複数' };
+      const gN = gradeNumOf(row.grade);
+      if (row.unitText && gN) {
+        const q = parseRangeText(row.unitText);
+        const a = rangePos([q.from_unit, q.from_lesson].filter(Boolean).join(' '), gN);
+        const b = rangePos([q.to_unit,   q.to_lesson  ].filter(Boolean).join(' '), gN);
+        if (a >= 0 && b >= 0 && Math.floor(b) - Math.floor(a) >= 3) return { prio: 2, label: '範囲が広すぎる' };
+      }
+      if (row.unitText && !/〜/.test(row.unitText)) return { prio: 3, label: '範囲が1点' };
+      if ((row.warns || []).some(x => /日離れています/.test(x.text || ''))) return { prio: 4, label: '日付が離れている' };
+      if (/とみなして|テスト分析が出した|続きから始めました|縮めました/.test(row.startNote || ''))
+        return { prio: 5, label: '始まりが推測' };
+      return { prio: 6, label: '' };
+    }
+
+    const order = Object.keys(syllabusRows).map(i => ({ i, iss: issueOf(i) }))
+                        .filter(x => x.iss);
+    const counts = {};
+    order.forEach(x => { counts[x.iss.prio] = (counts[x.iss.prio] || 0) + 1; });
+    if (syllabusSortIssues) {
+      order.sort((a, b) => a.iss.prio - b.iss.prio || (+a.i) - (+b.i));
+    } else {
+      order.sort((a, b) => (+a.i) - (+b.i));
+    }
+    const shown = syllabusOnlyIssues ? order.filter(x => x.iss.prio <= 5) : order;
+    const rows = shown.map(x => rowHtml[x.i]).join('')
+      || `<tr><td colspan="4" style="padding:14px;font-size:12px;color:var(--muted)">
+            ${syllabusOnlyIssues ? '確かめたほうがよい行はありません。' : '表示できる行がありません。'}
+          </td></tr>`;
+
+    const label = { 1:'同じテストが複数', 2:'範囲が広すぎる', 3:'範囲が1点',
+                    4:'日付が離れている', 5:'始まりが推測', 6:'問題なし' };
+    const issueBar = `
+      <div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+          <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
+                  onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
+          <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
+                  onclick="toggleSyllabusOnlyIssues()">${syllabusOnlyIssues?'✓ ':''}確かめたい行だけ出す</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.9">
+          ${[1,2,3,4,5,6].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
+        </div>
+      </div>`;
 
     const nDeleted = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted).length;
     // 写真が無い行の数。範囲を精査している間は、写真がないと正しいか判断できない。
@@ -7271,6 +7328,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const nTotal   = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
 
     el.innerHTML = `
+      ${issueBar}
       <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="deleteUselessSyllabusRows()">
           範囲が使えない行を消す
@@ -7343,6 +7401,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 表を描き直すたびに syllabusRows は作り直されるので、手直しをそちらに置くと消える。
   // 別に持ち、まるごと IndexedDB に保存する。これでページを開き直しても残る。
   let syllabusFix = {};
+
+  // 一覧の並べ替え・絞り込みの状態
+  let syllabusSortIssues = false;   // 怪しい順に並べるか
+  let syllabusOnlyIssues = false;   // 確かめたい行だけ出すか
+  function toggleSyllabusSort() {
+    syllabusSortIssues = !syllabusSortIssues;
+    renderSyllabusResult(lastSyllabusResults);
+  }
+  function toggleSyllabusOnlyIssues() {
+    syllabusOnlyIssues = !syllabusOnlyIssues;
+    renderSyllabusResult(lastSyllabusResults);
+  }
 
   const IDB_SYLLABUS = 'syllabus';
 
