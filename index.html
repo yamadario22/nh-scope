@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.5</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6377,17 +6377,28 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const curFrom = [cur.from_unit, cur.from_lesson].filter(Boolean).join(' ');
     const curTo   = [cur.to_unit,   cur.to_lesson  ].filter(Boolean).join(' ');
     let from = '', to = '';
+    let keptNote = '';
     if (selFrom || selTo) {
       from = selFrom || curFrom || selTo;
       to   = selTo   || curTo   || selFrom;
+      // 【選ばなかった側が「当て推量」なら、そのことを伝える】
+      // 始まりが範囲表に書かれていないとき、アプリは
+      // 「学年最初とみなして Unit 0 から」などと仮に置いている。
+      // 片方だけ直すと、その仮の値が黙って残ってしまう。
+      const guessed = /とみなして|テスト分析が出した|続きから/.test(before.startNote || '');
+      if (guessed) {
+        if (!selFrom && selTo) keptNote = `始まり（${from}）は選ばれていないので、アプリが仮に置いた値のままです。写真を見て、違っていれば選び直してください。`;
+        if (selFrom && !selTo)  keptNote = `終わり（${to}）は選ばれていないので、いまの値のままです。`;
+      }
     }
 
     // 順番が逆に見えても、こちらの読み違いということがある。
     // 頭ごなしに止めず、警告を出して写真を見て決めてもらう。
-    let warn = '';
+    let warn = keptNote;
     if (from && to && rangePos(from, gradeNumOf(grade)) > rangePos(to, gradeNumOf(grade))) {
       warn = `「${from}」より「${to}」のほうが教科書の前に来ています。`
-           + '選び間違いでなければ、そのまま決定して構いません。';
+           + '選び間違いでなければ、そのまま決定して構いません。'
+           + (keptNote ? '\n' + keptNote : '');
     }
 
     // 【決定の前に、写真と並べて見比べてもらう】
@@ -6719,18 +6730,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 1件直せば、それ以降が自動で埋まるようにする。
   function manualEndsBySchool() {
     const map = {};
-    Object.keys(syllabusFix).forEach(i => {
+    const add = (school, grade, date, end, sure) => {
+      if (!school || !grade || !date || !end) return;
+      const key = `${school}|${grade}`;
+      (map[key] = map[key] || []).push({ date, end, sure });
+    };
+    (lastSyllabusResults || []).forEach((res, i) => {
       const fx = syllabusFix[i] || {};
-      if (fx.deleted || !fx.to) return;              // 範囲を手で直した行だけ
-      const res = (lastSyllabusResults || [])[i] || {};
-      const r   = res.r || {};
+      if (fx.deleted) return;
+      const r = (res && res.r) || {};
       // 学年は「中1」「中１」の書き方の違いで別物にならないよう、必ずそろえる
       const school = canonSchool(fx.school || String(r.school || ''));
       const grade  = normalizeGrade(fx.grade || r.grade || '');
-      const date   = fx.date   || String(r.test_date || '');
-      if (!school || !grade || !date) return;
-      const key = `${school}|${grade}`;
-      (map[key] = map[key] || []).push({ date, end: fx.to });
+      const date   = fx.date || String(r.test_date || '');
+      if (fx.to) { add(school, grade, date, fx.to, true); return; }   // 手で直した範囲がいちばん確か
+      // 【範囲表に単元名が書いてある行も使う】
+      // 「〜Unit 4まで」と紙に書いてあるなら、それは判定ではなく一次情報。
+      // これを使わないと、始まりが書かれていない次のテストが
+      // 毎回「学年最初とみなして Unit 0 から」になって、手直しが増えるだけだった。
+      const w = normalizeWrittenUnitRange(r.unit_range, grade);
+      if (w && w.to) add(school, grade, date, w.to, false);
     });
     Object.keys(map).forEach(k => map[k].sort((a, b) => a.date < b.date ? -1 : 1));
     return map;
@@ -6869,7 +6888,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           const st = startAfterEnd(grade, prevM.end);
           if (st) {
             chainStart = st;
-            chainNote  = `前のテスト（${prevM.date} 〜${prevM.end}）を手で直してあるので、その続きから始めました`;
+            chainNote  = prevM.sure
+              ? `前のテスト（${prevM.date} 〜${prevM.end}）を手で直してあるので、その続きから始めました`
+              : `前のテスト（${prevM.date} 〜${prevM.end}）の範囲表に終わりが書いてあるので、その続きから始めました`;
           }
         }
       }
@@ -6980,9 +7001,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // ⑤ 学校名が2校以上に当てはまり、どれか決められない
       //    ここで無理に結びつけると、黙って別の学校に範囲を書き込んでしまう
       if (found.ambiguous.length > 1) {
+        const list = found.narrowed || found.ambiguous;
         warns.push({ text: `「${school}」に当てはまる学校が ${found.ambiguous.length} 校あります`
-                         + `（${found.ambiguous.join('／')}）。`
-                         + `どれか決められないので結びつけていません。学校名を直してください`,
+                         + (found.narrowed
+                             ? `。この日・この学年でテストがあるのは ${found.narrowed.join('／')} です。どれか選んでください`
+                             : `（${found.ambiguous.join('／')}）。どれか決められないので結びつけていません。学校名を直してください`),
                      needFix: true });
       }
 
@@ -7244,8 +7267,28 @@ function findTestByDateEx(hist, school, grade, date) {
         return hs && (hs.includes(sc) || sc.includes(hs));
       });
       const names = [...new Set(loose.map(nameOf))];
-      if (names.length > 1) return { match: null, ambiguous: names.sort() };
-      pool = loose;
+      if (names.length > 1) {
+        // 【日付と学年の両方が一致して1校に絞れたときだけ、決めてよい】
+        // 同じ日に複数の学校がテストをやっているのはふつうのこと（11月17〜18日など）。
+        // だから日付だけでは決められない。学年まで一致して、なお1校しか残らない
+        // ときにかぎって結びつける。学年が読み取れていない行は、絞り込みに使わない。
+        const near = grade ? loose.filter(h => {
+          if (normalizeGrade(h.grade||'') !== grade) return false;
+          const hd = h.testDate || extractTestDate(h.name||'');
+          if (!hd) return false;
+          const d = new Date(hd + 'T00:00:00');
+          return !isNaN(d) && Math.abs((d - target) / 86400000) <= 10;
+        }) : [];
+        const nearNames = [...new Set(near.map(nameOf))];
+        if (nearNames.length === 1) {
+          pool = near;
+        } else {
+          return { match: null, ambiguous: names.sort(),
+                   narrowed: nearNames.length > 1 ? nearNames.sort() : null };
+        }
+      } else {
+        pool = loose;
+      }
     }
     if (!pool.length) return empty;
 
