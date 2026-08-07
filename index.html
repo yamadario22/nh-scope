@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.4</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6606,6 +6606,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults);
   }
 
+  // 【重複しているうち、この行だけ残して他を消す】
+  // 「2件あります」と言われても、どちらを消すかを別画面で探すのは手間。
+  // その場で1回押せば片づくようにする。消した行はあとで戻せる。
+  async function keepThisSyllabusRow(i) {
+    const groups = syllabusDupGroups();
+    const key = Object.keys(groups).find(k => groups[k].some(j => String(j) === String(i)));
+    if (!key) { alert('同じテストの行が見つかりませんでした。'); return; }
+    const others = groups[key].filter(j => String(j) !== String(i));
+    if (!others.length) { alert('消す行がありません。'); return; }
+    const me = syllabusRows[i] || {};
+    const list = others.map(j => {
+      const o = syllabusRows[j] || {};
+      return `・${o.unitText || '範囲なし'}`;
+    }).join('\n');
+    const ok = await showConfirm(
+      `この行を残します。\n\n残す：${me.unitText || '範囲なし'}\n\n消す：\n${list}\n\n`
+      + '（消した行はあとで「消した◯件を戻す」から戻せます）', '消す');
+    if (!ok) return;
+    others.forEach(j => { syllabusFix[j] = Object.assign({}, syllabusFix[j], { deleted: true }); });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
   // 消した行を、写真を見て選んで戻す
   async function restoreSyllabusRows() {
     const idx = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted);
@@ -7376,17 +7399,49 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const tr = chk ? chk.closest('tr') : el.querySelector(`tr[data-row="${i}"]`);
         const td = tr ? tr.querySelector('td') : null;
         if (!td) return;
-        const tag = document.createElement('div');
-        tag.style.cssText = 'font-size:10px;color:#B45309;font-weight:600;margin-bottom:3px';
-        tag.textContent = `⚠️ 同じテストの行が ${group.length} 件あります（${n + 1} 件目）。1つだけ反映してください`;
-        td.insertBefore(tag, td.firstChild);
+        const me = syllabusRows[i] || {};
+        // 【相手の範囲をその場に並べる】
+        // 「2件あります」とだけ言われても、もう片方を探しに行かないと比べられない。
+        // 見比べる材料をこの行に持ってくる。
+        const others = group.filter(j => String(j) !== String(i)).map(j => {
+          const o = syllabusRows[j] || {};
+          const or = (o.r || {});
+          const pg = (or.textbook_from || or.textbook_to)
+            ? `教科書 p.${or.textbook_from || '?'}〜${or.textbook_to || '?'}` : 'ページの記載なし';
+          return `<div style="margin-top:3px;padding:4px 6px;background:#fff;border:1px solid #FDE68A;border-radius:4px">
+                    <span style="color:var(--muted)">もう一方（${group.indexOf(j) + 1}件目）：</span>
+                    <b>${esc(o.unitText || '範囲なし')}</b>
+                    <span style="color:var(--muted)">／ ${esc(pg)}</span>
+                    <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:0 4px"
+                            onclick="openSyllabusPhoto(${j})">📷 その写真</button>
+                  </div>`;
+        }).join('');
+        const box = document.createElement('div');
+        box.style.cssText = 'font-size:11px;color:#B45309;border:1px solid #FCD34D;background:#FFFBEB;'
+                          + 'border-radius:5px;padding:6px 7px;margin-bottom:5px;line-height:1.7';
+        box.innerHTML =
+          `<b>⚠️ 同じテストの範囲表が ${group.length} 枚あります（これは ${n + 1} 枚目）</b><br>`
+          + '同じ範囲表を2回撮った、表を分けて撮った、などで起きます。'
+          + '<b>写真を見比べて、正しいほうを残してください。</b>'
+          + `<div style="margin-top:3px;padding:4px 6px;background:#fff;border:1px solid #FDE68A;border-radius:4px">
+               <span style="color:var(--muted)">この行：</span><b>${esc(me.unitText || '範囲なし')}</b>
+               <span style="color:var(--muted)">／ ${esc((me.r && (me.r.textbook_from || me.r.textbook_to))
+                   ? `教科書 p.${me.r.textbook_from || '?'}〜${me.r.textbook_to || '?'}` : 'ページの記載なし')}</span>
+             </div>`
+          + others
+          + `<div style="margin-top:5px">
+               <button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 8px"
+                       onclick="keepThisSyllabusRow(${i})">この行を残して、他を消す</button>
+             </div>`;
+        td.insertBefore(box, td.firstChild);
       });
     });
     if (dupRows) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:8px;padding:8px;border:1px solid #FCD34D;border-radius:6px;background:#FFFBEB;font-size:11px;color:#B45309';
-      note.textContent = `同じテストを指している行が ${dupRows} 件あります（${Object.keys(dups).length} 組）。`
-        + '2件目以降はチェックを外してあります。どれを残すか、範囲を見比べて決めてください。';
+      note.textContent = `同じテストを指している範囲表が ${dupRows} 枚あります（${Object.keys(dups).length} 組）。`
+        + '各行に「この行を残して、他を消す」ボタンを出してあります。'
+        + '写真を見比べて、正しい1枚を残してください。押すと残りは消えます（あとで戻せます）。';
       el.insertBefore(note, el.firstChild);
     }
   }
