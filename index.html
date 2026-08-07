@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.6</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6205,11 +6205,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
     const pick = syllabusPick[i];
     return `
-      <div style="margin-top:6px;padding:8px;border:1px solid var(--amber);border-radius:6px;background:#FFFBEB">
-        <div style="font-size:11px;font-weight:600;color:#B45309;margin-bottom:6px">
-          ${syllabusEditOpen[i]
-            ? '学校名・学年を手で直します。写真を見て入れてください'
-            : '学校名か学年が読み取れませんでした。写真を見て入れてください'}
+      <div style="margin-top:6px;padding:8px;border:1px solid var(--amber);border-left:5px solid #F59E0B;
+                  border-radius:6px;background:#FFFBEB">
+        <div style="font-size:11px;font-weight:700;color:#B45309;margin-bottom:2px">
+          ✏️ この行を直します
+        </div>
+        <div style="font-size:11px;color:#92400E;margin-bottom:6px;padding:3px 6px;
+                    background:#fff;border:1px solid #FDE68A;border-radius:4px">
+          ${esc((syllabusRows[i] && syllabusRows[i].school) || '（学校名なし）')}
+          ${esc((syllabusRows[i] && syllabusRows[i].grade) || '')}
+          ／ ${esc((syllabusRows[i] && syllabusRows[i].date) || '日付なし')}
+          ／ ${esc((syllabusRows[i] && syllabusRows[i].unitText) || '範囲なし')}
         </div>
         ${img ? `<img src="data:image/jpeg;base64,${img.b64}" alt="範囲表"
              style="width:100%;max-width:230px;max-height:170px;object-fit:cover;object-position:top;
@@ -7416,6 +7422,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                     <span style="color:var(--muted)">／ ${esc(pg)}</span>
                     <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:0 4px"
                             onclick="openSyllabusPhoto(${j})">📷 その写真</button>
+                    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px"
+                            onclick="openSyllabusEdit(${j})">その行を直す</button>
                   </div>`;
         }).join('');
         const box = document.createElement('div');
