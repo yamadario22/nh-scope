@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6218,11 +6218,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ／ ${esc((syllabusRows[i] && syllabusRows[i].unitText) || '範囲なし')}
         </div>
         ${img ? `<img src="data:image/jpeg;base64,${img.b64}" alt="範囲表"
-             style="width:100%;max-width:230px;max-height:170px;object-fit:cover;object-position:top;
+             style="width:100%;max-width:420px;max-height:300px;object-fit:contain;
                     border:1px solid var(--line);border-radius:4px;cursor:zoom-in;margin-bottom:2px"
              onclick="openSyllabusPhoto(${i})">
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
-            クリックで大きく表示（入力欄がすぐ下に来るよう小さくしてあります）</div>` : ''}
+            クリックでさらに大きく表示</div>` : ''}
         ${(syllabusHint[i] && syllabusHint[i].cands.length) ? `
           <div style="margin-bottom:6px;padding:6px;background:#EFF6FF;border-radius:4px">
             ${syllabusHint[i].cands.length <= 5
@@ -6593,7 +6593,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       to:     f.to   || ''
     };
     syllabusEditOpen[i] = true;
-    renderSyllabusResult(lastSyllabusResults);
+    renderSyllabusResult(lastSyllabusResults, i);   // 開いた行を画面の中央に出す
   }
 
   function closeSyllabusEdit(i) {
@@ -6909,9 +6909,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return '';
   }
 
-  function renderSyllabusResult(results) {
+  function renderSyllabusResult(results, focusIdx) {
     lastSyllabusResults = results;
     const el = document.getElementById('syllabusResult');
+    // 【描き直しても画面が飛ばないようにする】
+    // 491行を毎回まるごと描き直すため、ボタンを押すたびに見ていた位置を見失っていた。
+    // 「押しても何も起きない」ように見え、実際にはずっと下で開いていた。
+    const _keepY = window.scrollY;
     let hist = [];
     try { hist = histAll(); } catch {}
 
@@ -7459,6 +7463,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         td.insertBefore(box, td.firstChild);
       });
     });
+    // 元の位置に戻す。開いた行が指定されていれば、そこへ寄せる。
+    setTimeout(() => {
+      if (focusIdx != null) {
+        const tr = el.querySelector(`tr[data-row="${focusIdx}"]`);
+        if (tr && tr.scrollIntoView) { tr.scrollIntoView({ block: 'center' }); return; }
+      }
+      if (window.scrollTo) window.scrollTo(0, _keepY);
+    }, 0);
+
     if (dupRows) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:8px;padding:8px;border:1px solid #FCD34D;border-radius:6px;background:#FFFBEB;font-size:11px;color:#B45309';
