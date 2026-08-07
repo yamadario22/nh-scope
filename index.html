@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.0</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -3893,6 +3893,31 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return `${mo}月`;
   }
 
+  // 【そのテストが、その年度の何回目か】
+  // 引き継ぎ（前のテストの続きから始める）を、日数ではなく回数で判断するために使う。
+  // 日数で線を引くと、3学期制の①5月→②6月（約1か月）と
+  // 2学期制の②9月→③11月（約2か月）を同じ物差しで測れず、必ずどちらかを取り違える。
+  //   2学期制（年4回）：①5〜6月 ②9〜10月 ③11〜12月 ④1〜3月
+  //   3学期制（年5回）：①5月 ②6月 ③9〜10月 ④11〜12月 ⑤1〜3月
+  function testRoundNo(school, dateStr) {
+    const m = String(dateStr || '').match(/^\d{4}-(\d{2})/);
+    if (!m) return 0;
+    const mo = parseInt(m[1]);
+    if (isSemester2(school)) {
+      if (mo === 5 || mo === 6)   return 1;
+      if (mo === 9 || mo === 10)  return 2;
+      if (mo === 11 || mo === 12) return 3;
+      if (mo >= 1 && mo <= 3)     return 4;
+      return 0;
+    }
+    if (mo === 5)               return 1;
+    if (mo === 6)               return 2;
+    if (mo === 9 || mo === 10)  return 3;
+    if (mo === 11 || mo === 12) return 4;
+    if (mo >= 1 && mo <= 3)     return 5;
+    return 0;
+  }
+
   // 検索欄に出す順番
   const TERM_ORDER = ['1学期中間テスト','1学期期末テスト','2学期中間テスト','2学期期末テスト',
                       '前期中間テスト','前期期末テスト','後期中間テスト','学年末テスト'];
@@ -6903,7 +6928,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const list = (_manualEnds[`${school}|${grade}`] || []).filter(x => x.date < date);
         if (list.length) {
           const prevM = list[list.length - 1];
-          const st = startAfterEnd(grade, prevM.end);
+          // 【1つ前の回のときだけ引き継ぐ】
+          // 間の回が束に無いのに続けてしまうと、範囲が何 Unit も広がる。
+          // 「何日空いたか」ではなく「何回目と何回目か」で見る。
+          const nowNo  = testRoundNo(school, date);
+          const prevNo = testRoundNo(school, prevM.date);
+          const rounds = (nowNo && prevNo) ? (nowNo - prevNo) : 1;
+          const st = (rounds === 1) ? startAfterEnd(grade, prevM.end) : '';
           // 【範囲表に書いてあるページが最優先】
           // 引き継ぎは「前がここまでなら次はここから」という推測にすぎない。
           // 範囲表のページは先生が紙に書いた一次情報なので、そちらが必ず正しい。
@@ -7031,7 +7062,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const td = match.h.testDate || extractTestDate(match.h.name||'') || '';
         if (td) {
           const gap = Math.abs((new Date(td) - new Date(date)) / 86400000);
-          if (gap >= 5) {
+          if (gap >= 8) {
             warns.push({ text: `範囲表の日付（${date}）と、結びついたテストの日付（${td}）が ${Math.round(gap)} 日離れています。別のテストに結びついている可能性があります` });
           }
         }
@@ -7315,7 +7346,7 @@ function findTestByDateEx(hist, school, grade, date) {
           const hd = h.testDate || extractTestDate(h.name||'');
           if (!hd) return false;
           const d = new Date(hd + 'T00:00:00');
-          return !isNaN(d) && Math.abs((d - target) / 86400000) <= 10;
+          return !isNaN(d) && Math.abs((d - target) / 86400000) <= 15;
         }) : [];
         const nearNames = [...new Set(near.map(nameOf))];
         if (nearNames.length === 1) {
@@ -7340,7 +7371,11 @@ function findTestByDateEx(hist, school, grade, date) {
       const d = new Date(hd + 'T00:00:00');
       if (isNaN(d)) return;
       const diff = Math.abs((d - target) / 86400000);
-      if (diff > 10) return;
+      // 【前後15日まで許す】
+      // テストとテストの間隔は、いちばん詰まっている3学期制の①5月→②6月でも約1か月。
+      // 15日ずらしても隣のテストと取り違えないので、
+      // 日付の読み取りが少しずれている行も結びつけられる。
+      if (diff > 15) return;
       if (!best || diff < best.diff) best = { idx, h, diff };
     });
     return { match: best, ambiguous: [] };
