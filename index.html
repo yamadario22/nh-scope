@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6279,8 +6279,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         ${syllabusEditOpen[i]
           ? `<button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px"
                      onclick="closeSyllabusEdit(${i})">やめる</button>` : ''}
-        <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px;color:#B91C1C"
-                onclick="deleteSyllabusRow(${i})">この行を消す</button>
       </div>`;
   }
 
@@ -6617,25 +6615,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 【重複しているうち、この行だけ残して他を消す】
   // 「2件あります」と言われても、どちらを消すかを別画面で探すのは手間。
   // その場で1回押せば片づくようにする。消した行はあとで戻せる。
-  async function keepThisSyllabusRow(i) {
-    const groups = syllabusDupGroups();
-    const key = Object.keys(groups).find(k => groups[k].some(j => String(j) === String(i)));
-    if (!key) { alert('同じテストの行が見つかりませんでした。'); return; }
-    const others = groups[key].filter(j => String(j) !== String(i));
-    if (!others.length) { alert('消す行がありません。'); return; }
-    const me = syllabusRows[i] || {};
-    const list = others.map(j => {
-      const o = syllabusRows[j] || {};
-      return `・${o.unitText || '範囲なし'}`;
-    }).join('\n');
-    const ok = await showConfirm(
-      `この行を残します。\n\n残す：${me.unitText || '範囲なし'}\n\n消す：\n${list}\n\n`
-      + '（消した行はあとで「消した◯件を戻す」から戻せます）', '消す');
-    if (!ok) return;
-    others.forEach(j => { syllabusFix[j] = Object.assign({}, syllabusFix[j], { deleted: true }); });
-    saveSyllabusState();
-    renderSyllabusResult(lastSyllabusResults);
-  }
+  
 
   // 消した行を、写真を見て選んで戻す
   async function restoreSyllabusRows() {
@@ -7254,8 +7234,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                          onclick="openSyllabusPhoto(${i})">📷 範囲表を見る</button>` : '';
             if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
             return `<br>${photo}${hasRange
-              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px"
-                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`;
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
+              + `<button class="btn btn-secondary btn-sm"
+                        style="font-size:10px;padding:2px 7px;margin-top:4px;color:#B91C1C"
+                        onclick="deleteSyllabusRow(${i})">この行を消す</button>`;
           })()}
         </td>
         <td style="font-size:11px">
@@ -7426,22 +7409,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                     <span style="color:var(--muted)">／ ${esc(pg)}</span>
                     <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:0 4px"
                             onclick="openSyllabusPhoto(${j})">📷 その写真</button>
-                    <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px"
-                            onclick="openSyllabusEdit(${j})">その行を直す</button>
                   </div>`;
         }).join('');
         const box = document.createElement('div');
         box.style.cssText = 'font-size:11px;color:#B45309;border:1px solid #FCD34D;background:#FFFBEB;'
                           + 'border-radius:5px;padding:6px 7px;margin-bottom:5px;line-height:1.7';
-        // 修正パネルを開いている行では警告を畳む（縦に長くなりすぎて決定ボタンまで遠くなるため）
-        const opened = !!syllabusEditOpen[i];
-        if (opened) {
-          box.style.cssText += ';padding:4px 7px';
-          box.innerHTML = `<b>⚠️ 同じテストの範囲表が ${group.length} 枚あります（これは ${n + 1} 枚目）</b>`
-            + '<span style="font-weight:400"> — 別の学校の紙なら、消さずに学校名を直してください</span>';
-          td.insertBefore(box, td.firstChild);
-          return;
-        }
+        // 【畳まない】開いているときだけ表示が変わると、どこに何があるか分からなくなる。
+        // どの行でも、いつでも、同じ場所に同じボタンを出す。
         box.innerHTML =
           `<b>⚠️ 同じテストの範囲表が ${group.length} 枚あります（これは ${n + 1} 枚目）</b><br>`
           + '同じ範囲表を2回撮った、表を分けて撮った、などで起きます。'
@@ -7454,11 +7428,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                    ? `教科書 p.${me.r.textbook_from || '?'}〜${me.r.textbook_to || '?'}` : 'ページの記載なし')}</span>
              </div>`
           + others
-          + `<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">
-               <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 8px"
-                       onclick="openSyllabusEdit(${i})">学校名・学年を直す（別の学校だった場合）</button>
-               <button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 8px"
-                       onclick="keepThisSyllabusRow(${i})">この行を残して、他を消す（同じ紙だった場合）</button>
+          + `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+               <span style="font-size:10px;color:#92400E">同じ紙なら、いらないほうを消す：</span>
+               <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 8px;color:#B91C1C"
+                       onclick="deleteSyllabusRow(${i})">${n + 1}枚目（この行）を消す</button>
+               ${group.filter(j => String(j) !== String(i)).map(j =>
+                 `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 8px;color:#B91C1C"
+                          onclick="deleteSyllabusRow(${j})">${group.indexOf(j) + 1}枚目を消す</button>`).join('')}
              </div>`;
         td.insertBefore(box, td.firstChild);
       });
