@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.4</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6724,8 +6724,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (fx.deleted || !fx.to) return;              // 範囲を手で直した行だけ
       const res = (lastSyllabusResults || [])[i] || {};
       const r   = res.r || {};
-      const school = fx.school || canonSchool(String(r.school || ''));
-      const grade  = fx.grade  || normalizeGrade(r.grade || '');
+      // 学年は「中1」「中１」の書き方の違いで別物にならないよう、必ずそろえる
+      const school = canonSchool(fx.school || String(r.school || ''));
+      const grade  = normalizeGrade(fx.grade || r.grade || '');
       const date   = fx.date   || String(r.test_date || '');
       if (!school || !grade || !date) return;
       const key = `${school}|${grade}`;
@@ -7225,6 +7226,49 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 学校名の書き方をそろえる。
   // 「岡崎市立常磐中学校」も「常磐中」も、同じ「常磐中」として扱う。
   // そろえないと同じ学校が別の学校になり、前回のテストが見つからなくなる。
+function findTestByDateEx(hist, school, grade, date) {
+    const empty = { match: null, ambiguous: [] };
+    if (!school || !date) return empty;
+    const target = new Date(date + 'T00:00:00');
+    if (isNaN(target)) return empty;
+    const sc = canonSchool(school);
+    if (!sc) return empty;
+
+    const nameOf = h => canonSchool(h.school || extractSchoolName(h.name || ''));
+    const exact = hist.filter(h => nameOf(h) === sc);
+
+    let pool = exact;
+    if (!exact.length) {
+      const loose = hist.filter(h => {
+        const hs = nameOf(h);
+        return hs && (hs.includes(sc) || sc.includes(hs));
+      });
+      const names = [...new Set(loose.map(nameOf))];
+      if (names.length > 1) return { match: null, ambiguous: names.sort() };
+      pool = loose;
+    }
+    if (!pool.length) return empty;
+
+    const idxOf = new Map(hist.map((h, idx) => [h, idx]));
+    let best = null;
+    pool.forEach(h => {
+      const idx = idxOf.get(h);
+      if (grade && normalizeGrade(h.grade||'') !== grade) return;
+      const hd = h.testDate || extractTestDate(h.name||'');
+      if (!hd) return;
+      const d = new Date(hd + 'T00:00:00');
+      if (isNaN(d)) return;
+      const diff = Math.abs((d - target) / 86400000);
+      if (diff > 10) return;
+      if (!best || diff < best.diff) best = { idx, h, diff };
+    });
+    return { match: best, ambiguous: [] };
+  }
+
+function findTestByDate(hist, school, grade, date) {
+    return findTestByDateEx(hist, school, grade, date).match;
+  }
+
   function canonSchool(s) {
     let t = String(s || '').trim().replace(/\s+/g, '');
     t = t.replace(/^.{1,6}?[市町村区]立/, '');
