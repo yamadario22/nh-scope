@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.0</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6965,7 +6965,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
 
       // ※ wUse（ページと食い違うときに無効化した版）は下で判定する
-      let analyzedStart = '';
+      let analyzedStart = '', capNote = '';
       if (startNotWritten && match && match.h && match.h.range && match.h.range !== '範囲不明') {
         // 【学年最初のテストかどうか】
         // 前のテストが記録にあれば、最初ではない（それが確実）。
@@ -6989,6 +6989,33 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 引き継いだ始まりがあれば、分析値より先に使う
       if (chainStart) analyzedStart = chainStart;
 
+      // 【分析の始まりと範囲表の終わりを組み合わせたとき、広がりすぎないようにする】
+      // 分析側は「1回のテストの範囲は最大3 Unit まで」という上限を持っている。
+      // ところが範囲表の終わりのほうが分析より先まで進んでいると、
+      //   分析の始まり（Unit 4）＋ 範囲表の終わり（Unit 7）＝ 4 Unit 分
+      // のように、どちらの上限にも収まらない範囲ができてしまう（実例：足助中1・常磐中1）。
+      // 組み合わせたあとにも同じ上限をかけ、はみ出す分は始まりを後ろにずらす。
+      const MAX_SPAN_SYL = 3;
+      if (analyzedStart && !chainStart) {
+        const endForCap = w ? w.to
+          : (pageText ? (() => { const q = parseRangeText(pageText);
+                                 return [q.to_unit, q.to_lesson].filter(Boolean).join(' '); })() : '');
+        const gN2 = gradeNumOf(grade);
+        const sPos = rangePos(analyzedStart, gN2);
+        const ePos = endForCap ? rangePos(endForCap, gN2) : -1;
+        if (sPos >= 0 && ePos >= 0 && Math.floor(ePos) - Math.floor(sPos) > MAX_SPAN_SYL - 1) {
+          const wantUnit = Math.floor(ePos) - (MAX_SPAN_SYL - 1);
+          const list = sectionOptionsList(grade);
+          const narrowed = list.find(x => Math.floor(rangePos(x, gN2)) >= wantUnit);
+          if (narrowed) {
+            capNote = `テスト分析は ${analyzedStart} から、と出していますが、`
+                    + `範囲表の終わり（${endForCap}）と合わせると ${Math.floor(ePos) - Math.floor(sPos) + 1} Unit 分になり広すぎるため、`
+                    + `${narrowed} からに縮めました`;
+            analyzedStart = narrowed;
+          }
+        }
+      }
+
       let wUse = w;
 
       let unitText = '';
@@ -7003,6 +7030,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               ? `終わり（${endText}）は範囲表どおり。${chainNote}`
               : (analyzedStart
                   ? `終わり（${endText}）は範囲表どおり。始まりは範囲表に書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
+                    + (capNote ? `／${capNote}` : '')
                   : `範囲表には終わり（${endText}）しか書かれていません`));
       } else {
         unitText = pageText;
@@ -7011,7 +7039,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           const endText = [pt.to_unit, pt.to_lesson].filter(Boolean).join(' ');
           if (endText && rangePos(analyzedStart, gradeNumOf(grade)) <= rangePos(endText, gradeNumOf(grade))) {
             unitText = analyzedStart === endText ? endText : `${analyzedStart} 〜 ${endText}`;
-            startNote = `終わりは範囲表のページどおり。始まりは書かれていないため、テスト分析が出した ${analyzedStart} を使いました`;
+            startNote = `終わりは範囲表のページどおり。始まりは書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
+                      + (capNote ? `／${capNote}` : '');
           }
         }
       }
