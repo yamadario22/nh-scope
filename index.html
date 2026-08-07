@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v7.4</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -863,6 +863,21 @@
 <!-- 【直した内容を、写真と並べて確かめる画面】
      手で入れた学校名・学年・日付・範囲が本当に合っているかは、
      元の範囲表を見ないと判断できない。決定の前に必ずここで見比べてもらう。 -->
+<!-- 範囲表の写真を大きく見る（別ウィンドウだとポップアップブロックで開けないため画面内で表示） -->
+<div class="modal-ov" id="photoModal" style="display:none" onclick="closeSyllabusPhoto()">
+  <div class="modal" style="max-width:96vw;width:auto" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <div class="modal-title" id="photoModalName" style="font-size:13px;font-weight:400"></div>
+    </div>
+    <div class="modal-body" style="padding:8px;max-height:82vh;overflow:auto;text-align:center">
+      <img id="photoModalImg" style="max-width:88vw;max-height:76vh;object-fit:contain">
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeSyllabusPhoto()">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-ov" id="fixCheckModal" style="display:none">
   <div class="modal" style="max-width:760px;width:94vw">
     <div class="modal-head">
@@ -904,7 +919,7 @@
       <div class="modal-title" id="confirmTitle">確認</div>
     </div>
     <div class="modal-body">
-      <p id="confirmMsg" style="font-size:14px;line-height:1.7"></p>
+      <p id="confirmMsg" style="font-size:14px;line-height:1.7;white-space:pre-line"></p>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost btn-sm" onclick="resolveConfirm(false)">キャンセル</button>
@@ -1920,7 +1935,7 @@
     closeAddBookModal();
     switchBook(mkBook(name));
   }
-  function addBook() { openAddBookModal(); } // 後方互換
+   // 後方互換
 
   function resetLibrary() {
     try {
@@ -2271,7 +2286,7 @@
           const merged = [...localExams];
           firestoreExams.forEach(e => { if (!localIds.has(e.firestoreId)) merged.push(e); });
           merged.sort((a,b) => (b.date||'').localeCompare(a.date||''));
-          localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(merged.slice(0,500)));
+          saveExamHistory(merged.slice(0,500));
           try { renderExamHistory(); } catch {}
         }
         sessionStorage.setItem('nhscope_exams_loaded', '1');
@@ -2340,7 +2355,7 @@
   }
 
   // 後方互換（旧コードから呼ばれる場合のダミー）
-  function saveTestHistoryToFirestore() {}
+  
 
   // 設定をFirestoreに保存（APIキー・モデルを全員で共有）
   async function saveSettingsToFirestore() {
@@ -3017,46 +3032,8 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
   }
 
   // ── データ入りHTML書き出し ──────────────────────────────────────
-  async function exportDataHTML() {
-    if (!getItems().length) { alert('データがありません。先に解析を実行してください。'); return; }
-
-    try {
-      let html;
-
-      try {
-        const res = await fetch(location.href);
-        html = await res.text();
-      } catch {
-        html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
-      }
-
-      // <\/script> を文字列内に直接書くとHTMLパーサーが誤解析するため分割
-      const openTag  = '<' + 'script id="__nh_data__">';
-      const closeTag = '<' + '/script>';
-      const removeRe = new RegExp(openTag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '[\\s\\S]*?' + closeTag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\n?', 'g');
-
-      html = html.replace(removeRe, '');
-
-      const payload    = JSON.stringify({ library, activeId });
-      const dataScript = openTag + 'window.__NH_DATA__=' + payload + ';' + closeTag + '\n';
-      html = html.replace('</head>', dataScript + '</head>');
-
-      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-      const a = Object.assign(document.createElement('a'), {
-        href: URL.createObjectURL(blob),
-        download: 'NHScope-データ入り.html'
-      });
-      a.click();
-      URL.revokeObjectURL(a.href);
-
-    } catch(e) {
-      alert('書き出しに失敗しました：' + e.message);
-    }
-  }
-  function showJSON() {
-    document.getElementById('jsonArea').value = JSON.stringify({ name:activeBook()?.name, items:getItems() }, null, 2);
-    document.getElementById('jsonOv').style.display = 'flex';
-  }
+  
+  
   function closeJSON() { document.getElementById('jsonOv').style.display='none'; }
   async function copyJSON() {
     const txt = document.getElementById('jsonArea').value;
@@ -4195,9 +4172,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                              : '';
                          })()
                        + (h.rangePrev && h.rangePrev !== h.range
-                          ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}</div>` : '')
+                          ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}
+                               <button class="btn btn-ghost btn-sm" onclick="revertTestRange(${realIdx})"
+                                       style="padding:0 4px;font-size:10px" title="書き換える前の範囲に戻します">元に戻す</button>
+                             </div>` : '')
                        + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${realIdx})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
-                       + (h.rangeEditedBy === '手入力' ? `<span style="font-size:10px;color:#059669;margin-left:4px">手入力</span>` : '');
+                       + (h.rangeEditedBy
+                          ? `<span style="font-size:10px;color:#059669;margin-left:4px" title="人が確かめた範囲です。「範囲を再判定」では上書きされません">${esc(h.rangeEditedBy)}</span>`
+                          : '');
                 })()}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
@@ -4365,8 +4347,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (y && y < 2025) { skipped++; return; }
       const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
       if (!hasMaterial) { skipped++; return; }
-      // 手で直した範囲は、機械の判定で上書きしない
-      if (h.rangeEditedBy === '手入力') { skipped++; return; }
+      // 【人が確かめた範囲は、機械の判定で上書きしない】
+      // 手入力だけを守っていたため、範囲表から反映した範囲（rangeEditedBy = '範囲表'）が
+      // 「範囲を再判定」で黙って書き換わっていた。画面には「上書きされません」と
+      // 書いてあるのに実際は上書きされる、という食い違いになっていた。
+      if (h.rangeEditedBy === '手入力' || h.rangeEditedBy === '範囲表') { skipped++; return; }
 
       const r = {
         grade: h.grade || '',
@@ -4879,19 +4864,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     doSearch();
   }
 
-  function setGradeFilter(bookId, el) {
-    searchGradeId = bookId;
-    document.querySelectorAll('#gradePills .pill').forEach(p => p.classList.remove('active'));
-    if (el) el.classList.add('active');
-    doSearch();
-  }
+  
 
-  function updateGradePills() {
-    const pills = document.getElementById('gradePills');
-    if (!pills) return;
-    pills.innerHTML = `<div class="pill ${searchGradeId===null?'active':''}" onclick="setGradeFilter(null,this)">全学年</div>` +
-      library.map(b => `<div class="pill ${searchGradeId===b.id?'active':''}" onclick="setGradeFilter('${b.id}',this)">${esc(b.name)}</div>`).join('');
-  }
+  
 
   let searchAllBooks = false; // 全教科書横断検索フラグ
 
@@ -5062,6 +5037,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 取り出せない場合は空にする（誤った情報を残すより、空のほうが害が小さい）。
   const VALID_LESSON_PATTERNS = [
     [/Part\s*([123])/i,                    n => `Part ${n}`],
+    // 【Scene も拾う】
+    // 範囲表には「Unit 2 Scene 1」と書かれていることが多いのに一覧に無く、
+    // 「Unit 2」に潰れてセクションが丸ごと落ちていた。
+    // アプリの中では Part で統一しているので、Scene N は Part N として扱う。
+    [/Scene\s*([123])/i,                   n => `Part ${n}`],
     // 中1の Read and Think には番号がない（中2・中3は 1 / 2 が付く）。
     // 数字を必須にしていたため、中1の「Unit 6 Read and Think」が
     // セクション名として一度も拾えていなかった。数字は任意にする。
@@ -5936,8 +5916,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 新しく読み取ったら、前の手直しは対応先が変わるので捨てる
     syllabusFix = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {};
     renderSyllabusResult(results);
-    // 【ここで保存する】保存しないと、リロードした時点で読み直し（＝費用）になる
-    saveSyllabusState();
+    // 【ここで保存する】保存しないと、リロードした時点で読み直し（＝費用）になる。
+    // 写真を保存するのはここだけ（重いので手直しのたびには書かない）。
+    saveSyllabusState(true);
   }
 
   // 【学校名の候補をAIに渡すのは、やめた】
@@ -6075,10 +6056,28 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // normalizeUnitField はUnit番号だけを返すため、そのまま使うと
     // 「Unit 4 Part 3」が「Unit 4」に潰れ、範囲表のいちばん大事な部分が落ちていた。
     const build = str => {
-      const unit = normalizeUnitField(str);
+      const src = String(str || '').trim();
+      // 【Unit が付かない単元名】
+      // 「Stage Activity 1」「Real Life English 2」「Let's Read 1」は
+      // Unit番号を持たないので、Unit を探す仕組みだと読み取れず、
+      // 範囲表にそう書いてあってもページからの変換に落ちていた。
+      const aux = src.match(/^(Stage\s*Activity|Real\s*Life\s*English|Grammar\s*for\s*Communication|Let'?s\s*Read)\s*(\d+)?/i);
+      if (aux) {
+        const base = aux[1].replace(/\s+/g, ' ')
+          .replace(/^stage activity$/i, 'Stage Activity')
+          .replace(/^real life english$/i, 'Real Life English')
+          .replace(/^grammar for communication$/i, 'Grammar for Communication')
+          .replace(/^let'?s read$/i, "Let's Read");
+        return (base + (aux[2] ? ' ' + aux[2] : '')).trim();
+      }
+      const unit = normalizeUnitField(src);
       if (!unit) return '';
-      const lesson = normalizeLessonField(str);
-      return lesson ? `${unit} ${lesson}` : unit;
+      const lesson = normalizeLessonField(src);
+      // 【同じ名前を2回書かない】
+      // 「Let's Read 1」が「Let's Read 1 Let's Read 1」になっていた。
+      if (!lesson) return unit;
+      if (unit.replace(/\s+/g,'').toLowerCase().includes(lesson.replace(/\s+/g,'').toLowerCase())) return unit;
+      return `${unit} ${lesson}`;
     };
     const gN   = gradeNumOf(grade);
     // 「Unit4 Part3〜Unit6 Read and Think」のように2つ書かれていれば始まりあり。
@@ -6151,8 +6150,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                     onclick="syllabusPickGrade(${i},'${g}')">${g}</button>`).join('')}
         </div>
         <div style="margin-bottom:6px">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:2px">テストの日付（年がずれていたら直してください）</div>
-          <input type="date" id="sylDate${i}" value="${esc(pick.date || '')}"
+          <div style="font-size:10px;color:var(--muted);margin-bottom:2px">
+            テストの日付${guessSyllabusDate(i) && !pick.date ? '（写真の月日から推測して入れてあります。合っていれば触らなくて構いません）' : ''}
+          </div>
+          <input type="date" id="sylDate${i}" value="${esc(pick.date || guessSyllabusDate(i) || '')}"
+                 min="${esc(syllabusYearRange().min)}" max="${esc(syllabusYearRange().max)}"
                  style="padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:4px">
         </div>
         <div style="margin-bottom:6px">
@@ -6178,7 +6180,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 【範囲を選ぶための一覧】
-  // 打ち間違いが起きないよう、教科書にある単元から選ぶ形にする。
+  // 教科書に実在するものだけを出す。ありもしない選択肢は迷いのもとにしかならない。
+  //   ・Unit 0 は数ページだけで、Part も Read and Think もない → 「Unit 0」だけ
+  //   ・中1  は Part 1・2・3。Read and Think は番号なし
+  //   ・中2/中3 は Part 1・2 と Read and Think 1・2。Part 3 はない
+  //   ・「Unit 5」のような単元まるごとは出さない。どこまでかが分からず範囲がぼやけるため。
   function sectionOptionsList(grade) {
     const n = gradeNumOf(normalizeGrade(grade || ''));
     if (!n) return [];
@@ -6186,13 +6192,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const out = [], seen = new Set();
     const push = s => { if (s && !seen.has(s)) { seen.add(s); out.push(s); } };
     const keep = s => /^(Unit\s*\d|Let'?s\s*Read|Stage\s*Activity|Real\s*Life\s*English)/i.test(s);
+    const parts = (n === 1)
+      ? ['Part 1', 'Part 2', 'Part 3', 'Read and Think']
+      : ['Part 1', 'Part 2', 'Read and Think 1', 'Read and Think 2'];
     t.forEach(row => {
       const name = String(row[1] || '').trim();
       if (!name || !keep(name)) return;
-      push(name);
-      if (/^Unit\s*\d+$/.test(name)) {
-        ['Part 1','Part 2','Part 3','Read and Think 1','Read and Think 2']
-          .forEach(s => push(name + ' ' + s));
+      const m = name.match(/^Unit\s*(\d+)$/);
+      if (m) {
+        if (parseInt(m[1]) === 0) push(name);            // Unit 0 は区切りなし
+        else parts.forEach(s => push(name + ' ' + s));   // Unit まるごとは出さない
+      } else {
+        push(name);   // Let's Read / Stage Activity / Real Life English
       }
     });
     return out;
@@ -6244,9 +6255,73 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (box) box.innerHTML = `<span style="font-size:10px;color:#059669">「${esc(name)}」を選びました</span>`;
   }
 
+  // 【日付の初期値を、その束の年度に合わせる】
+  // 2025年度の範囲表を直しているのに、空欄だとカレンダーが今年（2026年）で開く。
+  // 毎回2025年まで戻すのは無駄なので、
+  //   ① 写真から読めた月日があれば、その束の年度を当てて日付を作る
+  //   ② 選べる範囲も、その年度の4月〜翌3月に絞る
+  function syllabusSchoolYear() {
+    // 読み取れている日付から、いちばん多い年度を選ぶ
+    const cnt = {};
+    (lastSyllabusResults || []).forEach(res => {
+      const d = String((res.r && res.r.test_date) || '');
+      const m = d.match(/^(\d{4})-(\d{2})/);
+      if (!m) return;
+      const y = parseInt(m[1]), mo = parseInt(m[2]);
+      const sy = mo >= 4 ? y : y - 1;     // 4月始まりの年度
+      cnt[sy] = (cnt[sy] || 0) + 1;
+    });
+    let best = null, n = 0;
+    Object.keys(cnt).forEach(k => { if (cnt[k] > n) { n = cnt[k]; best = parseInt(k); } });
+    if (best !== null) return best;
+    const now = new Date();
+    return now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  }
+
+  function syllabusYearRange() {
+    const sy = syllabusSchoolYear();
+    return { min: `${sy}-04-01`, max: `${sy + 1}-03-31` };
+  }
+
+  function guessSyllabusDate(i) {
+    const res = (lastSyllabusResults || [])[i] || {};
+    const r   = res.r || {};
+    if (r.test_date && /^\d{4}-\d{2}-\d{2}$/.test(String(r.test_date))) return String(r.test_date);
+    // 「11月18日(火)」「9/10」「十一月十七日」などから月日を拾う
+    const src = [r.date_raw, r.test_name].filter(Boolean).join(' ');
+    const kanji = { 一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10, 十一:11, 十二:12 };
+    let mo = 0, da = 0;
+    let m = src.match(/(\d{1,2})\s*[月\/]\s*(\d{1,2})/);
+    if (m) { mo = +m[1]; da = +m[2]; }
+    if (!mo) {
+      const k = src.match(/([一二三四五六七八九十]+)月([一二三四五六七八九十]+)日/);
+      if (k) {
+        const num = s => {
+          if (kanji[s] != null) return kanji[s];
+          const p = s.split('十');
+          if (s.startsWith('十')) return 10 + (kanji[p[1]] || 0);
+          if (s.includes('十'))   return (kanji[p[0]] || 0) * 10 + (kanji[p[1]] || 0);
+          return kanji[s] || 0;
+        };
+        mo = num(k[1]); da = num(k[2]);
+      }
+    }
+    if (!mo || !da || mo > 12 || da > 31) return '';
+    const sy = syllabusSchoolYear();
+    const y  = mo >= 4 ? sy : sy + 1;      // 1〜3月は年度の翌年
+    return `${y}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`;
+  }
+
   function syllabusPickGrade(i, g) {
     if (!syllabusPick[i]) syllabusPick[i] = { school:'', grade:'' };
     syllabusPick[i].grade = g;
+    // 【範囲の一覧は学年ごとに中身が違う】
+    // 学年を選び直したら、その場で入れ替える。
+    // 入れ替えないと「（変えない）」しか出ず、範囲を直せなくなる。
+    ['From','To'].forEach(k => {
+      const sel = document.getElementById('syl' + k + i);
+      if (sel) { const cur = sel.value; sel.innerHTML = sectionOptionsHtml(g, cur); }
+    });
     // 学年ボタンの色だけを塗り替える（入力欄には触らない）
     const row = document.getElementById('sylSchool' + i);
     if (!row) return;
@@ -6261,11 +6336,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 写真を大きく見る
+  // 【写真を大きく見る】
+  // 別ウィンドウで開いていたが、ポップアップがブロックされると何も起きず、
+  // 「押しても写真が見られない」状態になっていた。画面の中で開くようにする。
   function openSyllabusPhoto(i) {
     const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
-    if (!img) return;
-    const w = window.open('');
-    if (w) w.document.write(`<img src="data:image/jpeg;base64,${img.b64}" style="max-width:100%">`);
+    if (!img) { alert('この行の写真は保存されていません。'); return; }
+    const ov = document.getElementById('photoModal');
+    document.getElementById('photoModalImg').src = 'data:image/jpeg;base64,' + img.b64;
+    document.getElementById('photoModalName').textContent = img.name || '';
+    ov.style.display = 'flex';
+  }
+  function closeSyllabusPhoto() {
+    const ov = document.getElementById('photoModal');
+    if (ov) { ov.style.display = 'none'; document.getElementById('photoModalImg').src = ''; }
   }
 
   async function syllabusConfirmFix(i) {
@@ -6282,14 +6366,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const fEl = document.getElementById('sylFrom' + i);
     const tEl = document.getElementById('sylTo'   + i);
     const date = dEl ? String(dEl.value || '').trim() : '';
-    const from = fEl ? String(fEl.value || '').trim() : '';
-    const to   = tEl ? String(tEl.value || '').trim() : '';
+    const selFrom = fEl ? String(fEl.value || '').trim() : '';
+    const selTo   = tEl ? String(tEl.value || '').trim() : '';
 
-    // 始まりだけ・終わりだけの指定は、順番が逆になった時に気づけないので止める
-    if ((from && !to) || (!from && to)) {
-      alert('範囲を直すときは、始まりと終わりの両方を選んでください。');
-      return;
+    // 【片方だけ選んでも直せる】
+    // 「終わりは合っているが始まりだけ直したい」ことのほうが多い。
+    // 選ばなかった側は、いまの範囲をそのまま引き継ぐ。両方選び直す手間をなくす。
+    const before  = syllabusRows[i] || {};
+    const cur     = parseRangeText(before.unitText || '');
+    const curFrom = [cur.from_unit, cur.from_lesson].filter(Boolean).join(' ');
+    const curTo   = [cur.to_unit,   cur.to_lesson  ].filter(Boolean).join(' ');
+    let from = '', to = '';
+    if (selFrom || selTo) {
+      from = selFrom || curFrom || selTo;
+      to   = selTo   || curTo   || selFrom;
     }
+
     // 順番が逆に見えても、こちらの読み違いということがある。
     // 頭ごなしに止めず、警告を出して写真を見て決めてもらう。
     let warn = '';
@@ -6299,7 +6391,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
 
     // 【決定の前に、写真と並べて見比べてもらう】
-    const before = syllabusRows[i] || {};
     const ok = await showFixCheck(i, {
       school: { now: before.school || '（なし）', next: school },
       grade:  { now: before.grade  || '（なし）', next: grade },
@@ -6614,47 +6705,61 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults);
   }
 
-  function fixSyllabusRow(i) {
-    const row = syllabusRows[i];
-    if (!row) return;
-    const s = prompt('中学校名を入れてください（例：上郷中）', row.school || '');
-    if (s === null) return;
-    const g = prompt('学年を入れてください（中1／中2／中3）', row.grade || '');
-    if (g === null) return;
-    const grade = normalizeGrade(String(g).trim());
-    if (!gradeNumOf(grade)) { alert('「中1」「中2」「中3」のいずれかを入れてください。'); return; }
-    let school = String(s).trim();
-    if (school && !/中(学校)?$/.test(school)) school += '中';
-    // 直した内容で、この行だけを作り直す
-    row.school = school;
-    row.grade  = grade;
-    row.fixedByHand = true;
-    reRenderSyllabusRow(i);
-  }
+  
 
   // 1行だけ計算し直して描き直す
-  function reRenderSyllabusRow(i) {
-    const row = syllabusRows[i];
-    if (!row) return;
-    const r = row.r;
-    let hist = [];
-    try { hist = histAll(); } catch {}
-    const match = findTestByDate(hist, row.school, row.grade, row.date);
-    row.matchIdx = match ? match.idx : -1;
-    row.unitText = (r.textbook_from || r.textbook_to)
-      ? (pagesToRangeText(row.grade, `${r.textbook_from||r.textbook_to}〜${r.textbook_to||r.textbook_from}`) || '')
-      : '';
-    row.prevGrade = gradeNumOf(row.grade) > 1 ? normalizeGrade('中'+(gradeNumOf(row.grade)-1)) : '';
-    row.prevUnitText = (row.prevGrade && (r.prev_grade_from || r.prev_grade_to))
-      ? (pagesToRangeText(row.prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
-      : '';
-    alert(`${row.school} ${row.grade}\n範囲：${row.unitText || '（変換できません）'}\n`
-      + (match ? `該当するテスト：${match.h.name}` : '該当するテストが見つかりません'));
-    // 表全体を作り直す（元の読み取り結果を保持しているので再計算できる）
-    if (lastSyllabusResults) renderSyllabusResult(lastSyllabusResults);
-  }
+  
 
   let lastSyllabusResults = null;
+
+  // 【手で直した範囲を、同じ学校の次のテストの始まりに引き継ぐ】
+  // 範囲表のおよそ6割は「何ページから」が書かれていない。
+  // そのたびに Unit 0 からにしたり、当てにならない分析値を使ったりしていた。
+  // 前のテストの範囲さえ確かなら、次のテストは「その続きから」で決まる。
+  // 1件直せば、それ以降が自動で埋まるようにする。
+  function manualEndsBySchool() {
+    const map = {};
+    Object.keys(syllabusFix).forEach(i => {
+      const fx = syllabusFix[i] || {};
+      if (fx.deleted || !fx.to) return;              // 範囲を手で直した行だけ
+      const res = (lastSyllabusResults || [])[i] || {};
+      const r   = res.r || {};
+      const school = fx.school || canonSchool(String(r.school || ''));
+      const grade  = fx.grade  || normalizeGrade(r.grade || '');
+      const date   = fx.date   || String(r.test_date || '');
+      if (!school || !grade || !date) return;
+      const key = `${school}|${grade}`;
+      (map[key] = map[key] || []).push({ date, end: fx.to });
+    });
+    Object.keys(map).forEach(k => map[k].sort((a, b) => a.date < b.date ? -1 : 1));
+    return map;
+  }
+
+  // 前のテストの終わりから、次のテストの始まりを出す。
+  // 【ページ経由にしない】教科書の表には Part ごとのページが無いので、
+  // ページに直すと「Unit 5 Part 1 の次」が「Unit 5」に戻ってしまう。
+  // 範囲選びのプルダウンと同じ、教科書の並び順の一覧で「次」を取る。
+  function startAfterEnd(grade, endText) {
+    const gN = gradeNumOf(grade);
+    const list = sectionOptionsList(grade);
+    if (!gN || !list.length) return '';
+    const p = parseRangeText(endText || '');
+    const end = [p.to_unit || p.from_unit, p.to_lesson || p.from_lesson]
+                  .filter(Boolean).join(' ').trim();
+    if (!end) return '';
+
+    // 「Unit 5」のように単元まるごとが終わりなら、次は Unit 6 から。
+    // 「Unit 5 Part 1」のように途中までなら、次は Unit 5 Part 2 から。
+    const bare = /^Unit\s*\d+$/i.test(end);
+    const endPos = rangePos(end, gN);
+    if (endPos < 0) return '';
+    const limit = bare ? Math.floor(endPos) + 1 : endPos + 0.0001;
+    for (const x of list) {
+      const q = rangePos(x, gN);
+      if (q >= limit - 0.00001) return x;
+    }
+    return '';
+  }
 
   function renderSyllabusResult(results) {
     lastSyllabusResults = results;
@@ -6663,6 +6768,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     try { hist = histAll(); } catch {}
 
     syllabusRows = {};
+    // 手で直した範囲を、学校・学年ごとに日付順で控えておく（次のテストの始まりに使う）
+    const _manualEnds = manualEndsBySchool();
     const rows = results.map((res, i) => {
       // 手で消した行は表に出さない（消した件数は下にまとめて出し、戻せるようにする）
       if (syllabusFix[i] && syllabusFix[i].deleted) return '';
@@ -6749,6 +6856,23 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // テスト自体を分析して出した始まりのほうが、実物に基づいていて確かなので、
       // 始まりだけはそちらを採る。ただし学年最初のテストは Unit 0 からと決まっているので除く。
       const startNotWritten = w ? !w.hasStart : !r.textbook_from;
+
+      // 【前のテストの範囲を手で直してあれば、その続きを始まりにする】
+      // 手で直した範囲は凌央さんが実物を見て決めたものなので、分析値より確か。
+      // これで、始まりが書かれていない範囲表でも順に埋まっていく。
+      let chainStart = '', chainNote = '';
+      if (startNotWritten && school && grade && date) {
+        const list = (_manualEnds[`${school}|${grade}`] || []).filter(x => x.date < date);
+        if (list.length) {
+          const prevM = list[list.length - 1];
+          const st = startAfterEnd(grade, prevM.end);
+          if (st) {
+            chainStart = st;
+            chainNote  = `前のテスト（${prevM.date} 〜${prevM.end}）を手で直してあるので、その続きから始めました`;
+          }
+        }
+      }
+
       // ※ wUse（ページと食い違うときに無効化した版）は下で判定する
       let analyzedStart = '';
       if (startNotWritten && match && match.h && match.h.range && match.h.range !== '範囲不明') {
@@ -6771,6 +6895,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         }
       }
 
+      // 引き継いだ始まりがあれば、分析値より先に使う
+      if (chainStart) analyzedStart = chainStart;
+
       let wUse = w;
 
       let unitText = '';
@@ -6781,9 +6908,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         unitText = st && st !== endText ? `${st} 〜 ${endText}` : endText;
         startNote = w.hasStart
           ? '範囲表に書かれていた単元名をそのまま使いました'
-          : (analyzedStart
-              ? `終わり（${endText}）は範囲表どおり。始まりは範囲表に書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
-              : `範囲表には終わり（${endText}）しか書かれていません`);
+          : (chainStart
+              ? `終わり（${endText}）は範囲表どおり。${chainNote}`
+              : (analyzedStart
+                  ? `終わり（${endText}）は範囲表どおり。始まりは範囲表に書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
+                  : `範囲表には終わり（${endText}）しか書かれていません`));
       } else {
         unitText = pageText;
         if (analyzedStart && pageText) {
@@ -7023,27 +7152,49 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   // 読み取り結果と写真、手直しをまとめて保存する。
   // 保存しないと、リロードした時点で読み直し（＝AIへの再送信＝費用）になる。
-  function saveSyllabusState() {
-    try {
-      const data = {
-        images:  (pendingSyllabus || []).map(x => ({ name: x.name, b64: x.b64 })),
+  // 【写真と手直しは分けて保存する】
+  // 一緒にすると、学校名を1つ直すたびに写真491枚（数百MB）を書き直すことになり、
+  // 画面が重くなる。さらに容量が足りずに保存が失敗すると、手直しまで道連れで消える。
+  // 写真は読み取った直後に1回だけ、手直しは軽いので毎回、と分ける。
+  const IDB_SYLLABUS_IMG = 'syllabus_img';
+  let _sylSaveTimer = null;
+
+  function saveSyllabusState(withImages) {
+    // 手直しだけを保存（軽い）。続けて押しても最後の1回にまとめる。
+    clearTimeout(_sylSaveTimer);
+    _sylSaveTimer = setTimeout(() => {
+      idbSet(IDB_SYLLABUS, {
         results: lastSyllabusResults || null,
-        fix:     syllabusFix,
+        fix: syllabusFix,
         savedAt: new Date().toISOString()
-      };
-      idbSet(IDB_SYLLABUS, data).catch(e => {
+      }).catch(e => {
         console.warn('範囲表の保存に失敗:', e);
         const el = document.getElementById('syllabusStatus');
-        if (el) setSt(el, 'err', '⚠️ 読み取り結果を保存できませんでした：' + (e && e.message ? e.message : e));
+        if (el) setSt(el, 'err', '⚠️ 手直しを保存できませんでした：' + (e && e.message ? e.message : e));
       });
-    } catch (e) { console.warn('範囲表の保存に失敗:', e); }
+    }, 150);
+
+    if (!withImages) return;
+    // 写真は重いので、読み取った直後だけ保存する
+    idbSet(IDB_SYLLABUS_IMG, (pendingSyllabus || []).map(x => ({ name: x.name, b64: x.b64 })))
+      .catch(e => {
+        console.warn('写真の保存に失敗:', e);
+        const el = document.getElementById('syllabusStatus');
+        if (el) setSt(el, 'err',
+          '⚠️ 範囲表の写真を保存できませんでした（ブラウザの空き容量不足の可能性）。'
+          + '読み取り結果と手直しは保存されているので、作業は続けられます。'
+          + 'ただし次に開いたときは写真が出ません：' + (e && e.message ? e.message : e));
+      });
   }
 
   async function loadSyllabusState() {
-    let data = null;
+    let data = null, imgs = null;
     try { data = await idbGet(IDB_SYLLABUS); } catch (e) { console.warn('範囲表の読み出しに失敗:', e); }
     if (!data || !data.results || !data.results.length) return false;
-    pendingSyllabus      = Array.isArray(data.images) ? data.images : [];
+    // 写真は別に保存してある（古い保存形式なら data.images に入っている）
+    try { imgs = await idbGet(IDB_SYLLABUS_IMG); } catch (e) { imgs = null; }
+    pendingSyllabus      = Array.isArray(imgs) ? imgs
+                         : (Array.isArray(data.images) ? data.images : []);
     lastSyllabusResults  = data.results;
     syllabusFix          = data.fix || {};
     const t = document.getElementById('syllabusTitle');
@@ -7061,7 +7212,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     lastSyllabusResults = null;
     syllabusFix = {};
     syllabusRows = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {};
-    try { await idbSet(IDB_SYLLABUS, null); } catch(e) { console.warn(e); }
+    try { await idbSet(IDB_SYLLABUS, null); await idbSet(IDB_SYLLABUS_IMG, null); } catch(e) { console.warn(e); }
     document.getElementById('syllabusResult').innerHTML = '';
     const t = document.getElementById('syllabusTitle');
     if (t) t.textContent = '';
@@ -7088,58 +7239,68 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   //   そこで、まず名前がぴったり同じものだけで探し、
   //   1つもなければ部分一致に頼るが、当てはまる学校が2つ以上なら結びつけない。
   //   （どの学校か分からないことを画面に出して、手で直してもらう）
-  function findTestByDateEx(hist, school, grade, date) {
-    const empty = { match: null, ambiguous: [] };
-    if (!school || !date) return empty;
-    const target = new Date(date + 'T00:00:00');
-    if (isNaN(target)) return empty;
-    const sc = canonSchool(school);
-    if (!sc) return empty;
+  
 
-    const nameOf = h => canonSchool(h.school || extractSchoolName(h.name || ''));
-    const exact = hist.filter(h => nameOf(h) === sc);
+  
 
-    let pool = exact;
-    if (!exact.length) {
-      const loose = hist.filter(h => {
-        const hs = nameOf(h);
-        return hs && (hs.includes(sc) || sc.includes(hs));
-      });
-      const names = [...new Set(loose.map(nameOf))];
-      if (names.length > 1) return { match: null, ambiguous: names.sort() };
-      pool = loose;
+
+  // 【入試分析の履歴を安全に保存する】
+  // localStorage は 5MB までしか入らない。上限に達すると保存が失敗するが、
+  // これまでは黙って落ちるだけで、次に開いたとき分析結果が消えていた。
+  // 入らないときは古いものから減らして入れ直し、その旨をはっきり出す。
+  function saveExamHistory(arr) {
+    let list = Array.isArray(arr) ? arr.slice() : [];
+    for (let i = 0; i < 8; i++) {
+      try {
+        localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(list));
+        if (i > 0) {
+          try { showToast(`⚠️ 保存できる量を超えたため、古い入試分析 ${arr.length - list.length} 件を手元から外しました（クラウドには残っています）`, 'error'); } catch {}
+        }
+        return true;
+      } catch (e) {
+        if (list.length <= 5) {
+          try { showToast('⚠️ 入試分析を保存できませんでした。ブラウザの空き容量を確認してください', 'error'); } catch {}
+          console.error('入試履歴の保存に失敗:', e);
+          return false;
+        }
+        list = list.slice(0, Math.max(5, Math.floor(list.length * 0.7)));   // 古いものから減らす
+      }
     }
-    if (!pool.length) return empty;
-
-    const idxOf = new Map(hist.map((h, idx) => [h, idx]));
-    let best = null;
-    pool.forEach(h => {
-      const idx = idxOf.get(h);
-      if (grade && normalizeGrade(h.grade||'') !== grade) return;
-      const hd = h.testDate || extractTestDate(h.name||'');
-      if (!hd) return;
-      const d = new Date(hd + 'T00:00:00');
-      if (isNaN(d)) return;
-      const diff = Math.abs((d - target) / 86400000);
-      if (diff > 10) return;
-      if (!best || diff < best.diff) best = { idx, h, diff };
-    });
-    return { match: best, ambiguous: [] };
+    return false;
   }
 
-  function findTestByDate(hist, school, grade, date) {
-    return findTestByDateEx(hist, school, grade, date).match;
+  // 【書き換える前の範囲に戻す】
+  // 「元に戻せます」と画面に出しておきながら、戻す手段がなかった。
+  // 変更前の範囲（rangePrev）は保存してあるので、それを書き戻す。
+  async function revertTestRange(idx) {
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    const h = hist[idx];
+    if (!h || !h.rangePrev) { alert('戻せる範囲が記録されていません。'); return; }
+    const ok = await showConfirm(
+      `${h.name}\n\nいまの範囲：${h.range}\n戻す範囲　：${h.rangePrev}\n\nこの内容で戻しますか。`, '戻す');
+    if (!ok) return;
+    const now = h.range;
+    h.range = h.rangePrev;
+    h.rangePrev = now;                 // もう一度押せば行き来できる
+    h.rangeEditedBy = '';              // 機械の判定に戻すので、印は外す
+    try { histSave(hist); } catch {}
+    if (h.firestoreId) await updateTestInFirestore(h.firestoreId,
+      { range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '' });
+    renderTestHistory();
   }
 
-
-  async function applySyllabus(i, silent) {
+  async function applySyllabus(i, silent, defer) {
     const row = syllabusRows[i];
     if (!row || row.matchIdx < 0 || !row.unitText) return false;
     let hist = [];
-    try { hist = histAll(); } catch {}
+    try { hist = defer ? (defer.hist || []) : histAll(); } catch {}
     const h = hist[row.matchIdx];
     if (!h) return false;
     const r = row.r;
+    // 【いちばん最初の範囲は消さずに残す】
+    // 2回反映すると rangePrev が上書きされ、分析が出した元の範囲が失われていた。
+    if (h.rangeOrig === undefined) h.rangeOrig = h.range || '';
     h.rangePrev      = h.range || '';
     h.range          = row.unitText;
     h.rangeEditedBy  = '範囲表';
@@ -7150,11 +7311,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.prevGradePages = row.prevUnitText ? { from: r.prev_grade_from, to: r.prev_grade_to } : null;
     h.otherMaterials = r.other_materials || '';
     h.syllabusTestName = r.test_name || '';
-    try { histSave(hist); } catch { return false; }
-    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
+    const patch = {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '範囲表', rangePages: h.rangePages,
-      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade, prevGradePages: h.prevGradePages,
-      otherMaterials: h.otherMaterials });
+      prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade,
+      prevGradePages: h.prevGradePages, otherMaterials: h.otherMaterials };
+    // まとめて反映のときは、保存と共有をあとで1回にまとめる（速さのため）
+    if (defer) { if (h.firestoreId) defer.patches.push([h.firestoreId, patch]); return true; }
+    try { histSave(hist); } catch { return false; }
+    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, patch);
     if (!silent) { renderTestHistory(); alert(`${h.name} の範囲を「${row.unitText}」に更新しました。`); }
     return true;
   }
@@ -7168,16 +7332,57 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       .map(c => c.dataset.i)
       .filter(i => syllabusRows[i] && syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText);
     if (!keys.length) { alert('チェックが入っている行がありません。'); return; }
+
+    // 【同じテストに2回書き込まない】
+    // 重複行の両方にチェックが入っていると、あとの1件で上書きされ、
+    // どちらが書かれたのか分からなくなる。先に気づけるようにする。
+    const seen = {}, dupNames = [];
+    keys.forEach(i => {
+      const m = syllabusRows[i].matchIdx;
+      if (seen[m] !== undefined) dupNames.push(m); else seen[m] = i;
+    });
+    if (dupNames.length) {
+      alert(`同じテストに2回書き込む指定が ${dupNames.length} 件あります。\n`
+          + '「同じテストの行が◯件あります」と出ている行を見直して、'
+          + 'どれか1つだけにチェックを残してください。');
+      return;
+    }
+
     const ok = await showConfirm(`${keys.length}件の範囲を、範囲表の内容に書き換えます。よろしいですか。\n（書き換える前の範囲は残るので、元に戻せます）`, '反映する');
     if (!ok) return;
+
+    // 保存と共有は最後に1回だけにする。1件ずつだと履歴全体を100回書き直すことになり、
+    // 待ち時間が長く、途中で失敗したときにどこまで終わったのか分からなくなる。
+    const btn = document.querySelector('button[onclick="applyCheckedSyllabus()"]');
+    if (btn) { btn.disabled = true; btn.textContent = '反映しています…'; }
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    const defer = { hist, patches: [] };
     let n = 0, ng = 0;
     for (const i of keys) {
-      try { if (await applySyllabus(i, true)) n++; else ng++; }
+      try { if (await applySyllabus(i, true, defer)) n++; else ng++; }
       catch (e) { ng++; console.warn('反映に失敗:', i, e); }
     }
+    let saveNg = false;
+    try { histSave(hist); } catch (e) { saveNg = true; console.error(e); }
+
+    // 共有への書き込みは、少しずつ並行して進める（1件ずつだと100回待つことになる）
+    let sent = 0, sendNg = 0;
+    for (let k = 0; k < defer.patches.length; k += 8) {
+      const chunk = defer.patches.slice(k, k + 8);
+      const res = await Promise.all(chunk.map(([id, p]) =>
+        updateTestInFirestore(id, p).catch(() => false)));
+      res.forEach(x => x ? sent++ : sendNg++);
+      if (btn) btn.textContent = `反映しています… ${Math.min(k + 8, defer.patches.length)}/${defer.patches.length}`;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'チェックした行をまとめて反映'; }
     renderTestHistory();
-    alert(ng ? `${n}件を更新しました。${ng}件は書き込めませんでした。`
-             : `${n}件の範囲を更新しました。`);
+
+    let msg = `${n}件の範囲を更新しました。`;
+    if (ng)     msg += `\n${ng}件は書き込めませんでした。`;
+    if (saveNg) msg += '\n⚠️ 手元への保存に失敗しました。ブラウザの空き容量を確認してください。';
+    if (sendNg) msg += `\n⚠️ ${sendNg}件は他の校舎への共有に失敗しました（手元には保存されています）。`;
+    alert(msg);
   }
 
   async function onTestFilesSelected(files) {
@@ -7278,9 +7483,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // ドラッグ&ドロップ対応（複数ファイル）
-  function onTestFileSelected(file) {
-    onTestFilesSelected(file ? [file] : []);
-  }
+  
 
   async function runTestAnalysis() {
     if (!pendingTestGroups || !pendingTestGroups.length) return;
@@ -7375,20 +7578,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // ── バッチ分析（複数校一括） ──────────────────────────────────────
   let batchFileGroups = {};
 
-  function onBatchFilesSelected(files) {
-    if (!files || !files.length) return;
-    const groups = {};
-    Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf')).forEach(f => {
-      if (!groups[f.name]) groups[f.name] = [];
-      groups[f.name].push(f);
-    });
-    batchFileGroups = groups;
-    const names = Object.keys(groups);
-    const listEl = document.getElementById('batchFileList');
-    listEl.innerHTML = names.map(n => `📋 ${esc(n)}（${groups[n].length}校）`).join('<br>') ||
-      '<span style="color:var(--red)">PDFファイルが選択されていません</span>';
-    document.getElementById('batchStartBtn').disabled = !names.length;
-  }
+  
 
   // ── 選択済みPDFのクリア（間違えてアップロードした場合の解除用） ──────
   function clearTextbookPDF() {
@@ -7408,13 +7598,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('testStatus').innerHTML = '';
     document.getElementById('testStartBtn').disabled = true;
   }
-  function clearBatchPDFs() {
-    batchFileGroups = {};
-    const f = document.getElementById('batchFiles'); if (f) f.value = '';
-    document.getElementById('batchFileList').innerHTML = '';
-    document.getElementById('batchStatus').innerHTML = '';
-    document.getElementById('batchStartBtn').disabled = true;
-  }
+  
   function clearExamPDFs() {
     pendingExamData = null;
     const f = document.getElementById('examFile'); if (f) f.value = '';
@@ -7425,245 +7609,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     document.getElementById('examYear').value = '';
   }
 
-  async function runBatchAnalysis() {
-    const groups = batchFileGroups;
-    const names = Object.keys(groups);
-    if (!names.length) return;
-    if (!getApiKey()) { alert('APIキーを設定してください'); return; }
-    testAnalysisStopped = false;
-    document.getElementById('batchStartBtn').disabled = true;
-    const stEl = document.getElementById('batchStatus');
+  
 
-    // 分析済みをスキップ（「再分析する」チェック時はスキップしない）
-    const reanalyze = !!(document.getElementById('batchReanalyze')||{}).checked;
-    const existing = new Set(
-      histAll().map(h => h.name)
-    );
-    const pending = reanalyze ? names.slice() : names.filter(n => !existing.has(n));
-    const skipped = names.length - pending.length;
-    if (reanalyze && existing.size) setSt(stEl,'load',`再分析モード：全${pending.length}件を分析します（同名の古い結果は置き換え）...`);
-    else if (skipped > 0) setSt(stEl,'load',`${skipped}件はスキップ（分析済み）。残り${pending.length}件を分析します...`);
-    if (!pending.length) {
-      setSt(stEl,'ok','✅ 全件分析済みです');
-      document.getElementById('batchStartBtn').disabled = false;
-      return;
-    }
+  
 
-    let useParallel = 3; // 3並列スタート（429時は2→1に自動降格）
-    let errorStreak = 0;
-    let done = 0;
-    const batchStart = Date.now();
-    const groupTimes = []; // 各グループの所要時間（ms）
-
-    const fmt = ms => {
-      const s = Math.round(ms / 1000);
-      return s < 60 ? `${s}秒` : `${Math.floor(s/60)}分${s%60}秒`;
-    };
-    const fmtClock = ms => {
-      const d = new Date(Date.now() + ms);
-      return `${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
-    };
-
-    const updateStatus = (currentName) => {
-      const elapsed = Date.now() - batchStart;
-      const avgPerGroup = groupTimes.length
-        ? groupTimes.reduce((a,b)=>a+b,0) / groupTimes.length / useParallel
-        : null;
-      const remaining = pending.length - done;
-      const remainGroups = Math.ceil(remaining / useParallel);
-      const etaMs = avgPerGroup ? avgPerGroup * remainGroups : null;
-      const pct = Math.min(98, (done + skipped) / names.length * 100);
-
-      stEl.innerHTML = `
-        <div class="proc-panel" style="padding:18px;margin:10px 0 0">
-          <div class="proc-head"><div class="proc-title"><div class="spinner"></div>バッチ分析中（${useParallel}並列）</div></div>
-          <div class="proc-stats">
-            <div class="proc-stat"><div class="proc-num">${done + skipped}/${names.length}</div><div class="proc-lbl">完了（スキップ${skipped}件）</div></div>
-            <div class="proc-stat"><div class="proc-num" style="font-size:20px">${fmt(elapsed)}</div><div class="proc-lbl">経過時間</div></div>
-            <div class="proc-stat"><div class="proc-num" style="font-size:20px">${etaMs ? '約'+fmt(etaMs) : '計測中...'}</div><div class="proc-lbl">推定残り${etaMs ? `（完了予定 ${fmtClock(etaMs)}）` : ''}</div></div>
-          </div>
-          <div class="prog-wrap"><div class="prog-bar" style="width:${pct}%"></div></div>
-          ${currentName ? `<div class="prog-info">分析中：「${esc(currentName)}」</div>` : ''}
-          ${groupTimes.length ? `<div class="prog-info">1グループ平均：${fmt(avgPerGroup)}（実測${groupTimes.length}件）</div>` : ''}
-        </div>`;
-    };
-
-    for (let gi = 0; gi < pending.length; gi += useParallel) {
-      if (testAnalysisStopped) { setSt(stEl,'err','⏹ 停止しました'); break; }
-      const batch = pending.slice(gi, gi + useParallel);
-      updateStatus(batch[0]);
-
-      const groupStart = Date.now();
-      const results = await Promise.allSettled(
-        batch.map(name => processBatchGroup(name, groups[name]))
-      );
-      const groupElapsed = Date.now() - groupStart;
-
-      results.forEach((res) => {
-        if (res.status === 'fulfilled') {
-          done++;
-          errorStreak = 0;
-        } else {
-          const msg = (res.reason?.message || '');
-          if (msg.startsWith('__QUOTA__') || msg.includes('429')) {
-            errorStreak++;
-            if (errorStreak >= 2 && useParallel > 1) {
-              useParallel--;
-              setSt(stEl,'load',`レート制限のため${useParallel}並列に切り替えました`);
-              errorStreak = 0;
-            }
-          }
-        }
-      });
-
-      // 実測時間を記録（最新10件の移動平均で精度を高める）
-      groupTimes.push(groupElapsed);
-      if (groupTimes.length > 10) groupTimes.shift();
-
-      if (gi + useParallel < pending.length && !testAnalysisStopped) await sleep(300);
-    }
-
-    if (!testAnalysisStopped) {
-      const total = Date.now() - batchStart;
-      setSt(stEl,'ok',`✅ 完了（分析：${done}件、スキップ：${skipped}件、合計所要時間：${fmt(total)}）`);
-    }
-    document.getElementById('batchStartBtn').disabled = false;
-    renderTestHistory();
-  }
-
-  async function processBatchGroup(name, pdfs) {
-    const MAX_SAMPLE = 5;
-    const step = Math.max(1, Math.floor(pdfs.length / MAX_SAMPLE));
-    const sampled = [];
-    for (let i=0; i<pdfs.length && sampled.length<MAX_SAMPLE; i+=step) sampled.push(pdfs[i]);
-    const allImgs = [];
-    for (const pdf of sampled) {
-      const buf = await pdf.arrayBuffer();
-      const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
-      allImgs.push(await toBase64(await pdfDoc.getPage(1), 0.6));
-    }
-    await analyzeTestBatch({ imgs: allImgs, name, schoolCount: pdfs.length });
-  }
-
-  async function analyzeTestBatch({ imgs, name, schoolCount=1 }) {
-    // 教科書データはAIに渡さない（出題範囲はアプリ側で判定するため。単発分析と同じ理由）
-    const parts = imgs.map(b64=>({ inlineData:{ mimeType:'image/jpeg', data:b64 } }));
-    parts.push({ text:
-`このテストを分析してください。
-
-【Unit範囲の判定方法】
-・Unit内の順番: Part 1 → Part 2 → Read and Think 1 → Read and Think 2 → Grammar for Communication → Real Life English → Stage Activity
-・特殊セクション（教科書に実在）: A Mother's Lullaby / Over the Horizon / Let's Read / Let's Talk
-・長文・リスニング本文のタイトルで終端を判定する（最も信頼性が高い）
-・出題文法がどのUnitで習うかからも逆算する。ただし前学年の復習は範囲の根拠にしない
-・教科書データがある場合は必ず活用する
-
-【絶対ルール】
-・grade：「中１」「中２」「中３」のいずれか
-・from_unit/to_unit：「Unit 1」〜「Unit 10」形式で必ず特定
-・from_lesson/to_lesson：上記セクション名を正確に記載
-・tested_vocab：テストに登場する文法パターン・熟語・特徴的な単語（5文字以上）を配列で列挙。ライブラリと照合してテスト範囲の終端を特定するために使用。例：["want O to do", "May I help you", "hundreds of", "volunteer", "traditional"]。一般的な短い単語（go/be/the/have等）は含めない
-・typeフィールド：「リスニング」「単語」「整序」など日本語
-・detailsフィールド：最大30文字。繰り返し禁止
-・grammar・phrasesは英語混在可。phrasesは複数語の熟語・イディオム（be linked to / more and more / in addition 等、新出かどうかは問わない）
-・全大問を漏れなく列挙（5個以下は不完全）
-・phrases：問われた熟語のみ（本文テキスト列挙禁止）
-
-${GRAMMAR_NOTATION_RULES}
-
-${EXTRACTION_COMPLETENESS_RULES}` });
-
-    const r = await callGeminiJSON(parts, '問題形式名は日本語。テスト分析専門家。', {
-      type:'OBJECT', properties:{
-        grade:         { type:'STRING' },
-        from_unit:     { type:'STRING' },
-        from_lesson:   { type:'STRING' },
-        to_unit:       { type:'STRING' },
-        to_lesson:     { type:'STRING' },
-        tested_vocab:  { type:'ARRAY', items:{ type:'STRING' } },
-        question_types:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
-          section:{ type:'STRING'}, type:{ type:'STRING'}, count:{ type:'INTEGER'},
-          details:{ type:'STRING'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'},
-          sub_questions:{ type:'ARRAY', items:{ type:'OBJECT', properties:{
-            type:{ type:'STRING'}, count:{ type:'INTEGER'}, grammar:{ type:'STRING'}, phrases:{ type:'STRING'}
-          }}}
-        }}}
-      }
-    }, 12000, getFastModeOpts('fastModeBatch'));
-
-    // AIが範囲欄に説明文を書き込むことがあるため、先に正しい形だけを取り出す
-    const droppedBatch = sanitizeRangeFields(r);
-
-    // 分析が失敗しているものは保存しない（問題形式が1つも取れていなければ失敗）
-    if (!(r.question_types||[]).length) {
-      console.warn('バッチ分析：問題形式が取得できず保存を中止', name, droppedBatch);
-      showToast(`⚠️ ${name} は読み取りに失敗したため保存していません`, 'error');
-      return;
-    }
-
-    // ライブラリ照合で範囲終端を補正
-    refineRangeFromLibrary(r);
-
-    // 出力サニタイズ
-    (r.question_types||[]).forEach(qt => {
-      qt.details = sanitizeBatchField(qt.details);
-      qt.type    = sanitizeBatchField(qt.type, 15);
-      (qt.sub_questions||[]).forEach(sq => {
-        sq.details = sanitizeBatchField(sq.details);
-        sq.type    = sanitizeBatchField(sq.type, 15);
-      });
-    });
-
-    const grade = normalizeGrade(r.grade||'');
-    const rangeFrom = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
-    const rangeTo   = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
-    const rangeStr  = rangeFrom && rangeTo
-      ? (rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} 〜 ${rangeTo}`)
-      : '（範囲不明）';
-
-    try {
-      const entry = {
-        name, grade, range: rangeStr,
-        school: extractSchoolName(name),
-        teacher: extractTeacherName(name),
-        question_types: r.question_types||[],
-        // 範囲の再判定用に材料を保存
-        tested_vocab: (r.tested_vocab||[]).slice(0,60),
-        key_items:    (r.key_items||[]).slice(0,60),
-          notes: r.cross_grade_notes||'',
-        date: new Date().toLocaleDateString('ja-JP'),
-        testDate: extractTestDate(name),
-        year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString(),
-        schoolCount
-      };
-      const firestoreId = await saveTestEntryToFirestore(entry);
-      if (firestoreId) entry.firestoreId = firestoreId;
-      let hist = histAll();
-      // 同名の古い分析結果を削除（再分析時の重複防止）
-      const olds = hist.filter(h => h.name === name);
-      for (const old of olds) {
-        if (old.firestoreId) deleteTestFromFirestore(old.firestoreId);
-      }
-      hist = hist.filter(h => h.name !== name);
-      hist.unshift(entry);
-      histSave(hist.slice(0,5000));
-    } catch {}
-  }
+  
 
   // バッチ分析の出力サニタイズ（繰り返し・長文を除去）
-  function sanitizeBatchField(str, maxLen=40) {
-    if (!str) return '';
-    // 繰り返しパターンを検出して除去
-    const s = str.trim();
-    if (s.length > maxLen * 2) {
-      // 繰り返しの場合は最初の意味ある部分だけ取る
-      const sentences = s.split(/[。\.]/);
-      const unique = [...new Set(sentences.filter(x=>x.trim()))];
-      const result = unique.slice(0,2).join('。');
-      return result.substring(0, maxLen);
-    }
-    return s.substring(0, maxLen);
-  }
+  
 
   // ── ファイル名から学校名・教師名を抽出 ───────────────────────────────
   // ファイル名からテストの実施日を取り出す（例：常磐中ﾌﾒｲ2025年05月20日問題1.pdf → 2025-05-20）
@@ -7990,7 +7943,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
           }
         }
         const remaining = existingExams.filter(e => !(e.year === finalYear && srcOf(e) === finalSource));
-        localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(remaining));
+        saveExamHistory(remaining);
       }
 
       // NH教科書ライブラリと照合（学年・Unit・ページを付与）
@@ -8021,7 +7974,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
       }
       const exams = JSON.parse(localStorage.getItem(EXAM_HIST_KEY)||'[]');
       exams.unshift(entry);
-      localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(exams.slice(0,200)));
+      saveExamHistory(exams.slice(0,200));
 
       setSt(stEl,'ok','✅ 分析完了');
       selectedExamYear = finalYear; // parsedはnullの可能性あり（年度自動検出時）
@@ -8057,7 +8010,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
         }
       });
       exams = exams.filter(e => !isEmptyExam(e));
-      localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(exams));
+      saveExamHistory(exams);
     }
 
     if (!exams.length) {
@@ -8311,7 +8264,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     if (!(n > 0)) { alert('正の整数を入力してください'); return; }
     exam.summaries[pIdx].word_count = n;
     exam.summaries[pIdx].wc_confirmed = true; // 人が確認・修正した印
-    localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(exams));
+    saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
       try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update({ summaries: exam.summaries }); } catch {}
     }
@@ -8380,7 +8333,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     const exam = exams.filter(e=>e.year===selectedExamYear)[idx];
     if (!exam) return;
     exam.confirmed = !exam.confirmed;
-    localStorage.setItem(EXAM_HIST_KEY, JSON.stringify(exams));
+    saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
       try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update({ confirmed: exam.confirmed }); } catch {}
     }
@@ -8528,10 +8481,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
     if (/3|３|三/.test(s)) return '中３';
     return g || '';
   }
-  function unitNum(str) {
-    const m = (str||'').match(/(\d+)/);
-    return m ? parseInt(m[1]) : 0;
-  }
+  
 
   // Unit + Part/Lesson を小数値に変換（範囲の精密比較用）
   // 例: "Unit 2 Part 1" → 2.1, "Unit 2 Read and Think 1" → 2.3
@@ -8761,71 +8711,7 @@ ${EXTRACTION_COMPLETENESS_RULES}` });
   let _lastSearchResults = [];
 
   // 傾向サマリー生成（検索結果から学校・作成者の出題傾向をAIが要約）
-  async function generateTrendSummary() {
-    const el = document.getElementById('tsSummary');
-    if (!el) return;
-    if (!_lastSearchResults.length) {
-      runTestSearch();
-      if (!_lastSearchResults.length) {
-        el.style.display = 'block';
-        el.innerHTML = '先に検索を実行して、対象のテストを絞り込んでください。';
-        return;
-      }
-    }
-    if (!getApiKey()) { alert('APIキーを設定してください'); return; }
-
-    const results = _lastSearchResults.slice(0, 30); // 上限30件
-    // キャッシュ確認（同じ検索結果なら再生成しない）
-    const sig = results.map(h=>h.name).join('|');
-    let cache = {};
-    try { cache = JSON.parse(localStorage.getItem('nhscope_summaries')||'{}'); } catch {}
-    if (cache[sig]) {
-      el.style.display = 'block';
-      el.innerHTML = `<div style="font-weight:700;margin-bottom:6px">📋 出題傾向サマリー（${results.length}件から生成・キャッシュ）</div>${esc(cache[sig]).replace(/\n/g,'<br>')}`;
-      return;
-    }
-
-    el.style.display = 'block';
-    el.innerHTML = '<div class="spinner" style="display:inline-block;vertical-align:middle"></div> 傾向を分析中...';
-
-    try {
-      const dataText = results.map(h => {
-        const qts = (h.question_types||[]).map(qt =>
-          `${qt.section||''}${qt.type||''}${qt.count?qt.count+'問':''}${qt.grammar?'/文法:'+qt.grammar:''}${qt.phrases?'/熟語:'+qt.phrases:''}`
-        ).join('、');
-        return `【${h.name}】${h.grade||''} 範囲:${h.range||''} ${qts}`;
-      }).join('\n').substring(0, 6000);
-
-      const raw = await callGemini(
-        [{ text:
-`以下は中学英語の定期テスト分析データです。塾講師が指導方針を立てるために、出題傾向を要約してください。
-
-${dataText}
-
-【要約のルール】
-・3〜6文で簡潔に
-・「整序問題を毎回出す」「教科書本文からの出題が多い」「リスニング配点が高い」のような実務に役立つ具体的傾向
-・全テストに共通する特徴と、特徴的な癖を分けて書く
-・データにない推測はしない` }],
-        '塾講師向けのテスト傾向分析の専門家。簡潔で実用的な要約のみ。',
-        2000
-      );
-
-      const summary = (raw||'').trim();
-      if (summary) {
-        cache[sig] = summary;
-        // キャッシュは最新20件まで
-        const keys = Object.keys(cache);
-        if (keys.length > 20) delete cache[keys[0]];
-        try { localStorage.setItem('nhscope_summaries', JSON.stringify(cache)); } catch {}
-        el.innerHTML = `<div style="font-weight:700;margin-bottom:6px">📋 出題傾向サマリー（${results.length}件から生成）</div>${esc(summary).replace(/\n/g,'<br>')}`;
-      } else {
-        el.innerHTML = '⚠️ サマリーを生成できませんでした。再試行してください。';
-      }
-    } catch(e) {
-      el.innerHTML = '❌ ' + esc(e.message||'サマリー生成エラー');
-    }
-  }
+  
 
   function filterByTeacher(teacher) {
     const el = document.getElementById('tsTeacher');
@@ -8955,42 +8841,7 @@ ${dataText}
   }
 
   // ── 自動分割実行 ─────────────────────────────────────────────────
-  async function autoSplitAnalyze() {
-    if (!currentPDF) { alert('先にPDFを読み込んでください。'); return; }
-    // 学年・教科書の確認（最初に1回だけ）
-    const bookName = activeBook()?.name || '（未選択）';
-    const confirmed = await showConfirm(
-      `この教科書で自動分割解析を開始します：「${bookName}」。学年と教科書は正しいですか？`,
-      'はい、解析開始'
-    );
-    if (!confirmed) return;
-    const statusEl = document.getElementById('pdfStatus');
-    const total = currentPDF.numPages;
-    const chunk = 30;
-    const chunks = [];
-    for (let s = 1; s <= total; s += chunk) chunks.push([s, Math.min(s+chunk-1, total)]);
-    shouldStop = false;
-    for (let ci = 0; ci < chunks.length; ci++) {
-      if (shouldStop) break;
-      const [s, e] = chunks[ci];
-      document.getElementById('startP').value = s;
-      document.getElementById('endP').value   = e;
-      updateEst();
-      setSt(statusEl, 'load', `自動分割: ${ci+1}/${chunks.length}回目（p.${s}〜p.${e}）実行中...`);
-      await startProcessing(true); // 確認済み
-      if (shouldStop) break;
-      if (ci < chunks.length - 1) {
-        for (let w = 20; w > 0; w--) {
-          if (shouldStop) break;
-          document.getElementById('pInfo').textContent =
-            `次のチャンク（p.${chunks[ci+1][0]}〜）まで ${w}秒待機中...`;
-          await sleep(1000);
-        }
-      }
-    }
-    setSt(statusEl, shouldStop ? 'err' : 'ok',
-      shouldStop ? '⏹ 停止しました' : `✅ 全${chunks.length}回の自動分割実行が完了しました`);
-  }
+  
 
   // ── 重複削除 ─────────────────────────────────────────────────────
   // 同一内容・同一種類の項目をまとめる。
@@ -9037,24 +8888,7 @@ ${dataText}
   }
 
   // ── CSV出力 ──────────────────────────────────────────────────────
-  function exportCSV() {
-    const items = getItems();
-    if (!items.length) { alert('データがありません。'); return; }
-    const headers = ['Unit','Lesson','ページ','種類','内容','訳・説明','ノート'];
-    const rows = items.map(it =>
-      [it.unit||'', it.lesson||'', it.page||'', it.type||'', it.content||'', it.translation||'', it.notes||'']
-      .map(v => `"${String(v).replace(/"/g,'""')}"`)
-      .join(',')
-    );
-    const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(blob),
-      download: `${activeBook()?.name||'NHScope'}.csv`
-    });
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
+  
 
   // ── CSV取込（exportCSVと同じ列構成のファイルを読み込む。バックアップ復元用） ──
   function parseCSV(text) {
@@ -9113,27 +8947,7 @@ ${dataText}
     saveBackup(); renderPreview(); updateBadge();
     alert(`${getItems().length}件を取り込みました${dd ? '（重複を自動整理）' : ''}。`);
   }
-  function exportUnitWordList() {
-    const items = getItems();
-    if (!items.length) { alert('データがありません。'); return; }
-    const units = [...new Set(items.map(it => it.unit||'不明'))].sort();
-    let text = `【${activeBook()?.name} 単語リスト】\n\n`;
-    units.forEach(unit => {
-      const unitItems = items.filter(it => (it.unit||'不明') === unit);
-      text += `■ ${unit}\n`;
-      unitItems.forEach(it => {
-        text += `  ${it.type}  ${it.content}  ${it.translation||''}  (p.${it.page})\n`;
-      });
-      text += '\n';
-    });
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(blob),
-      download: `${activeBook()?.name||'NHScope'}_単語リスト.txt`
-    });
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
+  
 
   // ── セットアップガイド ─────────────────────────────────────────────
   function openSetupGuide() { document.getElementById('setupGuideModal').style.display='flex'; }
