@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.3</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -247,7 +247,7 @@
   <div class="tab"        data-tab="edit"        onclick="switchTab('edit')">📋 教科書データ編集</div>
   <div class="tab"        data-tab="search"      onclick="switchTab('search')">🔍 単語・熟語・文法検索</div>
   <div class="tab"        data-tab="compare"     onclick="switchTab('compare');renderCompare()">📊 教科書比較</div>
-  <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析</div>
+  <div class="tab"        data-tab="test"        onclick="switchTab('test')">📝 テスト分析・範囲表</div>
   <div class="tab"        data-tab="test-search" onclick="switchTab('test-search')">🗂 テスト検索</div>
   <div class="tab"        data-tab="exam"        onclick="switchTab('exam');renderExamHistory()">🎓 入試分析</div>
   <div class="tab"        data-tab="revision"    onclick="switchTab('revision')">📖 改訂ガイド</div>
@@ -389,7 +389,10 @@
 
     <div class="card" style="border-color:#FDE68A;background:#FFFBEB">
       <div class="card-title" style="margin-bottom:8px">↺ 教科書リストを初期化</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">教科書のデータは残したまま、リスト表示が壊れた場合にリセットできます。</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        教科書のデータは残したまま、リスト表示が壊れた場合にリセットできます。<br>
+        単語・熟語・文法のデータは消えません。</p>
+      <button class="btn btn-secondary btn-sm" onclick="resetBookList()">↺ リスト表示をリセット</button>
     </div>
   </div>
 
@@ -423,9 +426,19 @@
       <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
       <span style="font-size:12px;color:var(--muted)">（テスト範囲の特定に使用）</span>
     </div>
+    <div style="max-width:960px;margin:8px auto 0;font-size:12px">
+      <span style="color:var(--muted)">このタブの中身：</span>
+      <a href="#secTestPdf" style="margin-left:6px">テストPDFの分析</a>　
+      <a href="#secSyllabus">テスト範囲表の読み込み</a>　
+      <a href="#secPastSearch">過去問さがし</a>　
+      <a href="#secHistory">テスト分析履歴</a>
+    </div>
+    <!-- 今月いくら使ったか。上限に達したらAIへの送信を止める -->
+    <div id="usageBar" style="max-width:960px;margin:8px auto 0;padding:8px 12px;border:1px solid var(--line);
+                              border-radius:8px;font-size:12px"></div>
     <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
     <div class="card">
-      <div class="card-title">📄 テストPDF（複数ファイル対応）</div>
+      <div class="card-title" id="secTestPdf">📄 テストPDF（複数ファイル対応）</div>
       <div class="upload-zone" id="testZone">
         <div class="uz-ico">📄</div>
         <div class="uz-title" id="testTitle">テストPDFをアップロード</div>
@@ -467,7 +480,7 @@
 
     <div class="divider"><span>または — 範囲表の写真から範囲を取り込む</span></div>
     <div class="card">
-      <div class="card-title">📋 テスト範囲表の読み込み</div>
+      <div class="card-title" id="secSyllabus">📋 テスト範囲表の読み込み</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
         学校が配るテスト範囲表から、英語の範囲を読み取ります。写真でも、スキャンしたPDFでも読めます。<br>
         推測ではなく実際の範囲がそのまま入るので、いちばん確実です。写真に学校名が書かれていれば自動で結びつけます。
@@ -492,7 +505,7 @@
 
     <div class="divider"><span>または — 範囲から使える過去問を探す</span></div>
     <div class="card">
-      <div class="card-title">🎯 対策プリント用の過去問さがし</div>
+      <div class="card-title" id="secPastSearch">🎯 対策プリント用の過去問さがし</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
         自校の範囲を入れると、その範囲で使える他校の過去問を探します。<br>
         <b>範囲が同じか、それより狭いものだけ</b>を出します（未習の内容を生徒に解かせないため）。
@@ -2556,11 +2569,65 @@
   }
 
   // JSON強制出力版（テスト分析専用）。opts.thinkingBudgetで思考トークン制限（高速モード）
+  // ── 使った量の記録と、月ごとの歯止め ────────────────────────────
+  // 【なぜ要るか】
+  // これまでアプリ側に上限が無く、月の上限は Google Cloud の設定頼みだった。
+  // 誤操作で大量に送っても、アプリは何も言わずに送り続けてしまう。
+  // 送った回数を数えて、上限に近づいたら知らせ、超えたら止める。
+  const USAGE_KEY  = 'nhscope_usage';
+  const LIMIT_KEY  = 'nhscope_usage_limit';
+  const DEFAULT_LIMIT = 10000;   // 1か月に使ってよい上限（円）
+
+  function usageMonthKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  function getUsage() {
+    try {
+      const all = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}');
+      return all[usageMonthKey()] || { calls: 0, yen: 0 };
+    } catch { return { calls: 0, yen: 0 }; }
+  }
+  function addUsage(yen) {
+    try {
+      const all = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}');
+      const k = usageMonthKey();
+      const cur = all[k] || { calls: 0, yen: 0 };
+      all[k] = { calls: cur.calls + 1, yen: Math.round((cur.yen + yen) * 10) / 10 };
+      localStorage.setItem(USAGE_KEY, JSON.stringify(all));
+    } catch {}
+  }
+  function getUsageLimit() {
+    const v = parseInt(localStorage.getItem(LIMIT_KEY) || '');
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_LIMIT;
+  }
+  function setUsageLimit(v) {
+    const n = parseInt(v);
+    if (Number.isFinite(n) && n > 0) localStorage.setItem(LIMIT_KEY, String(n));
+    renderUsageBar();
+  }
+
+  // 1回あたりのおよその費用（実測より）：テスト分析 ¥13／範囲表 ¥1.5
+  function guessCallYen(parts) {
+    const imgs = (parts || []).filter(x => x && x.inlineData).length;
+    return imgs >= 3 ? 13 : 1.5;
+  }
+
   async function callGeminiJSON(parts, systemText, schema, maxTok=12000, opts={}) {
     const key   = getApiKey();
     const model = getModel();
     if (!key)   throw new Error('APIキーが設定されていません。');
     if (!model) throw new Error('モデルが未設定です。');
+
+    // 【上限に達していたら送らない】
+    const u = getUsage(), lim = getUsageLimit();
+    if (u.yen >= lim) {
+      throw new Error(`今月の利用が上限（¥${lim.toLocaleString()}）に達しています。`
+        + `使った量：約¥${Math.round(u.yen).toLocaleString()}（${u.calls}回）。`
+        + `続ける場合は、テスト分析タブの「今月の利用」から上限を上げてください。`);
+    }
+    addUsage(guessCallYen(parts));
+    try { renderUsageBar(); } catch {}
 
     const waitTimes = [15000, 30000, 60000];
     for (let i = 0; i <= waitTimes.length; i++) {
@@ -4053,6 +4120,45 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (el) el.textContent = `全て（${histAll().length}件）`;
   }
 
+  // 今月の利用状況を出す。上限の8割で色を変え、超えたら赤くする。
+  // 教科書リストの表示だけを作り直す。中のデータ（単語・熟語・文法）は触らない。
+  async function resetBookList() {
+    const ok = await showConfirm(
+      '教科書リストの表示を作り直します。\n\n'
+      + '・単語・熟語・文法のデータは消えません\n'
+      + '・リストが正しく出ないときの直し道具です', '作り直す');
+    if (!ok) return;
+    try {
+      renderBookSel();
+      renderPreview();
+      updateBadge();
+      alert('教科書リストを作り直しました。');
+    } catch (e) {
+      alert('作り直しに失敗しました：' + (e.message || e));
+    }
+  }
+
+  function renderUsageBar() {
+    const el = document.getElementById('usageBar');
+    if (!el) return;
+    const u = getUsage(), lim = getUsageLimit();
+    const pct = Math.min(100, Math.round(u.yen / lim * 100));
+    const color = u.yen >= lim ? '#DC2626' : (pct >= 80 ? '#D97706' : '#059669');
+    el.style.borderColor = pct >= 80 ? color : 'var(--line)';
+    el.style.background  = pct >= 80 ? (u.yen >= lim ? '#FEF2F2' : '#FFFBEB') : 'var(--bg)';
+    el.innerHTML = `
+      <b>今月の利用</b>　約 <b style="color:${color}">¥${Math.round(u.yen).toLocaleString()}</b>
+      ／ 上限 ¥${lim.toLocaleString()}（${u.calls}回）
+      <div style="height:6px;background:var(--line);border-radius:3px;margin:5px 0">
+        <div style="height:6px;width:${pct}%;background:${color};border-radius:3px"></div>
+      </div>
+      <span style="color:var(--muted);font-size:11px">
+        テスト分析1件 約¥13／範囲表1枚 約¥1.5 での概算です。上限に達すると送信を止めます。
+      </span>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:0 6px"
+              onclick="const v=prompt('今月の上限（円）',getUsageLimit());if(v)setUsageLimit(v)">上限を変える</button>`;
+  }
+
   function renderTestHistory() {
     const el = document.getElementById('testHistory');
     if (!el) return;
@@ -4111,7 +4217,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       el.innerHTML = `
         <div class="card" style="margin-top:16px">
           <div class="card-title">
-            <span>📋 テスト分析履歴</span>
+            <span id="secHistory">📋 テスト分析履歴</span>
             <span style="display:flex;gap:6px">
               <button class="btn btn-ghost btn-sm" onclick="openSemester2()"
                 title="西三河の学校は2学期制（前期・後期）です。学校ごとに設定すると、テストの時期が正しく表示されます">📅 学期制の設定</button>
@@ -4356,6 +4462,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       alert('教科書データが読み込まれていません。範囲の判定には教科書データが必要です。');
       return;
     }
+    // 【何が起きるかを先に伝える】
+    // 押すと数百件の範囲が作り直される。費用はかからないが、
+    // 何が変わるのか分からないまま押せてしまうのは不親切。
+    const nKept = hist.filter(h => h.rangeEditedBy).length;
+    const okStart = await showConfirm(
+      `保存されている ${hist.length}件のテスト範囲を、いまの教科書データで計算し直します。\n\n`
+      + `・AIには送らないので、費用はかかりません\n`
+      + (nKept ? `・人が確かめた ${nKept}件（範囲表・手入力）は、そのまま守られます\n` : '')
+      + `・変わるものがあれば、書き換える前に一覧で見せます\n`
+      + `・変更前の範囲は残るので、あとで戻せます`, '計算し直す');
+    if (!okStart) return;
 
     const changes = [];   // {idx, before, after, name}
     const gradeSuspect = []; // 保存された学年と、文法から推測した学年が食い違うもの
@@ -4854,11 +4971,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     let hist = [];
     try { hist = histAll(); } catch {}
     if (!hist.length) { alert('テスト分析履歴はありません。'); return; }
+    const nFixed = hist.filter(h => h.rangeEditedBy).length;
     const ok = await showConfirm(
       `テスト分析履歴 ${hist.length}件をすべて削除します。\n\n` +
-      `元のPDFは消えないので、分析し直せば作り直せます。\n` +
-      `この操作は取り消せません。`, '全て削除する');
+      (nFixed ? `⚠️ このうち ${nFixed}件は、範囲表や手入力で人が確かめた範囲です。それも消えます。\n\n` : '') +
+      `・全校舎の共有データからも消えます\n` +
+      `・元のPDFは残るので、分析し直せば作り直せます\n` +
+      `　（${hist.length}件を分析し直すと、およそ ¥${(hist.length * 13).toLocaleString()} かかります）\n` +
+      `・この操作は取り消せません`, '次へ');
     if (!ok) return;
+    // 【二重の歯止め】押し間違いで全校舎のデータが消えるので、件数を打ってもらう
+    const typed = prompt(`本当に消す場合は、件数「${hist.length}」を入力してください。`, '');
+    if (String(typed || '').trim() !== String(hist.length)) {
+      alert('入力が一致しなかったので、削除をやめました。');
+      return;
+    }
 
     histSave([]);
     const stEl = document.getElementById('testStatus');
@@ -6732,12 +6859,27 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   const NOT_REGULAR_SURE  = /(学習診断|実力問題|実力テスト|模試|模擬|到達度|全国学力)/;
   const NOT_REGULAR_MAYBE = /(学力検査|学力テスト|診断テスト)/;
 
+  // 【定期テストがない時期の紙】
+  // 定期テストは 5〜6月／9〜10月／11〜12月／1〜3月上旬 にしかない。
+  // 7〜8月や3月下旬の日付なら、夏休みの課題範囲など別の紙の可能性が高い。
+  // 名前が空だと名前では拾えないので、日付でも候補に出す。
+  function isOffSeasonDate(d) {
+    const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/);
+    if (!m) return false;
+    const mo = parseInt(m[1]), da = parseInt(m[2]);
+    if (mo === 7 || mo === 8) return true;
+    if (mo === 4) return true;
+    if (mo === 3 && da >= 20) return true;
+    return false;
+  }
+
   async function deleteNonRegularSyllabusRows() {
     const items = Object.keys(syllabusRows).map(i => {
       const it = pickItemOf(i);
       const name = it.testName || '';
       it._sure  = NOT_REGULAR_SURE.test(name);
-      it._maybe = NOT_REGULAR_MAYBE.test(name);
+      it._maybe = NOT_REGULAR_MAYBE.test(name) || isOffSeasonDate(it.date);
+      if (isOffSeasonDate(it.date)) it._off = true;
       return it;
     }).filter(it => it._sure || it._maybe);
 
@@ -6745,7 +6887,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const picked = await openPickRows(
       '定期テストでない行を選んで消す',
       '写真を見て、消していいものにチェックを入れてください。'
-      + '「学力テスト」「学力検査」は学校によっては定期テストなので、最初からチェックを外してあります。',
+      + '「学力テスト」「学力検査」は学校によっては定期テストなので、最初からチェックを外してあります。'
+      + '7〜8月・4月・3月下旬の日付のものは、定期テストがない時期なので候補に入れてあります。',
       items, it => it._sure);
     if (!picked || !picked.length) return;
     picked.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
@@ -6910,6 +7053,85 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return '';
   }
 
+  // 1行ぶんの見た目を作る。中身は syllabusRows[i] に入っているものだけを使う。
+  function syllabusRowHtml(i) {
+    const row = syllabusRows[i];
+    if (!row) return '';
+    if (row.readError) {
+      return `<tr data-row="${i}"><td colspan="4" style="color:#DC2626;font-size:12px">
+                ${esc(row.file||'')}：読み取りに失敗しました（${esc(row.readError)}）
+                <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-left:6px"
+                        onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
+              </td></tr>`;
+    }
+    const { school, grade, date, r, unitText, prevGrade, prevUnitText,
+            fromPage, startNote, warns, safe, testName, matchName, matchRange } = row;
+    const fx = syllabusFix[i] || {};
+    return `<tr data-row="${i}">
+        <td style="font-size:11px">
+          <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
+          <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
+          ${(r.date_raw || r.grade_raw)
+            ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
+          ${(fx.school || fx.grade)
+            ? `<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>` : ''}
+          ${fx.date ? `<br><span style="color:#059669;font-size:10px">✏️ 日付は手で直したものです</span>` : ''}
+          ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
+          ${(() => {
+            const hasRange = !!(r.textbook_from || r.textbook_to || unitText);
+            const photo = (pendingSyllabus && pendingSyllabus[i])
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
+                         onclick="openSyllabusPhoto(${i})">📷 範囲表を見る</button>` : '';
+            if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
+            return `<br>${photo}${hasRange
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
+                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
+              + `<button class="btn btn-secondary btn-sm"
+                        style="font-size:10px;padding:2px 7px;margin-top:4px;color:#B91C1C"
+                        onclick="deleteSyllabusRow(${i})">この行を消す</button>`;
+          })()}
+        </td>
+        <td style="font-size:11px">
+          ${r.textbook_from||r.textbook_to || unitText
+            ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
+            : `<span style="color:var(--muted)">英語の範囲が写っていません<br>
+                 <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`}
+          ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
+          ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
+          ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
+          ${warns.length ? `
+            <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
+              ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}</div>`).join('')}
+              <div style="margin-top:5px">
+                <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
+                        onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
+                ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
+                        onclick="swapSyllabusGradePages(${i})">前学年ぶんと入れ替える</button>` : ''}
+                ${warns.some(w => w.needFix) && !syllabusEditOpen[i] ? `<button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 7px"
+                        onclick="openSyllabusEdit(${i})">学校名を直す</button>` : ''}
+              </div>
+            </div>` : ''}
+        </td>
+        <td style="font-size:11px">
+          ${matchName
+            ? `<span style="color:#059669">✓ ${esc(matchName)}</span><br><span style="color:var(--muted)">いまの範囲：${esc(matchRange)}</span>`
+            : '<span style="color:#DC2626">該当するテストが見つかりません</span>'}
+        </td>
+        <td style="text-align:center">
+          ${matchName && unitText
+            ? `<label style="display:inline-block;cursor:pointer">
+                 <input type="checkbox" class="sylChk" data-i="${i}" ${syllabusChecked[i] ? 'checked' : ''}
+                        onchange="setSylCheck(${i}, this.checked)"
+                        style="width:18px;height:18px;cursor:pointer">
+                 <div style="font-size:9px;color:${safe?'#059669':'#B45309'};margin-top:2px">
+                   ${safe ? '反映する' : '要確認'}
+                 </div>
+               </label>`
+            : ''}
+        </td>
+      </tr>`;
+  }
+
   function renderSyllabusResult(results, focusIdx) {
     lastSyllabusResults = results;
     const el = document.getElementById('syllabusResult');
@@ -6923,12 +7145,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     syllabusRows = {};
     // 手で直した範囲を、学校・学年ごとに日付順で控えておく（次のテストの始まりに使う）
     const _manualEnds = manualEndsBySchool();
-    const rowHtml = results.map((res, i) => {
+    results.forEach((res, i) => {
       // 手で消した行は表に出さない（消した件数は下にまとめて出し、戻せるようにする）
-      if (syllabusFix[i] && syllabusFix[i].deleted) return '';
-      if (res.error) {
-        return `<tr><td colspan="4" style="color:#DC2626;font-size:12px">${esc(res.file)}：読み取りに失敗しました（${esc(res.error)}）</td></tr>`;
-      }
+      if (syllabusFix[i] && syllabusFix[i].deleted) return;
+      if (res.error) { syllabusRows[i] = { readError: String(res.error), file: res.file }; return; }
       const r = res.r || {};
       let grade = normalizeGrade(r.grade || '');
       if (syllabusFix[i] && syllabusFix[i].grade) grade = syllabusFix[i].grade;
@@ -6987,7 +7207,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const prevList = (_manualEnds[`${school}|${grade}`] || []).filter(x => date && x.date < date);
       let fromRaw = r.textbook_from || 0;
       let fromFaked = false;
-      if (fromRaw && fromRaw === bookTop && prevList.length) { fromRaw = 0; fromFaked = true; }
+      // 【学年最初のテスト以外で「教科書の1ページ目から」はありえない】
+      // 束の中に前のテストが無くても、9月以降のテストなら学年最初ではない。
+      // 前のテストの有無だけを条件にしていたため、
+      // 美里中1（11月）のように Unit 0 から 8 Unit 分に広がる行が残っていた。
+      const moNo = (String(date).match(/^\d{4}-(\d{2})/) || [])[1];
+      const lateInYear = moNo ? !(parseInt(moNo) >= 4 && parseInt(moNo) <= 6) : false;
+      if (fromRaw && fromRaw === bookTop && (prevList.length || lateInYear)) { fromRaw = 0; fromFaked = true; }
 
       let fromPage = fromRaw || 0;
       let startNote = '';
@@ -7002,9 +7228,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           if (sp && sp.to) { fromPage = sp.to + 1; startNote = `始まりが範囲表に書かれていないため、前回（${prev.date} ${prev.range}）の続きからとしました`; }
         }
         if (!fromPage) {
-          const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
-          fromPage = t.length ? t[0][0] : 1;
-          startNote = '始まりが範囲表に書かれていないため、学年最初のテストとみなして教科書の最初からとしました';
+          // 【学年最初のテストのときだけ、教科書の最初からとしてよい】
+          // 5〜6月なら学年最初。それ以外の時期に「Unit 0 から」と決めつけると、
+          // 11月のテストが 8 Unit 分に広がるような、明らかにおかしい範囲になる。
+          const mo2 = parseInt((String(date).match(/^\d{4}-(\d{2})/) || [])[1] || '0');
+          const firstOfYear = mo2 >= 4 && mo2 <= 6;
+          if (firstOfYear) {
+            const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
+            fromPage = t.length ? t[0][0] : 1;
+            startNote = '始まりが範囲表に書かれていないため、学年最初のテストとみなして教科書の最初からとしました';
+          } else if (!date) {
+            startNote = 'テストの日付が読み取れていないため、始まりを決められません。日付を入れてください';
+          } else {
+            startNote = '始まりが範囲表に書かれておらず、前のテストも見つからないため、始まりを決められません';
+          }
         }
       }
       // 【範囲表に単元名が書いてあれば、そちらを使う】
@@ -7236,73 +7473,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
       syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
-                          safe, fixedByHand: !!(fx.school || fx.grade) };
+                          safe, fixedByHand: !!(fx.school || fx.grade),
+                          testName,
+                          matchName:  match ? (match.h.name  || '') : '',
+                          matchRange: match ? (match.h.range || '') : '' };
+      // 【見た目はここでは作らない】
+      // 491行ぶんのHTMLを毎回作ると、ボタン1つ押すたびに1秒以上かかっていた。
+      // ここでは中身だけ決めておき、画面に出す数十行だけをあとで組み立てる。
 
-      return `<tr data-row="${i}">
-        <td style="font-size:11px">
-          <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
-          <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
-          ${(r.date_raw || r.grade_raw)
-            ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
-          ${(fx.school || fx.grade)
-            ? `<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>` : ''}
-          ${fx.date ? `<br><span style="color:#059669;font-size:10px">✏️ 日付は手で直したものです</span>` : ''}
-          ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
-          ${(() => {
-            const hasRange = !!(r.textbook_from || r.textbook_to || unitText);
-            const photo = (pendingSyllabus && pendingSyllabus[i])
-              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
-                         onclick="openSyllabusPhoto(${i})">📷 範囲表を見る</button>` : '';
-            if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
-            return `<br>${photo}${hasRange
-              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
-                       onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
-              + `<button class="btn btn-secondary btn-sm"
-                        style="font-size:10px;padding:2px 7px;margin-top:4px;color:#B91C1C"
-                        onclick="deleteSyllabusRow(${i})">この行を消す</button>`;
-          })()}
-        </td>
-        <td style="font-size:11px">
-          ${r.textbook_from||r.textbook_to || unitText
-            ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
-            : `<span style="color:var(--muted)">英語の範囲が写っていません<br>
-                 <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`}
-          ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
-          ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
-          ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
-          ${warns.length ? `
-            <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
-              ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}</div>`).join('')}
-              <div style="margin-top:5px">
-                <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
-                        onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
-                ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
-                        onclick="swapSyllabusGradePages(${i})">前学年ぶんと入れ替える</button>` : ''}
-                ${warns.some(w => w.needFix) && !syllabusEditOpen[i] ? `<button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 7px"
-                        onclick="openSyllabusEdit(${i})">学校名を直す</button>` : ''}
-              </div>
-            </div>` : ''}
-        </td>
-        <td style="font-size:11px">
-          ${match
-            ? `<span style="color:#059669">✓ ${esc(match.h.name||'')}</span><br><span style="color:var(--muted)">いまの範囲：${esc(match.h.range||'')}</span>`
-            : '<span style="color:#DC2626">該当するテストが見つかりません</span>'}
-        </td>
-        <td style="text-align:center">
-          ${match && unitText
-            ? `<label style="display:inline-block;cursor:pointer">
-                 <input type="checkbox" class="sylChk" data-i="${i}" ${safe ? 'checked' : ''}
-                        style="width:18px;height:18px;cursor:pointer">
-                 <div style="font-size:9px;color:${safe?'#059669':'#B45309'};margin-top:2px">
-                   ${safe ? '反映する' : '要確認'}
-                 </div>
-               </label>`
-            : ''}
-        </td>
-      </tr>`;
     });
 
-    // ── 怪しい行を上に集める ───────────────────────────────
+  
+  // ── 怪しい行を上に集める ───────────────────────────────
     // 491行を目で追うのは無理。機械が拾えるものは機械に拾わせる。
     // 順番は凌央さんと決めたとおり：
     //   ①同じテストの重複 ②4 Unit 以上に広がっている ③1点に潰れている
@@ -7314,19 +7496,25 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     function issueOf(i) {
       const row = syllabusRows[i];
       if (!row) return null;
-      if (dupIdx.has(String(i))) return { prio: 1, label: '同じテストが複数' };
+      if (row.readError) return { prio: 1, label: '読み取りに失敗' };
+      // 【日付が読めていない行を、独立して数える】
+      // 日付が無いと、前のテストも履歴も特定できず、範囲がまるごと決まらない。
+      // 「始まりが推測」に混ざっていて見つけにくかった。
+      if (!row.date) return { prio: 2, label: '日付が読めていない' };
+      if (dupIdx.has(String(i))) return { prio: 3, label: '同じテストが複数' };
       const gN = gradeNumOf(row.grade);
       if (row.unitText && gN) {
         const q = parseRangeText(row.unitText);
         const a = rangePos([q.from_unit, q.from_lesson].filter(Boolean).join(' '), gN);
         const b = rangePos([q.to_unit,   q.to_lesson  ].filter(Boolean).join(' '), gN);
-        if (a >= 0 && b >= 0 && Math.floor(b) - Math.floor(a) >= 3) return { prio: 2, label: '範囲が広すぎる' };
+        if (a >= 0 && b >= 0 && Math.floor(b) - Math.floor(a) >= 3) return { prio: 4, label: '範囲が広すぎる' };
       }
-      if (row.unitText && !/〜/.test(row.unitText)) return { prio: 3, label: '範囲が1点' };
-      if ((row.warns || []).some(x => /日離れています/.test(x.text || ''))) return { prio: 4, label: '日付が離れている' };
+      if (row.unitText && !/〜/.test(row.unitText)) return { prio: 5, label: '範囲が1点' };
+      if ((row.warns || []).some(x => /日離れています/.test(x.text || ''))) return { prio: 6, label: '日付が離れている' };
       if (/とみなして|テスト分析が出した|続きから始めました|縮めました/.test(row.startNote || ''))
-        return { prio: 5, label: '始まりが推測' };
-      return { prio: 6, label: '' };
+        return { prio: 7, label: '始まりが推測' };
+      if (row.matchIdx < 0) return { prio: 8, label: 'テストに結びつかない' };
+      return { prio: 9, label: '' };
     }
 
     const order = Object.keys(syllabusRows).map(i => ({ i, iss: issueOf(i) }))
@@ -7338,14 +7526,46 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     } else {
       order.sort((a, b) => (+a.i) - (+b.i));
     }
-    const shown = syllabusOnlyIssues ? order.filter(x => x.iss.prio <= 5) : order;
-    const rows = shown.map(x => rowHtml[x.i]).join('')
+    // 【チェックの初期値をここで決める】
+    //   ・安全と判断できた行は最初から入れる
+    //   ・同じテストの2件目以降は外す（どれを反映するか人が決めるため）
+    // 一度でも人が触った行は、その意思を上書きしない。
+    const dupSecond = new Set();
+    Object.keys(dupGroups).forEach(k => dupGroups[k].forEach((i, n) => { if (n > 0) dupSecond.add(String(i)); }));
+    Object.keys(syllabusRows).forEach(i => {
+      const row = syllabusRows[i];
+      if (!row || row.matchIdx < 0 || !row.unitText) return;
+      if (syllabusChecked[i] === undefined) syllabusChecked[i] = row.safe && !dupSecond.has(String(i));
+    });
+
+    const shown = syllabusOnlyIssues ? order.filter(x => x.iss.prio <= 8) : order;
+    // 【表示は区切る】491行ぶんの見た目を毎回作ると、押すたびに1秒以上待たされる。
+    const pages = Math.max(1, Math.ceil(shown.length / SYL_PER_PAGE));
+    if (syllabusPage >= pages) syllabusPage = pages - 1;
+    if (syllabusPage < 0) syllabusPage = 0;
+    const pageRows = shown.slice(syllabusPage * SYL_PER_PAGE, (syllabusPage + 1) * SYL_PER_PAGE);
+    const rows = pageRows.map(x => syllabusRowHtml(x.i)).join('')
       || `<tr><td colspan="4" style="padding:14px;font-size:12px;color:var(--muted)">
             ${syllabusOnlyIssues ? '確かめたほうがよい行はありません。' : '表示できる行がありません。'}
           </td></tr>`;
 
-    const label = { 1:'同じテストが複数', 2:'範囲が広すぎる', 3:'範囲が1点',
-                    4:'日付が離れている', 5:'始まりが推測', 6:'問題なし' };
+    const pager = pages > 1 ? `
+      <div style="margin:8px 0;display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted)">
+          ${shown.length}件中 ${syllabusPage * SYL_PER_PAGE + 1}〜${Math.min((syllabusPage+1)*SYL_PER_PAGE, shown.length)}件目
+        </span>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" ${syllabusPage===0?'disabled':''}
+                onclick="goSylPage(${syllabusPage-1})">← 前</button>
+        ${Array.from({length: pages}, (_, k) => k).map(k =>
+          `<button class="btn ${k===syllabusPage?'btn-primary':'btn-secondary'} btn-sm"
+                   style="font-size:11px;padding:2px 8px" onclick="goSylPage(${k})">${k+1}</button>`).join('')}
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" ${syllabusPage>=pages-1?'disabled':''}
+                onclick="goSylPage(${syllabusPage+1})">次 →</button>
+      </div>` : '';
+
+    const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 3:'同じテストが複数',
+                    4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている',
+                    7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし' };
     const issueBar = `
       <div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
@@ -7353,9 +7573,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                   onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
           <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
                   onclick="toggleSyllabusOnlyIssues()">${syllabusOnlyIssues?'✓ ':''}確かめたい行だけ出す</button>
+          <span style="font-size:11px;color:var(--muted);margin-left:6px">反映のチェック：</span>
+          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(true)">全部入れる</button>
+          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す</button>
         </div>
         <div style="font-size:11px;color:var(--muted);line-height:1.9">
-          ${[1,2,3,4,5,6].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
+          ${[1,2,3,4,5,6,7,8,9].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
         </div>
       </div>`;
 
@@ -7363,7 +7586,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 写真が無い行の数。範囲を精査している間は、写真がないと正しいか判断できない。
     const nNoPhoto = results.filter((res, i) => !(syllabusFix[i] && syllabusFix[i].deleted)
                                              && !(pendingSyllabus && pendingSyllabus[i])).length;
-    const nCheck   = Object.keys(syllabusRows).filter(i => syllabusRows[i].safe).length;
+    const nCheck   = Object.keys(syllabusChecked).filter(i => syllabusChecked[i]
+                       && syllabusRows[i] && syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
     const nTotal   = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
 
     el.innerHTML = `
@@ -7384,10 +7608,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           読み取り結果を全部消す
         </button>
       </div>
+      ${pager}
       <div class="tbl-wrap"><table>
         <thead><tr><th>読み取り結果</th><th>英語の範囲</th><th>該当するテスト</th><th style="width:70px">反映</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
+      ${pager}
       <div style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
         <button class="btn btn-primary" onclick="applyCheckedSyllabus()">チェックした行をまとめて反映</button>
         <span style="font-size:11px;color:var(--muted);margin-left:8px">
@@ -7410,9 +7636,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const group = dups[key];
       dupRows += group.length;
       group.forEach((i, n) => {
-        const chk = el.querySelector(`.sylChk[data-i="${i}"]`);
-        if (n > 0 && chk) chk.checked = false;
-        const tr = chk ? chk.closest('tr') : el.querySelector(`tr[data-row="${i}"]`);
+        // チェックの入り切りは syllabusChecked で決めてあるので、ここでは触らない
+        const tr = el.querySelector(`tr[data-row="${i}"]`);
         const td = tr ? tr.querySelector('td') : null;
         if (!td) return;
         const me = syllabusRows[i] || {};
@@ -7493,6 +7718,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 一覧の並べ替え・絞り込みの状態
   let syllabusSortIssues = false;   // 怪しい順に並べるか
   let syllabusOnlyIssues = false;   // 確かめたい行だけ出すか
+  let syllabusPage = 0;             // 何ページ目を出しているか
+  const SYL_PER_PAGE = 50;          // 一度に出す行数
+
+  // 【チェックの入り切りは、画面ではなくここで覚える】
+  // 画面のチェックだけで持つと、ページを分けたとたん
+  // 「表示していない行のチェック」が消えて、まとめて反映から漏れる。
+  let syllabusChecked = {};
+  function setSylCheck(i, on) { syllabusChecked[i] = !!on; }
+  function setSylCheckAll(on) {
+    Object.keys(syllabusRows).forEach(i => {
+      const row = syllabusRows[i];
+      if (row && row.matchIdx >= 0 && row.unitText) syllabusChecked[i] = !!on;
+    });
+    renderSyllabusResult(lastSyllabusResults);
+  }
+  function goSylPage(n) { syllabusPage = n; renderSyllabusResult(lastSyllabusResults); }
   function toggleSyllabusSort() {
     syllabusSortIssues = !syllabusSortIssues;
     renderSyllabusResult(lastSyllabusResults);
@@ -7651,9 +7892,7 @@ function findTestByDateEx(hist, school, grade, date) {
     return { match: best, ambiguous: [] };
   }
 
-function findTestByDate(hist, school, grade, date) {
-    return findTestByDateEx(hist, school, grade, date).match;
-  }
+
 
   function canonSchool(s) {
     let t = String(s || '').trim().replace(/\s+/g, '');
@@ -7757,9 +7996,11 @@ function findTestByDate(hist, school, grade, date) {
   // 1件ずつボタンを押していくと100回近くになり、押し間違いも起きる。
   // 画面のチェックを見て、入っているものだけを書き込む。
   async function applyCheckedSyllabus() {
-    const keys = [...document.querySelectorAll('.sylChk')]
-      .filter(c => c.checked)
-      .map(c => c.dataset.i)
+    // 【画面ではなく、覚えているチェックを見る】
+    // 表示を区切っているので、画面のチェックだけを見ると
+    // 別のページにある行が漏れてしまう。
+    const keys = Object.keys(syllabusChecked)
+      .filter(i => syllabusChecked[i])
       .filter(i => syllabusRows[i] && syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText);
     if (!keys.length) { alert('チェックが入っている行がありません。'); return; }
 
@@ -9635,6 +9876,7 @@ function findTestByDate(hist, school, grade, date) {
     try { updateBadge(); }     catch(e) { console.error('updateBadge:', e); }
     try { updateKeyBanner(); } catch(e) { console.error('updateKeyBanner:', e); }
     try { renderTestHistory(); } catch(e) {}
+    try { renderUsageBar(); } catch(e) {}
 
     // 前回の範囲表の読み取り結果と手直しを戻す。
     // 戻さないと、リロードのたびに読み直し（＝AIへの再送信＝費用）になる。
