@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v8.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -372,13 +372,18 @@
       </div>
     </div>
 
-    <div class="divider"><span>または — 保存済みJSONを読み込む</span></div>
-    <div class="card">
-      <div class="card-title">💾 JSONを読み込む</div>
-      <div class="row">
-        <button class="btn btn-secondary" onclick="document.getElementById('jsonFile').click()">📂 ファイルを選択</button>
-        <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
-        <span id="jsonSt" style="font-size:12px;color:var(--muted)"></span>
+    <!-- 【隠してある】教科書データはFirestoreで共有され、開けば自動で読み込まれるので出番がない。
+         画面に出しておくと「押すべきか」と迷わせるうえ、押し間違えると教科書データを上書きしてしまう。
+         機能そのものは残してあるので、必要になったら display:none を外せば戻せる。 -->
+    <div style="display:none">
+      <div class="divider"><span>または — 保存済みJSONを読み込む</span></div>
+      <div class="card">
+        <div class="card-title">💾 JSONを読み込む</div>
+        <div class="row">
+          <button class="btn btn-secondary" onclick="document.getElementById('jsonFile').click()">📂 ファイルを選択</button>
+          <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
+          <span id="jsonSt" style="font-size:12px;color:var(--muted)"></span>
+        </div>
       </div>
     </div>
 
@@ -6791,8 +6796,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // もう一度読ませると直ることが多い。1枚あたり数円）
   async function rereadSyllabusRow(i) {
     const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
-    if (!img) { alert('この写真はもう手元にありません。読み込みからやり直してください。'); return; }
+    if (!img) { alert('この写真はもう手元にありません。「写真を貼り直す」からやり直してください。'); return; }
+    // 【費用のかかる操作なので、押す前に必ず確認する】
+    const ok = await showConfirm(
+      'この1枚を、もう一度AIに読み取らせます。\n\n'
+      + '・費用は1枚あたり約 ¥1〜2 かかります\n'
+      + '・手で直した学校名・学年・日付・範囲は、そのまま残ります\n'
+      + '・読み取り結果（ページ・単元名・副教材）だけが入れ替わります',
+      '読み直す');
+    if (!ok) return;
+
     const stEl = document.getElementById('syllabusStatus');
+    // 押している間はボタンを止める（二重に押すと、そのぶん費用がかかる）
+    const btn = document.querySelector(`button[onclick="rereadSyllabusRow(${i})"]`);
+    const btnText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '読み直しています…'; }
     setSt(stEl, 'load', `${i+1}枚目を読み直しています...`);
     try {
       const r = await callGeminiJSON(
@@ -6800,10 +6818,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
         SYLLABUS_SCHEMA, 20000, getFastModeOpts());
       lastSyllabusResults[i] = { file: img.name, r };
-      // 手で入れた学校名・学年は消さない
+      // 手で入れた学校名・学年・日付・範囲（syllabusFix）は消さない
+      saveSyllabusState();   // 【保存する】これが無いと、お金を払った結果がリロードで消える
       setSt(stEl, 'ok', `${i+1}枚目を読み直しました`);
-      renderSyllabusResult(lastSyllabusResults);
+      renderSyllabusResult(lastSyllabusResults, i);
     } catch(e) {
+      if (btn) { btn.disabled = false; btn.textContent = btnText; }
       setSt(stEl, 'err', '❌ 読み直しに失敗しました：' + friendlyError(e));
     }
   }
@@ -6821,7 +6841,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 単元名はページと合わなくなるので捨てる（ページから出し直す）
     r.unit_range = '';
     r.note = `${r.note || ''}${r.note ? ' ／ ' : ''}当年ぶんと前学年ぶんのページを手で入れ替えました`;
-    renderSyllabusResult(lastSyllabusResults);
+    saveSyllabusState();   // 【保存する】入れ替えた結果もリロードで消えないように
+    renderSyllabusResult(lastSyllabusResults, i);
   }
 
   
