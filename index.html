@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.3</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.5</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -884,7 +884,8 @@
      手で入れた学校名・学年・日付・範囲が本当に合っているかは、
      元の範囲表を見ないと判断できない。決定の前に必ずここで見比べてもらう。 -->
 <!-- 範囲表の写真を大きく見る（別ウィンドウだとポップアップブロックで開けないため画面内で表示） -->
-<div class="modal-ov" id="photoModal" style="display:none" onclick="closeSyllabusPhoto()">
+<!-- 写真の拡大は、他のどの画面よりも前に出す。z-index が同じだと、あとに書かれた画面（消す行を選ぶ画面など）の裏に隠れてしまう -->
+<div class="modal-ov" id="photoModal" style="display:none;z-index:1200" onclick="closeSyllabusPhoto()">
   <div class="modal" style="max-width:96vw;width:auto" onclick="event.stopPropagation()">
     <div class="modal-head">
       <div class="modal-title" id="photoModalName" style="font-size:13px;font-weight:400"></div>
@@ -933,7 +934,7 @@
   </div>
 </div>
 
-<div class="modal-ov" id="confirmModal" style="display:none">
+<div class="modal-ov" id="confirmModal" style="display:none;z-index:1100">
   <div class="modal" style="max-width:340px">
     <div class="modal-head">
       <div class="modal-title" id="confirmTitle">確認</div>
@@ -7217,6 +7218,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
       let fromPage = fromRaw || 0;
       let startNote = '';
+      let startGuessed = false;   // 始まりを「何回目のテストか」から推測したか
       if (!fromPage && r.textbook_to) {
         const prev = match ? findPrevTestEnd({
           school, grade, testDate: match.h.testDate || extractTestDate(match.h.name||'') || date
@@ -7228,19 +7230,39 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           if (sp && sp.to) { fromPage = sp.to + 1; startNote = `始まりが範囲表に書かれていないため、前回（${prev.date} ${prev.range}）の続きからとしました`; }
         }
         if (!fromPage) {
-          // 【学年最初のテストのときだけ、教科書の最初からとしてよい】
-          // 5〜6月なら学年最初。それ以外の時期に「Unit 0 から」と決めつけると、
-          // 11月のテストが 8 Unit 分に広がるような、明らかにおかしい範囲になる。
+          // 【終わりのページしか書かれていない紙のとき】
+          // ここを間違えると、範囲が使いものにならなくなる。
+          //   ・「教科書の最初から」と決めつける → 11月のテストが8 Unit分に広がる
+          //   ・「決められません」と空にする    → 終わりの1点だけになり、これも使えない
+          // そこで、年に何回目のテストかを使って、およその始まりを置く。
+          //   2学期制は年4回、3学期制は年5回。3回目なら、教科書の
+          //   「終わりまでの 2/3 あたり」までは前のテストで済んでいるはず。
+          const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
+          const topPage = t.length ? t[0][0] : 1;
+          const k = testRoundNo(school, date);
+          const endPage = r.textbook_to || 0;
           const mo2 = parseInt((String(date).match(/^\d{4}-(\d{2})/) || [])[1] || '0');
-          const firstOfYear = mo2 >= 4 && mo2 <= 6;
+          // 【学年最初かどうかは、月ではなく「何回目か」で決める】
+          //   3学期制：5月＝1回目、6月＝2回目（6月を最初にすると範囲が広がりすぎる）
+          //   2学期制：5〜6月がまとめて1回目
+          // 学期制が分からないときだけ、月で見る。
+          const firstOfYear = k ? (k === 1) : (mo2 >= 4 && mo2 <= 6);
           if (firstOfYear) {
-            const t = PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [];
-            fromPage = t.length ? t[0][0] : 1;
+            fromPage = topPage;
             startNote = '始まりが範囲表に書かれていないため、学年最初のテストとみなして教科書の最初からとしました';
-          } else if (!date) {
-            startNote = 'テストの日付が読み取れていないため、始まりを決められません。日付を入れてください';
-          } else {
-            startNote = '始まりが範囲表に書かれておらず、前のテストも見つからないため、始まりを決められません';
+          } else if (k >= 2 && endPage > topPage) {
+            const est = Math.round(topPage + (endPage - topPage) * (k - 1) / k);
+            if (est > topPage && est < endPage) {
+              fromPage  = est;
+              startNote = `始まりが範囲表に書かれておらず、前のテストも見つかりません。`
+                        + `その年 ${k} 回目のテストとして、およその始まりを置きました。必ず確かめてください`;
+              startGuessed = true;
+            }
+          }
+          if (!fromPage) {
+            startNote = date
+              ? '始まりが範囲表に書かれておらず、前のテストも見つからないため、始まりを決められません'
+              : 'テストの日付が読み取れていないため、始まりを決められません。日付を入れてください';
           }
         }
       }
@@ -7328,7 +7350,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
 
       // 引き継いだ始まりがあれば、分析値より先に使う
-      if (chainStart) analyzedStart = chainStart;
+      if (chainStart) { analyzedStart = chainStart; startGuessed = false; }
 
       // 【分析の始まりと範囲表の終わりを組み合わせたとき、広がりすぎないようにする】
       // 分析側は「1回のテストの範囲は最大3 Unit まで」という上限を持っている。
@@ -7363,6 +7385,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (wUse) {
         const w = wUse;
         const endText = w.to;
+        // 【終わりの単元名だけ書いてある紙】
+        // 始まりが何も決まらないと「Unit 5 Part 1」の1点になり、範囲として使えない。
+        // ページから置いたおよその始まりがあれば、それを使う。
+        if (!w.hasStart && !analyzedStart && startGuessed && fromPage) {
+          const guessTxt = pagesToRangeText(grade, `${fromPage}〜${fromPage}`);
+          if (guessTxt) {
+            const g = parseRangeText(guessTxt);
+            const gs = [g.from_unit, g.from_lesson].filter(Boolean).join(' ');
+            if (gs && rangePos(gs, gradeNumOf(grade)) <= rangePos(endText, gradeNumOf(grade))) analyzedStart = gs;
+          }
+        }
         const st = w.hasStart ? w.from : analyzedStart;
         unitText = st && st !== endText ? `${st} 〜 ${endText}` : endText;
         startNote = w.hasStart
@@ -7399,6 +7432,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 直すのはアプリではなく凌央さん。推測で書き換えると、外したときに黙って
       // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
       const warns = [];
+      if (startGuessed) {
+        warns.push({ text: '始まりは範囲表に書かれていません。アプリが「何回目のテストか」から置いたおよその位置です。'
+                         + '写真を見て、違っていれば直してください', needFix: true });
+      }
       const gN2 = gradeNumOf(grade);
       const tbl = PAGE_UNIT_TABLES[`default_c${gN2}`] || [];
       const lastPage = tbl.length ? tbl[tbl.length-1][0] : 0;
