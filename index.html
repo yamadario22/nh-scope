@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.6</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6525,6 +6525,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 曜日はカレンダーで決まるので、推測ではなく計算で正せる。
   const WD = ['日','月','火','水','木','金','土'];
 
+  // 定期テストがある月かどうか（凌央さんに教わった実際の日程）
+  //   5月・6月・9月・10月・11月・12月・1月・2月・3月上旬にはある
+  //   4月・7月・8月・3月下旬には無い
+  function isTestMonth(mo) {
+    return (mo >= 5 && mo <= 6) || (mo >= 9 && mo <= 12) || (mo >= 1 && mo <= 3);
+  }
+
   function writtenWeekday(raw) {
     const m = String(raw || '').match(/[（(]\s*([日月火水木金土])\s*[)）]/);
     return m ? m[1] : '';
@@ -6554,13 +6561,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 【定期テストがある時期にしか動かさない】
       // 2月のテストが12月に飛ぶなど、時期として無理のある移動を止める。
       const mm = d.getMonth() + 1;
-      const testMonth = (mm >= 5 && mm <= 6) || (mm >= 9 && mm <= 12) || (mm >= 1 && mm <= 3);
-      if (!testMonth) continue;
+      if (!isTestMonth(mm)) continue;
       if (weekdayOf(iso) === want) cands.push({ iso, gap: Math.abs(k) });
     }
     if (!cands.length) return null;
     // 元の月が定期テストの時期なら、大きく動かすのは危ない。1か月差だけを認める。
-    const baseIsTestMonth = (mo >= 5 && mo <= 6) || (mo >= 9 && mo <= 12) || (mo >= 1 && mo <= 3);
+    const baseIsTestMonth = isTestMonth(mo);
     const use = baseIsTestMonth ? cands.filter(c => c.gap === 1) : cands;
     if (!use.length) return null;
     use.sort((a, b) => a.gap - b.gap);
@@ -6917,9 +6923,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/);
     if (!m) return false;
     const mo = parseInt(m[1]), da = parseInt(m[2]);
-    // 7月は20日ごろまで1学期期末がある（実例：岩津中 7/19）。夏休みに入ってからだけを対象にする
-    if (mo === 7 && da >= 21) return true;
-    if (mo === 8) return true;
+    // 【定期テストがある時期は決まっている】
+    //   3学期制：5月中旬〜下旬／6月中旬〜下旬／9月中旬〜下旬／11月中旬／1月〜2月
+    //   2学期制：5月末〜6月中旬／9月頭〜9月中旬／11月中旬／1月〜2月
+    // 7月・8月・4月・3月下旬にテストは無い。
+    if (mo === 7 || mo === 8) return true;
     if (mo === 4) return true;
     if (mo === 3 && da >= 20) return true;
     return false;
@@ -7492,6 +7500,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 直すのはアプリではなく凌央さん。推測で書き換えると、外したときに黙って
       // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
       const warns = [];
+      // 【テストがない時期の日付は、読み取り間違いを疑う】
+      // 7月・8月・4月・3月下旬に定期テストは無い。
+      // ここに日付が入っているなら、月の読み違いか、そもそも定期テストの紙ではない。
+      if (date && isOffSeasonDate(date)) {
+        warns.push({ text: `日付が ${date} になっていますが、この時期に定期テストはありません。`
+                         + `月の読み違いか、定期テストの範囲表ではない可能性があります`, needFix: true });
+      }
       if (dateFixedByWeekday) {
         warns.push({ text: `写真に書かれた曜日と合わなかったので、日付を ${dateFixedByWeekday} から ${date} に直しました`
                          + `（${esc(r.date_raw || '')}）` });
