@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.0</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7204,8 +7204,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <td style="font-size:11px">
           ${matchName
             ? `<span style="color:#059669">✓ ${esc(matchName)}</span><br><span style="color:var(--muted)">いまの範囲：${esc(matchRange)}</span>`
-            : `<span style="color:#DC2626">該当するテストが見つかりません</span>
-                ${row.noMatchWhy ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(row.noMatchWhy)}</div>` : ''}`}
+            : (row.uncollected
+                ? `<span style="color:var(--muted)">未回収（テストPDFがまだ手元にありません）</span>
+                   <div style="margin-top:4px">
+                     <label style="font-size:10px;cursor:pointer">
+                       <input type="checkbox" checked style="vertical-align:middle"
+                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)"> 未回収
+                     </label>
+                   </div>`
+                : `<span style="color:#DC2626">該当するテストが見つかりません</span>
+                   ${row.noMatchWhy ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(row.noMatchWhy)}</div>` : ''}
+                   ${uncollectedKeyOf(row) ? `<div style="margin-top:4px">
+                     <label style="font-size:10px;cursor:pointer">
+                       <input type="checkbox" style="vertical-align:middle"
+                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)"> 未回収にする
+                     </label></div>` : ''}`)}
         </td>
         <td style="text-align:center">
           ${matchName && unitText
@@ -7669,6 +7682,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
                           safe, fixedByHand: !!(fx.school || fx.grade),
                           testName, noMatchWhy,
+                          uncollected: !!syllabusUncollected[`${school}|${grade}|${date}`],
                           matchName:  match ? (match.h.name  || '') : '',
                           matchRange: match ? (match.h.range || '') : '' };
       // 【見た目はここでは作らない】
@@ -7691,6 +7705,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const row = syllabusRows[i];
       if (!row) return null;
       if (row.readError) return { prio: 1, label: '読み取りに失敗' };
+      // 【未回収は最初に分ける】
+      // テストPDFが手元に無いのだから、範囲を直しても結びつけようがない。
+      // 他の分類より先に判定しないと「始まりが推測」などに吸われて数が合わなくなる。
+      if (row.uncollected && row.matchIdx < 0) return { prio: 10, label: '未回収' };
       // 【日付が読めていない行を、独立して数える】
       // 日付が無いと、前のテストも履歴も特定できず、範囲がまるごと決まらない。
       // 「始まりが推測」に混ざっていて見つけにくかった。
@@ -7759,7 +7777,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 3:'同じテストが複数',
                     4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている',
-                    7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし' };
+                    7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし', 10:'未回収' };
     const issueBar = `
       <div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
@@ -7772,7 +7790,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す</button>
         </div>
         <div style="font-size:11px;color:var(--muted);line-height:1.9">
-          ${[1,2,3,4,5,6,7,8,9].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
+          ${[1,2,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
         </div>
       </div>`;
 
@@ -7784,6 +7802,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     Object.keys(syllabusRows).forEach(i => {
       const row = syllabusRows[i];
       if (!row || row.readError || row.matchIdx >= 0) return;
+      if (row.uncollected) return;                       // 未回収は「分析されていない」に数えない
       if (!row.school || !row.grade || !row.date) return;
       const key = `${row.school}|${row.grade}`;
       (missing[key] = missing[key] || []).push(row.date);
@@ -7803,7 +7822,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${missKeys.slice(0, 60).map(k => {
             const [sc, gr] = k.split('|');
             const ds = [...new Set(missing[k])].sort();
-            return `<div><b>${esc(sc)}</b> ${esc(gr)}　<span style="color:var(--muted)">${ds.map(esc).join('、')}</span></div>`;
+            return `<div>
+              <label style="cursor:pointer">
+                <input type="checkbox" style="vertical-align:middle"
+                       onchange="markSchoolUncollected('${esc(k)}', this.checked)">
+                <b>${esc(sc)}</b> ${esc(gr)}　<span style="color:var(--muted)">${ds.map(esc).join('、')}</span>
+                <span style="color:#B91C1C;font-size:10px">← 未回収にする</span>
+              </label></div>`;
           }).join('')}
           ${missKeys.length > 60 ? `<div style="color:var(--muted)">…ほか ${missKeys.length - 60} 校</div>` : ''}
         </div>
@@ -7943,6 +7968,39 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 別に持ち、まるごと IndexedDB に保存する。これでページを開き直しても残る。
   let syllabusFix = {};
 
+  // 【未回収の印】
+  // 範囲表はあるがテストPDFがまだ手元に無い、というものがある。
+  // それを毎回「結びつかない」と赤字で出しても、直しようがなく邪魔なだけ。
+  // 「未回収」と印を付けたら、エラー扱いをやめて静かにしておく。
+  // 印は範囲表の保存と一緒に残す。
+  let syllabusUncollected = {};   // 「学校名|学年|日付」→ true
+  function uncollectedKeyOf(row) {
+    if (!row || !row.school || !row.grade || !row.date) return '';
+    return `${row.school}|${row.grade}|${row.date}`;
+  }
+  // その学校・学年の、結びついていない行をまとめて未回収にする
+  function markSchoolUncollected(schoolGradeKey, on) {
+    const [sc, gr] = String(schoolGradeKey || '').split('|');
+    if (!sc || !gr) return;
+    Object.keys(syllabusRows).forEach(i => {
+      const row = syllabusRows[i];
+      if (!row || row.matchIdx >= 0) return;
+      if (row.school !== sc || row.grade !== gr) return;
+      const key = uncollectedKeyOf(row);
+      if (!key) return;
+      if (on) syllabusUncollected[key] = true; else delete syllabusUncollected[key];
+    });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
+  function toggleUncollected(key, on) {
+    if (!key) return;
+    if (on) syllabusUncollected[key] = true; else delete syllabusUncollected[key];
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
   // 一覧の並べ替え・絞り込みの状態
   let syllabusSortIssues = false;   // 怪しい順に並べるか
   let syllabusOnlyIssues = false;   // 確かめたい行だけ出すか
@@ -7992,6 +8050,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       idbSet(IDB_SYLLABUS, {
         results: lastSyllabusResults,
         fix: syllabusFix,
+        uncollected: syllabusUncollected,
         savedAt: new Date().toISOString()
       }).catch(e => {
         console.warn('範囲表の保存に失敗:', e);
@@ -8029,6 +8088,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     pendingSyllabus      = Array.isArray(imgs) ? imgs : [];
     lastSyllabusResults  = data.results;
     syllabusFix          = data.fix || {};
+    syllabusUncollected  = data.uncollected || {};
     const t = document.getElementById('syllabusTitle');
     if (t) t.textContent = `${data.results.length}件のファイル（前回の続き）`;
     const st = document.getElementById('syllabusStatus');
@@ -8042,7 +8102,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!ok) return;
     pendingSyllabus = null;
     lastSyllabusResults = null;
-    syllabusFix = {};
+    syllabusFix = {}; syllabusUncollected = {};
     syllabusRows = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {};
     try { await idbSet(IDB_SYLLABUS, null); await idbSet(IDB_SYLLABUS_IMG, null); } catch(e) { console.warn(e); }
     document.getElementById('syllabusResult').innerHTML = '';
