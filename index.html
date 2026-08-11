@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.0</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.1</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7207,17 +7207,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             : (row.uncollected
                 ? `<span style="color:var(--muted)">未回収（テストPDFがまだ手元にありません）</span>
                    <div style="margin-top:4px">
-                     <label style="font-size:10px;cursor:pointer">
-                       <input type="checkbox" checked style="vertical-align:middle"
-                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)"> 未回収
+                     <label style="font-size:10px;cursor:pointer">未回収
+                       <input type="checkbox" checked style="width:15px;height:15px;vertical-align:middle;margin-left:3px"
+                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)">
                      </label>
                    </div>`
                 : `<span style="color:#DC2626">該当するテストが見つかりません</span>
                    ${row.noMatchWhy ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(row.noMatchWhy)}</div>` : ''}
                    ${uncollectedKeyOf(row) ? `<div style="margin-top:4px">
-                     <label style="font-size:10px;cursor:pointer">
-                       <input type="checkbox" style="vertical-align:middle"
-                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)"> 未回収にする
+                     <label style="font-size:10px;cursor:pointer">未回収にする
+                       <input type="checkbox" style="width:15px;height:15px;vertical-align:middle;margin-left:3px"
+                              onchange="toggleUncollected('${esc(uncollectedKeyOf(row))}', this.checked)">
                      </label></div>` : ''}`)}
         </td>
         <td style="text-align:center">
@@ -7798,39 +7798,60 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 「結びつかない60件」を1件ずつ見て回るのは無駄。
     // どの学校の、いつのテストのPDFを分析すればよいかが一覧で分かれば、
     // そのぶんだけ分析すれば一気に片づく。
-    const missing = {};
+    // 【日付ごとに1行にする】
+    // 「保見中 中3　9/10、11/17」と1行にまとめると、
+    // 片方は分析していないだけ、もう片方は範囲表そのものが未回収、
+    // という場合に分けてチェックできない。1テスト＝1行にする。
+    const missList = [];
+    const missSeen = new Set();
     Object.keys(syllabusRows).forEach(i => {
       const row = syllabusRows[i];
       if (!row || row.readError || row.matchIdx >= 0) return;
       if (row.uncollected) return;                       // 未回収は「分析されていない」に数えない
       if (!row.school || !row.grade || !row.date) return;
-      const key = `${row.school}|${row.grade}`;
-      (missing[key] = missing[key] || []).push(row.date);
+      const key = `${row.school}|${row.grade}|${row.date}`;
+      if (missSeen.has(key)) return;
+      missSeen.add(key);
+      missList.push({ key, school: row.school, grade: row.grade, date: row.date });
     });
-    const missKeys = Object.keys(missing).sort();
-    const missCount = missKeys.reduce((n, k) => n + missing[k].length, 0);
-    const missBox = missKeys.length ? `
+    // 学年 → 学校名 → 日付 の順に並べる（確認しやすいように）
+    missList.sort((a, b) =>
+      (gradeNumOf(a.grade) - gradeNumOf(b.grade))
+      || a.school.localeCompare(b.school, 'ja')
+      || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const missCount = missList.length;
+    const missBox = missCount ? `
       <div style="margin-bottom:8px;padding:9px 11px;border:1px solid #FCA5A5;border-radius:6px;background:#FEF2F2">
         <div style="font-size:12px;font-weight:700;color:#B91C1C;margin-bottom:4px">
-          まだ分析されていないテストが ${missCount} 件あります（${missKeys.length} 校）
+          まだ分析されていないテストが ${missCount} 件あります
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">
-          範囲表はありますが、テストPDFの分析がないので結びつけられません。
-          下のPDFを「テストPDF」から分析すれば、まとめて結びつきます。
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+          範囲表はありますが、テストPDFの分析がないので結びつけられません。<br>
+          PDFを分析すれば結びつきます。テスト自体が手元に無いものは、右の「未回収」にチェックを入れてください。
         </div>
-        <div style="font-size:11px;line-height:1.9;max-height:150px;overflow:auto">
-          ${missKeys.slice(0, 60).map(k => {
-            const [sc, gr] = k.split('|');
-            const ds = [...new Set(missing[k])].sort();
-            return `<div>
-              <label style="cursor:pointer">
-                <input type="checkbox" style="vertical-align:middle"
-                       onchange="markSchoolUncollected('${esc(k)}', this.checked)">
-                <b>${esc(sc)}</b> ${esc(gr)}　<span style="color:var(--muted)">${ds.map(esc).join('、')}</span>
-                <span style="color:#B91C1C;font-size:10px">← 未回収にする</span>
-              </label></div>`;
-          }).join('')}
-          ${missKeys.length > 60 ? `<div style="color:var(--muted)">…ほか ${missKeys.length - 60} 校</div>` : ''}
+        <div style="max-height:220px;overflow:auto;border:1px solid #FECACA;border-radius:4px;background:#fff">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="background:#FEF2F2">
+              <th style="text-align:left;padding:3px 8px">学年</th>
+              <th style="text-align:left;padding:3px 8px">学校</th>
+              <th style="text-align:left;padding:3px 8px">日付</th>
+              <th style="text-align:right;padding:3px 8px;white-space:nowrap">未回収</th>
+            </tr></thead>
+            <tbody>
+              ${missList.slice(0, 200).map(m => `
+                <tr style="border-top:1px solid #FEE2E2">
+                  <td style="padding:3px 8px;white-space:nowrap">${esc(m.grade)}</td>
+                  <td style="padding:3px 8px"><b>${esc(m.school)}</b></td>
+                  <td style="padding:3px 8px;color:var(--muted);white-space:nowrap">${esc(m.date)}</td>
+                  <td style="padding:3px 8px;text-align:right;white-space:nowrap">
+                    <input type="checkbox" style="width:16px;height:16px;cursor:pointer;vertical-align:middle"
+                           title="このテストは手元に無い（未回収）"
+                           onchange="toggleUncollected('${esc(m.key)}', this.checked)">
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          ${missCount > 200 ? `<div style="padding:4px 8px;color:var(--muted)">…ほか ${missCount - 200} 件</div>` : ''}
         </div>
       </div>` : '';
 
@@ -7978,22 +7999,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!row || !row.school || !row.grade || !row.date) return '';
     return `${row.school}|${row.grade}|${row.date}`;
   }
-  // その学校・学年の、結びついていない行をまとめて未回収にする
-  function markSchoolUncollected(schoolGradeKey, on) {
-    const [sc, gr] = String(schoolGradeKey || '').split('|');
-    if (!sc || !gr) return;
-    Object.keys(syllabusRows).forEach(i => {
-      const row = syllabusRows[i];
-      if (!row || row.matchIdx >= 0) return;
-      if (row.school !== sc || row.grade !== gr) return;
-      const key = uncollectedKeyOf(row);
-      if (!key) return;
-      if (on) syllabusUncollected[key] = true; else delete syllabusUncollected[key];
-    });
-    saveSyllabusState();
-    renderSyllabusResult(lastSyllabusResults);
-  }
-
   function toggleUncollected(key, on) {
     if (!key) return;
     if (on) syllabusUncollected[key] = true; else delete syllabusUncollected[key];
