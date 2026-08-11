@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7083,7 +7083,36 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const w = normalizeWrittenUnitRange(r.unit_range, grade);
       if (w && w.to) add(school, grade, date, w.to, false);
     });
-    Object.keys(map).forEach(k => map[k].sort((a, b) => a.date < b.date ? -1 : 1));
+    // 【テスト履歴も引き継ぎ元にする】
+    // これまで範囲表の束の中しか見ていなかった。
+    // 9月のテストの前は6月だが、6月の範囲表が束に無い学校がほとんどなので、
+    // ほぼ全部が「始まりが書かれていません」になっていた。
+    // 履歴には510件の分析結果があり、そこに前のテストの範囲がある。
+    let histAllRows = [];
+    try { histAllRows = histAll(); } catch {}
+    histAllRows.forEach(h => {
+      const range = String(h.range || '');
+      if (!range || range === '範囲不明') return;
+      const school = canonSchool(h.school || extractSchoolName(h.name || ''));
+      const grade  = normalizeGrade(h.grade || '');
+      const date   = h.testDate || extractTestDate(h.name || '');
+      if (!school || !grade || !date) return;
+      const p = parseRangeText(range);
+      const end = [p.to_unit || p.from_unit, p.to_lesson || p.from_lesson].filter(Boolean).join(' ');
+      if (!end) return;
+      // 人が確かめた範囲（範囲表・手入力）は確かなものとして扱う
+      add(school, grade, date, end, !!h.rangeEditedBy);
+    });
+
+    Object.keys(map).forEach(k => {
+      // 同じ日に複数あるときは、確かなもの（手直し・範囲表）を優先して1つに絞る
+      const byDate = {};
+      map[k].forEach(x => {
+        const cur = byDate[x.date];
+        if (!cur || (x.sure && !cur.sure)) byDate[x.date] = x;
+      });
+      map[k] = Object.values(byDate).sort((a, b) => a.date < b.date ? -1 : 1);
+    });
     return map;
   }
 
@@ -7175,7 +7204,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <td style="font-size:11px">
           ${matchName
             ? `<span style="color:#059669">✓ ${esc(matchName)}</span><br><span style="color:var(--muted)">いまの範囲：${esc(matchRange)}</span>`
-            : '<span style="color:#DC2626">該当するテストが見つかりません</span>'}
+            : `<span style="color:#DC2626">該当するテストが見つかりません</span>
+                ${row.noMatchWhy ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(row.noMatchWhy)}</div>` : ''}`}
         </td>
         <td style="text-align:center">
           ${matchName && unitText
@@ -7264,6 +7294,36 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 学年最初のテストなら Unit 0 から。
       const found = findTestByDateEx(hist, school, grade, date);
       const match = found.match;
+      // 【結びつかないとき、その理由を出す】
+      // 「見つかりません」だけでは、次に何をすればいいのか分からない。
+      // 学校が無いのか、学年が違うのか、日付がずれているのかで、やることが変わる。
+      let noMatchWhy = '';
+      if (!match) {
+        const nameOf2 = h => canonSchool(h.school || extractSchoolName(h.name || ''));
+        if (!school)      noMatchWhy = '学校名が読み取れていません。「学校名・学年を直す」で入れてください';
+        else if (!date)   noMatchWhy = '日付が読み取れていません。「学校名・学年を直す」で入れてください';
+        else {
+          const same = hist.filter(h => nameOf2(h) === canonSchool(school));
+          if (!same.length) {
+            noMatchWhy = `「${school}」のテストが1件も分析されていません。先にテストPDFを分析してください`;
+          } else {
+            const sameG = same.filter(h => !grade || normalizeGrade(h.grade || '') === grade);
+            if (!sameG.length) {
+              noMatchWhy = `「${school}」の分析はありますが、${grade} のテストがありません。学年を確かめてください`;
+            } else {
+              const near = sameG.map(h => {
+                const hd = h.testDate || extractTestDate(h.name || '');
+                if (!hd) return null;
+                const gap = Math.round(Math.abs(new Date(hd) - new Date(date)) / 86400000);
+                return { hd, gap };
+              }).filter(Boolean).sort((a, b) => a.gap - b.gap)[0];
+              noMatchWhy = near
+                ? `いちばん近いのは ${near.hd}（${near.gap}日ちがい）。日付が違っていれば直してください`
+                : `「${school}」${grade} の分析はありますが、日付が入っていません`;
+            }
+          }
+        }
+      }
       // 【AIが勝手に入れた「教科書の最初のページ」を、ここで打ち消す】
       // 範囲表に「NEW HORIZON 〜P112」と終わりしか書いていないのに、
       // AIが from=6（教科書の最初のページ）を埋めてくることがある。
@@ -7389,8 +7449,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           if (st && fitsPage) {
             chainStart = st;
             chainNote  = prevM.sure
-              ? `前のテスト（${prevM.date} 〜${prevM.end}）を手で直してあるので、その続きから始めました`
-              : `前のテスト（${prevM.date} 〜${prevM.end}）の範囲表に終わりが書いてあるので、その続きから始めました`;
+              ? `前のテスト（${prevM.date} 〜${prevM.end}）は人が確かめた範囲なので、その続きから始めました`
+              : `前のテスト（${prevM.date} 〜${prevM.end}）の続きから始めました`;
           }
         }
       }
@@ -7481,8 +7541,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           const endText = [pt.to_unit, pt.to_lesson].filter(Boolean).join(' ');
           if (endText && rangePos(analyzedStart, gradeNumOf(grade)) <= rangePos(endText, gradeNumOf(grade))) {
             unitText = analyzedStart === endText ? endText : `${analyzedStart} 〜 ${endText}`;
-            startNote = `終わりは範囲表のページどおり。始まりは書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
-                      + (capNote ? `／${capNote}` : '');
+            // 出所を正しく書く（引き継ぎなのに「テスト分析が出した」と書いていた）
+            startNote = chainStart
+              ? `終わりは範囲表のページどおり。${chainNote}`
+              : `終わりは範囲表のページどおり。始まりは書かれていないため、テスト分析が出した ${analyzedStart} を使いました`
+                + (capNote ? `／${capNote}` : '');
           }
         }
       }
@@ -7590,7 +7653,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
                           safe, fixedByHand: !!(fx.school || fx.grade),
-                          testName,
+                          testName, noMatchWhy,
                           matchName:  match ? (match.h.name  || '') : '',
                           matchRange: match ? (match.h.range || '') : '' };
       // 【見た目はここでは作らない】
