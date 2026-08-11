@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v9.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7574,6 +7574,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         warns.push({ text: `写真に書かれた曜日と合わなかったので、日付を ${dateFixedByWeekday} から ${date} に直しました`
                          + `（${esc(r.date_raw || '')}）` });
       }
+      // 【手で直した範囲が、範囲表のページと矛盾していないか】
+      // 以前の版に「片方だけ直すと、始まりに古い推測（Unit 0 など）が残る」不具合があった。
+      // その残骸が「p.13〜28 なのに Unit 0 から」という形で残っている。
+      // ページは紙に書いてある一次情報なので、そこと食い違えば知らせる。
+      if (fx.from && fx.to && r.textbook_from) {
+        const sp = sectionPages(grade, ...(() => {
+          const q = parseRangeText(fx.from);
+          return [q.from_unit || q.to_unit, q.from_lesson || q.to_lesson];
+        })());
+        if (sp && sp.to && sp.to < r.textbook_from - 2) {
+          warns.push({ text: `手で直した始まり「${fx.from}」は教科書 p.${sp.from||'?'}〜${sp.to} のあたりですが、`
+                           + `範囲表には p.${r.textbook_from} からと書かれています。始まりを見直してください`,
+                       needFix: true });
+        }
+      }
       if (startGuessed) {
         warns.push({ text: '始まりは範囲表に書かれていません。アプリが「何回目のテストか」から置いたおよその位置です。'
                          + '写真を見て、違っていれば直してください', needFix: true });
@@ -7761,6 +7776,39 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         </div>
       </div>`;
 
+    // 【まだ分析されていないテストを、まとめて出す】
+    // 「結びつかない60件」を1件ずつ見て回るのは無駄。
+    // どの学校の、いつのテストのPDFを分析すればよいかが一覧で分かれば、
+    // そのぶんだけ分析すれば一気に片づく。
+    const missing = {};
+    Object.keys(syllabusRows).forEach(i => {
+      const row = syllabusRows[i];
+      if (!row || row.readError || row.matchIdx >= 0) return;
+      if (!row.school || !row.grade || !row.date) return;
+      const key = `${row.school}|${row.grade}`;
+      (missing[key] = missing[key] || []).push(row.date);
+    });
+    const missKeys = Object.keys(missing).sort();
+    const missCount = missKeys.reduce((n, k) => n + missing[k].length, 0);
+    const missBox = missKeys.length ? `
+      <div style="margin-bottom:8px;padding:9px 11px;border:1px solid #FCA5A5;border-radius:6px;background:#FEF2F2">
+        <div style="font-size:12px;font-weight:700;color:#B91C1C;margin-bottom:4px">
+          まだ分析されていないテストが ${missCount} 件あります（${missKeys.length} 校）
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">
+          範囲表はありますが、テストPDFの分析がないので結びつけられません。
+          下のPDFを「テストPDF」から分析すれば、まとめて結びつきます。
+        </div>
+        <div style="font-size:11px;line-height:1.9;max-height:150px;overflow:auto">
+          ${missKeys.slice(0, 60).map(k => {
+            const [sc, gr] = k.split('|');
+            const ds = [...new Set(missing[k])].sort();
+            return `<div><b>${esc(sc)}</b> ${esc(gr)}　<span style="color:var(--muted)">${ds.map(esc).join('、')}</span></div>`;
+          }).join('')}
+          ${missKeys.length > 60 ? `<div style="color:var(--muted)">…ほか ${missKeys.length - 60} 校</div>` : ''}
+        </div>
+      </div>` : '';
+
     const nDeleted = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted).length;
     // 写真が無い行の数。範囲を精査している間は、写真がないと正しいか判断できない。
     const nNoPhoto = results.filter((res, i) => !(syllabusFix[i] && syllabusFix[i].deleted)
@@ -7770,6 +7818,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const nTotal   = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
 
     el.innerHTML = `
+      ${missBox}
       ${issueBar}
       <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="deleteUselessSyllabusRows()">
