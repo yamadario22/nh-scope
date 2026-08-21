@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.6</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.7</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6136,7 +6136,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const f = arr[i];
         setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
         if (/^image\//.test(f.type)) {
-          imgs.push({ name: f.name, b64: await fileToSendableBase64(f) });
+          // 【撮影時刻を覚えておく】
+          // 選んだファイルがどの順で渡ってくるかは、OSと写真アプリ任せで保証がない。
+          // 写真そのものが持っている撮影時刻で並べ替えれば、必ず撮った順になる。
+          imgs.push({ name: f.name, b64: await fileToSendableBase64(f), shot: f.lastModified || 0 });
         } else {
           // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
           const buf = await f.arrayBuffer();
@@ -6154,13 +6157,23 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
             imgs.push({
               name: pdf.numPages > 1 ? `${f.name}（${p}ページ目）` : f.name,
-              b64: await toBase64(await pdf.getPage(p), TEST_SCALE_HI)
+              b64: await toBase64(await pdf.getPage(p), TEST_SCALE_HI),
+              // PDFはページ順が確かなので、その順を保つ
+              shot: (f.lastModified || 0) + p
             });
           }
         }
       }
+      // 【撮った順に並べ替える】
+      // 時刻がすべて同じ（パソコンにコピーして書き換わった等）ときは、
+      // 並べ替えても意味がないので、選んだ順のままにする。
+      const shots = imgs.map(x => x.shot || 0);
+      const usable = shots.some(v => v > 0) && new Set(shots).size > 1;
+      if (usable) imgs.sort((a, b) => (a.shot || 0) - (b.shot || 0));
       pendingSyllabus = imgs;
-      setSt(stEl, 'ok', `✅ ${imgs.length}枚読み込み完了 — 範囲を読み取るを押してください`);
+      setSt(stEl, 'ok', `✅ ${imgs.length}枚読み込み完了`
+                      + (usable ? '（撮った順に並べました）' : '')
+                      + ' — 範囲を読み取るを押してください');
       btn.disabled = false;
     } catch (e) {
       setSt(stEl, 'err', '❌ 読み込みに失敗しました: ' + e.message);
@@ -6284,9 +6297,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             }
           } catch(e) { console.warn('手書きの探し直しに失敗:', e); }
         }
-        results.push({ file: img.name, r });
+        results.push({ file: img.name, r, shot: img.shot || 0 });
       } catch (e) {
-        results.push({ file: img.name, error: e.message });
+        results.push({ file: img.name, error: e.message, shot: img.shot || 0 });
       }
     }
 
@@ -6527,6 +6540,29 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                    下の欄にもう1文字打ち足すと絞り込めます（例：「${esc(syllabusHint[i].cands[0])}」）
                  </div>`}
           </div>` : ''}
+        ${(!(syllabusRows[i] && syllabusRows[i].school) && syllabusNearby[i]) ? (() => {
+          const nb = syllabusNearby[i];
+          const same = nb.before && nb.after && nb.before === nb.after;
+          const list = same ? [nb.before] : [nb.before, nb.after].filter(Boolean);
+          return `<div style="margin-bottom:6px;padding:6px;background:#F0FDF4;border-radius:4px">
+            <div style="font-size:11px;color:#059669;margin-bottom:4px">
+              ${same
+                ? `撮った順で、この写真の前も後ろも <b>${esc(nb.before)}</b> です。同じ学校の可能性が高いです`
+                : `撮った順で、${nb.before ? `${nb.beforeGap}枚前が <b>${esc(nb.before)}</b>` : ''}${nb.before && nb.after ? '、' : ''}${nb.after ? `${nb.afterGap}枚後ろが <b>${esc(nb.after)}</b>` : ''} です`}
+            </div>
+            ${list.map(n => `
+              <button class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 10px;margin:2px 4px 0 0"
+                      onclick="syllabusPickSchool(${i},'${esc(n)}')">${esc(n)}</button>`).join('')}
+            ${list.map(n => {
+              const cnt = syllabusRunLength(i, n);
+              return cnt > 1 ? `
+              <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:3px 10px;margin:2px 4px 0 0"
+                      onclick="syllabusFillRunSchool(${i},'${esc(n)}')">${esc(n)} を続きの${cnt}枚にまとめて入れる</button>` : '';
+            }).join('')}
+            <div style="font-size:10px;color:var(--muted);margin-top:4px">
+              写真を見て違っていたら、下の欄に打ち込んでください</div>
+          </div>`;
+        })() : ''}
         <div style="margin-bottom:6px">
           <input type="text" id="sylSchool${i}" value="${esc(pick.school)}"
                  placeholder="中学校名を入力（例：三好）"
@@ -6637,6 +6673,30 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       });
     } catch {}
     return [...set].sort();
+  }
+
+  // 【学校名が読めていない行が、いくつ続いているか】
+  // 撮った順に並んでいるので、続いている空白は同じ学校の束である可能性が高い。
+  function syllabusRunSet(i) {
+    const idxs = Object.keys(syllabusRows).map(Number).sort((a, b) => a - b);
+    const pos = idxs.indexOf(Number(i));
+    if (pos < 0) return [];
+    const run = [Number(i)];
+    for (let k = pos - 1; k >= 0; k--) { if (syllabusRows[idxs[k]].school) break; run.unshift(idxs[k]); }
+    for (let k = pos + 1; k < idxs.length; k++) { if (syllabusRows[idxs[k]].school) break; run.push(idxs[k]); }
+    return run;
+  }
+  function syllabusRunLength(i, name) { return syllabusRunSet(i).length; }
+
+  async function syllabusFillRunSchool(i, name) {
+    const run = syllabusRunSet(i);
+    if (!run.length) return;
+    if (!confirm(`撮った順で続いている ${run.length} 枚に、「${name}」を入れます。\n`
+               + `（学校名が読み取れている写真の手前まで）\n`
+               + `学年と日付は写真ごとに違うので、そのままにします。よろしいですか。`)) return;
+    run.forEach(j => { syllabusFix[j] = Object.assign({}, syllabusFix[j], { school: name }); });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults, run[0]);
   }
 
   function syllabusPickSchool(i, name) {
@@ -7912,6 +7972,27 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         .filter(x => x.iss);
     const counts = {};
     order.forEach(x => { counts[x.iss.prio] = (counts[x.iss.prio] || 0) + 1; });
+    // 【学校名が読めなかった行に、前後の写真の学校を当てる】
+    // 範囲表は学校ごとにまとめて撮る（スキャンする）ので、
+    // すぐ前とすぐ後ろの紙は、ほぼ確実に同じ学校のもの。
+    // レイアウトを見比べるより、撮った順のほうがずっと確かで、費用もかからない。
+    syllabusNearby = {};
+    (function () {
+      const idxs = Object.keys(syllabusRows).map(Number).sort((a, b) => a - b);
+      const pos = {}; idxs.forEach((v, k) => { pos[v] = k; });
+      idxs.forEach(i => {
+        if (syllabusRows[i].school) return;
+        let before = '', after = '', beforeGap = 0, afterGap = 0;
+        for (let k = pos[i] - 1; k >= 0; k--) {
+          if (syllabusRows[idxs[k]].school) { before = syllabusRows[idxs[k]].school; beforeGap = pos[i] - k; break; }
+        }
+        for (let k = pos[i] + 1; k < idxs.length; k++) {
+          if (syllabusRows[idxs[k]].school) { after = syllabusRows[idxs[k]].school; afterGap = k - pos[i]; break; }
+        }
+        if (before || after) syllabusNearby[i] = { before, after, beforeGap, afterGap };
+      });
+    })();
+
     // 【並びは日付の新しい順】
     // 読み込んだファイルの順番は、撮った順・スキャンした順でしかなく、人には意味がない。
     // テストの一覧は時系列で並んでいるのが当たり前なので、初めから新しい順で出す。
@@ -8175,6 +8256,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   let syllabusPick = {};   // 手直しパネルで選んでいる途中の内容
   let syllabusEditOpen = {}; // 読めている行でも、手で直すパネルを開いているもの
   let syllabusHint = {};   // 手書きから絞り込めた学校名の候補
+  let syllabusNearby = {}; // 撮った順で前後にある写真の学校名（学校名が読めなかった行への提案）
 
   // 【手で直した内容は、ここ1か所にまとめる】
   //   行番号 → { school, grade, date, from, to, deleted }
@@ -8301,7 +8383,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     pendingSyllabus = null;
     lastSyllabusResults = null;
     syllabusFix = {}; syllabusUncollected = {};
-    syllabusRows = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {};
+    syllabusRows = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {}; syllabusNearby = {};
     try { await idbSet(IDB_SYLLABUS, null); await idbSet(IDB_SYLLABUS_IMG, null); } catch(e) { console.warn(e); }
     document.getElementById('syllabusResult').innerHTML = '';
     const t = document.getElementById('syllabusTitle');
