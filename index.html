@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.1</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.4</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -834,6 +834,21 @@
     </div>
   </div>
 </div>
+<!-- 10月にテストがある学校を選ぶ -->
+<div class="modal-ov" id="octModal" style="display:none" onclick="if(event.target===this)closeOctSchools()">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title">🍁 10月にテストがある学校</div>
+      <button class="modal-close" onclick="closeOctSchools()">✕</button>
+    </div>
+    <div class="modal-body" id="octBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="closeOctSchools()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveOctSchoolsFromUI()">保存する</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- 範囲を手で直す -->
 <div class="modal-ov" id="rangeEditModal" style="display:none" onclick="if(event.target===this)closeRangeEdit()">
@@ -3944,6 +3959,35 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return getSemester2Schools().has(String(school || '').trim());
   }
 
+  // 【10月に定期テストがある学校】
+  // 10月に2学期中間を行うのは、東三河（豊橋・豊川）のごく一部の学校だけ。
+  // ここに載っていない学校の10月の日付は、月の読み違いを疑って警告を出す。
+  // 学校が増えたときは画面から足せる（コードを触らなくてよい）。
+  const OCT_KEY = 'nhscope_oct_schools';
+  const OCT_DEFAULT = ['吉田方中', '伊奈中', '豊橋北部中'];
+  function getOctSchools() {
+    try {
+      const raw = localStorage.getItem(OCT_KEY);
+      if (raw == null) return new Set(OCT_DEFAULT);          // 一度も設定していないときは初期値
+      const a = JSON.parse(raw);
+      return new Set(Array.isArray(a) ? a : OCT_DEFAULT);
+    } catch { return new Set(OCT_DEFAULT); }
+  }
+  function saveOctSchools(set) {
+    try { localStorage.setItem(OCT_KEY, JSON.stringify([...set])); } catch {}
+  }
+  // 「北部中」と「豊橋北部中」のような書き方の違いで取り違えないよう、両方向で見る
+  function hasOctTest(school) {
+    const a = canonSchool(school);
+    if (!a) return false;
+    for (const x of getOctSchools()) {
+      const b = canonSchool(x);
+      if (!b) continue;
+      if (a === b || a.includes(b) || b.includes(a)) return true;
+    }
+    return false;
+  }
+
   // 日付から「テストの時期」を求める。範囲表と照らすとき、時期で探せると便利。
   function testTermOf(h) {
     const d = h.testDate || extractTestDate(h.name || '');
@@ -4046,6 +4090,59 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     closeSemester2();
     renderTestHistory();
     alert(`${set.size}校を2学期制（前期・後期）として保存しました。`);
+  }
+
+  // 【10月にテストがある学校を選ぶ画面】
+  // 分析済みの学校に加えて、いま登録してある学校も必ず並べる。
+  // 並べないまま保存すると、画面に出ていない学校が黙って消えてしまう。
+  function openOctSchools() {
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    const inData = hist.map(h => canonSchool(h.school || extractSchoolName(h.name || ''))).filter(Boolean);
+    const cur = getOctSchools();
+    const schools = [...new Set([...inData, ...cur])].sort();
+    document.getElementById('octBody').innerHTML =
+      `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+         10月に2学期中間テストを行う学校にチェックを入れてください。<br>
+         <b>チェックした学校だけ</b>、10月の日付でも警告が出ません。
+         それ以外の学校に10月の日付が入っていたら、月の読み違いとして知らせます。
+       </div>
+       <div style="display:flex;gap:6px;margin-bottom:10px">
+         <input id="octAddInput" placeholder="一覧にない学校名を入れて追加"
+                style="flex:1;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px">
+         <button class="btn btn-secondary btn-sm" onclick="addOctSchool()">追加する</button>
+       </div>
+       <div id="octList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px">
+         ${schools.map(x => octChkHtml(x, cur.has(x) || hasOctTest(x))).join('')}
+       </div>`;
+    document.getElementById('octModal').style.display = 'flex';
+  }
+  function octChkHtml(name, on) {
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:4px;cursor:pointer;border-radius:4px">
+              <input type="checkbox" class="oct-chk" data-school="${esc(name)}" ${on?'checked':''} style="cursor:pointer">
+              <span>${esc(name)}</span>
+            </label>`;
+  }
+  function addOctSchool() {
+    const el = document.getElementById('octAddInput');
+    const name = canonSchool(el ? el.value : '');
+    if (!name) { alert('学校名を入れてください。'); return; }
+    const exists = [...document.querySelectorAll('.oct-chk')].find(c => c.dataset.school === name);
+    if (exists) { exists.checked = true; el.value = ''; alert(`${name} はすでに一覧にあります。チェックを入れました。`); return; }
+    document.getElementById('octList').insertAdjacentHTML('beforeend', octChkHtml(name, true));
+    el.value = '';
+  }
+  function closeOctSchools() {
+    const m = document.getElementById('octModal');
+    if (m) m.style.display = 'none';
+  }
+  function saveOctSchoolsFromUI() {
+    const set = new Set();
+    document.querySelectorAll('.oct-chk').forEach(c => { if (c.checked) set.add(c.dataset.school); });
+    saveOctSchools(set);
+    closeOctSchools();
+    try { renderSyllabusResult(lastSyllabusResults); } catch {}
+    alert(`${set.size}校を「10月にテストがある学校」として保存しました。`);
   }
 
   function setHistFilter(key, value) {
@@ -4222,6 +4319,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             <span style="display:flex;gap:6px">
               <button class="btn btn-ghost btn-sm" onclick="openSemester2()"
                 title="西三河の学校は2学期制（前期・後期）です。学校ごとに設定すると、テストの時期が正しく表示されます">📅 学期制の設定</button>
+              <button class="btn btn-ghost btn-sm" onclick="openOctSchools()"
+                title="10月に2学期中間テストを行う学校を登録します。登録していない学校に10月の日付が入っていたら、月の読み違いとして警告を出します">🍁 10月にテストがある学校</button>
               <button class="btn btn-ghost btn-sm" onclick="rejudgeTestRanges()"
                 title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
               <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
@@ -6043,6 +6142,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           const buf = await f.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
           const MAX_PAGES = 40;
+          // 【入りきらないページを黙って捨てない】
+          // 1つのPDFに何十枚もまとめると、41枚目以降が何も言わずに消えていた。
+          // 気づかないまま「読み取った」と思い込むのが一番まずいので、はっきり出す。
+          if (pdf.numPages > MAX_PAGES) {
+            alert(`${f.name} は ${pdf.numPages} ページありますが、`
+                + `一度に読めるのは ${MAX_PAGES} ページまでです。\n`
+                + `最初の ${MAX_PAGES} ページだけ読み込みます。\n`
+                + `残りは別のPDFに分けて、あとから追加で読み取ってください（前の分は消えません）。`);
+          }
           for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
             imgs.push({
               name: pdf.numPages > 1 ? `${f.name}（${p}ページ目）` : f.name,
@@ -6094,11 +6202,43 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const stEl = document.getElementById('syllabusStatus');
     const btn  = document.getElementById('syllabusStartBtn');
     btn.disabled = true;
-    const results = [];
 
-    for (let i = 0; i < pendingSyllabus.length; i++) {
-      setSt(stEl, 'load', `${i+1}/${pendingSyllabus.length}枚目を読み取り中...`);
-      const img = pendingSyllabus[i];
+    // 【前に読み取った分に足していく】
+    // 以前はここで前の結果と手直しを捨てていた。西三河を読み終えたあとに
+    // 東三河を読ませると、それまでの手直しが丸ごと消える作りだった。
+    const prevResults = (lastSyllabusResults || []).slice();
+    let prevImgs = [];
+    if (prevResults.length) {
+      try { prevImgs = (await idbGet(IDB_SYLLABUS_IMG)) || []; } catch { prevImgs = []; }
+      if (!Array.isArray(prevImgs)) prevImgs = [];
+      // 写真は行の番号で引くので、数がずれると別の行の写真が出てしまう。必ず揃える。
+      while (prevImgs.length < prevResults.length) prevImgs.push({ name: '', b64: '' });
+      prevImgs = prevImgs.slice(0, prevResults.length);
+    }
+
+    // 【同じ紙を二度読まない】読み取り済みと同じ名前のものは送らない（そのぶん費用がかからない）
+    const known = new Set(prevResults.map(x => x && x.file).filter(Boolean));
+    const todo  = pendingSyllabus.filter(x => !known.has(x.name));
+    const skipped = pendingSyllabus.length - todo.length;
+    if (!todo.length) {
+      setSt(stEl, 'ok', `選んだ ${pendingSyllabus.length} 枚は、すべて読み取り済みでした（送っていないので費用はかかりません）`);
+      alert(`選んだ ${pendingSyllabus.length} 枚は、すべて読み取り済みの紙と同じ名前でした。\n`
+          + `AIには送っていないので、費用はかかりません。\n`
+          + `読み直したい行があるときは、その行の「この1枚を読み直す」を使ってください。`);
+      pendingSyllabus = prevImgs;
+      btn.disabled = false;
+      renderSyllabusResult(prevResults);
+      return;
+    }
+    if (skipped) {
+      setSt(stEl, 'load', `${skipped}枚は読み取り済みなので飛ばします。残り${todo.length}枚を読み取ります...`);
+    }
+
+    const results = [];
+    for (let i = 0; i < todo.length; i++) {
+      setSt(stEl, 'load', `${i+1}/${todo.length}枚目を読み取り中...`
+                        + (prevResults.length ? `（読み取り済み ${prevResults.length} 枚に追加します）` : ''));
+      const img = todo[i];
       try {
         const r = await callGeminiJSON(
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
@@ -6137,11 +6277,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
     }
 
-    setSt(stEl, 'ok', `✅ ${results.length}枚の読み取りが終わりました`);
+    setSt(stEl, 'ok', `✅ ${results.length}枚の読み取りが終わりました`
+                    + (skipped ? `（読み取り済み ${skipped} 枚は飛ばしました）` : '')
+                    + (prevResults.length ? ` — 合計 ${prevResults.length + results.length} 枚` : ''));
     btn.disabled = false;
-    // 新しく読み取ったら、前の手直しは対応先が変わるので捨てる
-    syllabusFix = {}; syllabusPick = {}; syllabusEditOpen = {}; syllabusHint = {};
-    renderSyllabusResult(results);
+    // 【手直しは消さない】新しい分は後ろに足すので、前の行の番号は変わらない。
+    // 開いていた編集パネルだけ閉じる（画面の見た目を整えるため）。
+    syllabusEditOpen = {};
+    pendingSyllabus = prevImgs.concat(todo);
+    renderSyllabusResult(prevResults.concat(results), prevResults.length);
     // 【ここで保存する】保存しないと、リロードした時点で読み直し（＝費用）になる。
     // 写真を保存するのはここだけ（重いので手直しのたびには書かない）。
     saveSyllabusState(true);
@@ -6525,11 +6669,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 曜日はカレンダーで決まるので、推測ではなく計算で正せる。
   const WD = ['日','月','火','水','木','金','土'];
 
-  // 定期テストがある月かどうか（凌央さんに教わった実際の日程）
-  //   5月・6月・9月・10月・11月・12月・1月・2月・3月上旬にはある
-  //   4月・7月・8月・3月下旬には無い
-  function isTestMonth(mo) {
-    return (mo >= 5 && mo <= 6) || (mo >= 9 && mo <= 12) || (mo >= 1 && mo <= 3);
+  // 【定期テストがある時期】ここが唯一の決め事。他の場所はここを見る。
+  //   3学期制：①5月中旬〜下旬 ②6月中旬〜下旬 ③9月中旬〜下旬 ④11月中旬 ⑤1月〜2月
+  //   2学期制（西三河）：①5月末〜6月中旬 ②9月頭〜9月中旬 ③11月中旬 ④1月〜2月
+  //   例外：10月は、東三河（豊橋・豊川）の3学期制校のごく一部だけ2学期中間を行う
+  //   無い月：4月・7月・8月・12月・3月下旬
+  //   ※以前は9〜12月をひとまとめにしていたため、12月の日付が素通りしていた
+  //     （実例：岡崎北中 中1 2025-12-11。曜日も合ってしまい気づけなかった）
+  function isTestMonth(mo, da) {
+    if (mo === 4 || mo === 7 || mo === 8 || mo === 12) return false;
+    if (mo === 3 && (da || 1) >= 20) return false;
+    return mo >= 1 && mo <= 12;
   }
 
   function writtenWeekday(raw) {
@@ -6561,13 +6711,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 【定期テストがある時期にしか動かさない】
       // 2月のテストが12月に飛ぶなど、時期として無理のある移動を止める。
       const mm = d.getMonth() + 1;
-      if (!isTestMonth(mm)) continue;
+      if (!isTestMonth(mm, da)) continue;
       if (weekdayOf(iso) === want) cands.push({ iso, gap: Math.abs(k) });
     }
     if (!cands.length) return null;
-    // 元の月が定期テストの時期なら、大きく動かすのは危ない。1か月差だけを認める。
-    const baseIsTestMonth = isTestMonth(mo);
-    const use = baseIsTestMonth ? cands.filter(c => c.gap === 1) : cands;
+    // 【動かしてよいのは1か月差まで】
+    // 以前は「元の月がテスト月でなければ2か月差も認める」としていた。
+    // 12月をテストのない月に直したとたん、12月12日が2026年2月12日まで飛んだ。
+    // どの月も前後1か月以内に必ずテスト月があるので、2か月差を認める意味はない。
+    // 1か月差で決まらないものは、直さずに警告を出して凌央さんに判断してもらう。
+    const use = cands.filter(c => c.gap === 1);
     if (!use.length) return null;
     use.sort((a, b) => a.gap - b.gap);
     if (use.length > 1 && use[0].gap === use[1].gap) return null;
@@ -6632,7 +6785,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 「押しても写真が見られない」状態になっていた。画面の中で開くようにする。
   function openSyllabusPhoto(i) {
     const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
-    if (!img) { alert('この行の写真は保存されていません。'); return; }
+    if (!img || !img.b64) { alert('この行の写真は保存されていません。'); return; }
     const ov = document.getElementById('photoModal');
     document.getElementById('photoModalImg').src = 'data:image/jpeg;base64,' + img.b64;
     document.getElementById('photoModalName').textContent = img.name || '';
@@ -6916,21 +7069,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   const NOT_REGULAR_MAYBE = /(学力検査|学力テスト|診断テスト)/;
 
   // 【定期テストがない時期の紙】
-  // 定期テストは 5〜6月／9〜10月／11〜12月／1〜3月上旬 にしかない。
-  // 7〜8月や3月下旬の日付なら、夏休みの課題範囲など別の紙の可能性が高い。
-  // 名前が空だと名前では拾えないので、日付でも候補に出す。
+  // 判定は isTestMonth に一本化してある（以前はここと2か所に書いてあり、
+  // 12月の扱いが食い違っていた）。
+  // 4月・7月・8月・12月・3月下旬の日付なら、夏休みの課題範囲など
+  // 別の紙か、月の読み違いの可能性が高い。
   function isOffSeasonDate(d) {
     const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/);
     if (!m) return false;
-    const mo = parseInt(m[1]), da = parseInt(m[2]);
-    // 【定期テストがある時期は決まっている】
-    //   3学期制：5月中旬〜下旬／6月中旬〜下旬／9月中旬〜下旬／11月中旬／1月〜2月
-    //   2学期制：5月末〜6月中旬／9月頭〜9月中旬／11月中旬／1月〜2月
-    // 7月・8月・4月・3月下旬にテストは無い。
-    if (mo === 7 || mo === 8) return true;
-    if (mo === 4) return true;
-    if (mo === 3 && da >= 20) return true;
-    return false;
+    return !isTestMonth(parseInt(m[1]), parseInt(m[2]));
   }
 
   async function deleteNonRegularSyllabusRows() {
@@ -6948,7 +7094,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       '定期テストでない行を選んで消す',
       '写真を見て、消していいものにチェックを入れてください。'
       + '「学力テスト」「学力検査」は学校によっては定期テストなので、最初からチェックを外してあります。'
-      + '7〜8月・4月・3月下旬の日付のものは、定期テストがない時期なので候補に入れてあります。',
+      + '4月・7〜8月・12月・3月下旬の日付のものは、定期テストがない時期なので候補に入れてあります。',
       items, it => it._sure);
     if (!picked || !picked.length) return;
     picked.forEach(i => { syllabusFix[i] = Object.assign({}, syllabusFix[i], { deleted: true }); });
@@ -7190,7 +7336,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
           ${warns.length ? `
             <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
-              ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}</div>`).join('')}
+              ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}${
+                  w.kind === 'octDate'
+                    ? ` <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px;margin-left:4px"
+                               onclick="openOctSchools()">🍁 この学校を登録する</button>`
+                    : ''}</div>`).join('')}
               <div style="margin-top:5px">
                 <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
                         onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
@@ -7577,11 +7727,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
       const warns = [];
       // 【テストがない時期の日付は、読み取り間違いを疑う】
-      // 7月・8月・4月・3月下旬に定期テストは無い。
+      // 4月・7月・8月・12月・3月下旬に定期テストは無い。
       // ここに日付が入っているなら、月の読み違いか、そもそも定期テストの紙ではない。
       if (date && isOffSeasonDate(date)) {
         warns.push({ text: `日付が ${date} になっていますが、この時期に定期テストはありません。`
                          + `月の読み違いか、定期テストの範囲表ではない可能性があります`, needFix: true });
+      }
+      // 【10月にテストがあるのは、登録した学校だけ】
+      // 10月に2学期中間を行う学校は実在するので、一律に警告は出さない。
+      // 登録されていない学校の10月は、月の読み違いを疑って知らせる。
+      if (date && /^\d{4}-10-/.test(date) && school && !hasOctTest(school)) {
+        warns.push({ kind: 'octDate',
+                     text: `日付が ${date} になっていますが、${school} は「10月にテストがある学校」に`
+                         + `登録されていません。10月に定期テストを行うのは東三河のごく一部の学校だけなので、`
+                         + `月の読み違いの可能性があります。10月で正しいなら、右のボタンから登録してください`,
+                     needFix: true });
       }
       if (dateFixedByWeekday) {
         warns.push({ text: `写真に書かれた曜日と合わなかったので、日付を ${dateFixedByWeekday} から ${date} に直しました`
@@ -7713,6 +7873,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 日付が無いと、前のテストも履歴も特定できず、範囲がまるごと決まらない。
       // 「始まりが推測」に混ざっていて見つけにくかった。
       if (!row.date) return { prio: 2, label: '日付が読めていない' };
+      // 【テストがない時期の日付は、必ず人が見る】
+      // 月を読み違えていると、範囲がまるごと別のテストに結びつく。
+      // 他の分類に吸われると気づけないので、早い段階で分ける。
+      if (isOffSeasonDate(row.date)
+          || (row.warns || []).some(x => x.kind === 'octDate'))
+        return { prio: 2.5, label: 'テストがない時期の日付' };
       if (dupIdx.has(String(i))) return { prio: 3, label: '同じテストが複数' };
       const gN = gradeNumOf(row.grade);
       if (row.unitText && gN) {
@@ -7775,7 +7941,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 onclick="goSylPage(${syllabusPage+1})">次 →</button>
       </div>` : '';
 
-    const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 3:'同じテストが複数',
+    const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 2.5:'テストがない時期の日付', 3:'同じテストが複数',
                     4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている',
                     7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし', 10:'未回収' };
     const issueBar = `
@@ -7790,7 +7956,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す</button>
         </div>
         <div style="font-size:11px;color:var(--muted);line-height:1.9">
-          ${[1,2,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
+          ${[1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
         </div>
       </div>`;
 
