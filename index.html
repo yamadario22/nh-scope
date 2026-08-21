@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.11</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.12</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6677,6 +6677,52 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 学校名・学年が読めなかった行に出すパネル。
   // 写真そのものを見ないと判断できないので、写真を一緒に出す。
   // 写真はこの場で見るためだけのもので、保存はしない。
+  // 【前後の写真を並べて見せる】
+  // 「前も後ろも◯◯中です」と文字で言われても、本人には確かめようがない。
+  // 撮った順で前後3枚ずつを実際に並べ、目で見て判断できるようにする。
+  // 1日1枚の範囲表では、学校名・学年・月が最初のページにしか無いことが多く、
+  // 前のページを見ないと決められない。
+  function syllabusNeighborStrip(i) {
+    const idxs = Object.keys(syllabusRows).map(Number).sort((a, b) => a - b);
+    const pos = idxs.indexOf(Number(i));
+    if (pos < 0) return '';
+    const near = [];
+    for (let k = Math.max(0, pos - 3); k <= Math.min(idxs.length - 1, pos + 3); k++) near.push(idxs[k]);
+    if (near.length <= 1) return '';
+
+    const cell = j => {
+      const im = (pendingSyllabus && pendingSyllabus[j]) ? pendingSyllabus[j] : null;
+      const rw = syllabusRows[j] || {};
+      const me = (Number(j) === Number(i));
+      const dist = idxs.indexOf(Number(j)) - pos;
+      const tag = me ? 'この写真' : (dist < 0 ? `${-dist}枚前` : `${dist}枚後`);
+      const label = [rw.school || '学校名なし', rw.grade || '', rw.date || '日付なし']
+                      .filter(Boolean).join(' ');
+      return `<div style="width:104px;flex:0 0 auto;text-align:center">
+        <div style="font-size:10px;color:${me ? '#B45309' : 'var(--muted)'};font-weight:${me ? '700' : '400'}">${tag}</div>
+        ${(im && im.b64)
+          ? `<img src="data:image/jpeg;base64,${im.b64}" alt="${esc(tag)}"
+                  style="width:104px;height:78px;object-fit:cover;border-radius:4px;cursor:zoom-in;
+                         border:${me ? '2px solid #F59E0B' : '1px solid var(--line)'}"
+                  onclick="openSyllabusPhoto(${j})">`
+          : `<div style="width:104px;height:78px;border:1px dashed var(--line);border-radius:4px;
+                         display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted)">
+               写真なし</div>`}
+        <div style="font-size:9px;color:var(--muted);line-height:1.3;margin-top:2px;
+                    word-break:break-all">${esc(label)}</div>
+        ${(!me && rw.school) ? `
+          <button class="btn btn-secondary btn-sm" style="font-size:9px;padding:1px 5px;margin-top:2px"
+                  onclick="syllabusPickSchool(${i},'${esc(rw.school)}')">この学校にする</button>` : ''}
+      </div>`;
+    };
+
+    return `<div style="margin-bottom:8px;padding:6px;background:#F8FAFC;border:1px solid var(--line);border-radius:4px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+        撮った順に並べた前後の写真です。クリックで大きく表示します</div>
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">${near.map(cell).join('')}</div>
+    </div>`;
+  }
+
   function syllabusFixPanel(i, school, grade) {
     const img = (pendingSyllabus && pendingSyllabus[i]) ? pendingSyllabus[i] : null;
     // 候補が多いときは、手書きの1文字を入力欄に先に入れておく。
@@ -6705,6 +6751,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
              onclick="openSyllabusPhoto(${i})">
           <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
             クリックでさらに大きく表示</div>` : ''}
+        ${syllabusNeighborStrip(i)}
         ${(syllabusHint[i] && syllabusHint[i].cands.length) ? `
           <div style="margin-bottom:6px;padding:6px;background:#EFF6FF;border-radius:4px">
             ${syllabusHint[i].cands.length <= 5
