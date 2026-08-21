@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.4</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.6</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6082,7 +6082,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const f = arr[i];
         setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
         if (/^image\//.test(f.type)) {
-          byName[f.name] = [{ name: f.name, b64: await fileToBase64(f) }];
+          byName[f.name] = [{ name: f.name, b64: await fileToSendableBase64(f) }];
         } else {
           // 読み取ったときとまったく同じ名前・同じ順序になるようにそろえる
           const buf = await f.arrayBuffer();
@@ -6136,7 +6136,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const f = arr[i];
         setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
         if (/^image\//.test(f.type)) {
-          imgs.push({ name: f.name, b64: await fileToBase64(f) });
+          imgs.push({ name: f.name, b64: await fileToSendableBase64(f) });
         } else {
           // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
           const buf = await f.arrayBuffer();
@@ -6164,6 +6164,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       btn.disabled = false;
     } catch (e) {
       setSt(stEl, 'err', '❌ 読み込みに失敗しました: ' + e.message);
+    }
+  }
+
+  // 【写真は必ず縮めてから送る】
+  // 範囲表の写真だけ、生のまま（1枚3〜8MB）送っていた。PDF経由は縮小済みなので、
+  // 同じ紙でも写真のほうが費用が高く、リクエスト上限で失敗しやすかった。
+  // 縮小できない形式（HEICなど、ブラウザが開けない画像）のときは、
+  // 止めずに生のまま送る。読めないより、費用が高くても読めたほうがよい。
+  async function fileToSendableBase64(file) {
+    try { return await fileToResizedBase64(file); }
+    catch (e) {
+      console.warn('写真の縮小に失敗したので、そのまま送ります:', file && file.name, e);
+      return await fileToBase64(file);
     }
   }
 
@@ -7899,10 +7912,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         .filter(x => x.iss);
     const counts = {};
     order.forEach(x => { counts[x.iss.prio] = (counts[x.iss.prio] || 0) + 1; });
+    // 【並びは日付の新しい順】
+    // 読み込んだファイルの順番は、撮った順・スキャンした順でしかなく、人には意味がない。
+    // テストの一覧は時系列で並んでいるのが当たり前なので、初めから新しい順で出す。
+    // 日付が読めていない行は、直さないと何も決まらないので先頭に置く。
+    const _dateOf = i => String((syllabusRows[i] || {}).date || '');
+    const byDateDesc = (a, b) => {
+      const da = _dateOf(a.i), db = _dateOf(b.i);
+      if (da !== db) {
+        if (!da) return -1;
+        if (!db) return 1;
+        return da < db ? 1 : -1;
+      }
+      return (+a.i) - (+b.i);
+    };
     if (syllabusSortIssues) {
-      order.sort((a, b) => a.iss.prio - b.iss.prio || (+a.i) - (+b.i));
+      order.sort((a, b) => a.iss.prio - b.iss.prio || byDateDesc(a, b));
     } else {
-      order.sort((a, b) => (+a.i) - (+b.i));
+      order.sort(byDateDesc);
     }
     // 【チェックの初期値をここで決める】
     //   ・安全と判断できた行は最初から入れる
