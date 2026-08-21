@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.8</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.9</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6120,11 +6120,31 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   async function onSyllabusFilesSelected(files) {
     // 写真（画像）でもPDFでも受け取る。事務所でスキャンしたPDFをそのまま読めるようにする。
-    const arr = Array.from(files || []).filter(f =>
-      /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    // 【種類の見分けは、名前の拡張子でも行う】
+    // ブラウザによっては、HEICなど見慣れない画像の種類を空っぽで返してくる。
+    // 種類だけで判定すると、ふつうの写真まで弾かれてしまう。
+    const all = Array.from(files || []);
+    const IMG_EXT  = /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i;
+    const HEIC_EXT = /\.(heic|heif)$/i;
+    const isPdf = f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+    const isImg = f => (/^image\//.test(f.type) && !/heic|heif/i.test(f.type)) || IMG_EXT.test(f.name);
+    const isHeic = f => HEIC_EXT.test(f.name) || /heic|heif/i.test(f.type);
+    const arr = all.filter(f => isImg(f) || isHeic(f) || isPdf(f));
     const stEl = document.getElementById('syllabusStatus');
     const btn  = document.getElementById('syllabusStartBtn');
-    if (!arr.length) { setSt(stEl, 'err', '画像またはPDFを選んでください'); return; }
+    const nHeic = all.filter(isHeic).length;
+
+    if (!arr.length) {
+      // どんな種類を選んだのかを画面に出す。原因が分からないまま止まるのがいちばん困る。
+      const kinds = [...new Set(all.map(f =>
+        (String(f.name || '').match(/\.[^.\\/]+$/) || ['（拡張子なし）'])[0].toLowerCase()))];
+      const hasZip = kinds.some(k => k === '.zip');
+      setSt(stEl, 'err',
+        `読み込める写真がありませんでした。選んだファイルの種類：${kinds.join('、') || '不明'}`
+        + (hasZip ? ' ／ ZIPのままでは読めません。右クリック →「すべて展開」してから、中の写真を選んでください'
+                 : ' ／ 写真（.jpg .png）かPDFを選んでください'));
+      return;
+    }
 
     // 【一度に多すぎると、読み込み中にブラウザが力尽きる】
     // 写真1枚ごとに、撮影日時を読む・縮める・保存する、という作業が要る。
@@ -6148,14 +6168,28 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     try {
       const imgs = [];
       for (let i = 0; i < arr.length; i++) {
-        const f = arr[i];
-        setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
-        if (/^image\//.test(f.type)) {
+        let f = arr[i];
+        setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`
+                          + (nHeic ? `（HEICの変換に少し時間がかかります）` : ''));
+        // 【HEICはここでJPEGに変える】
+        // 撮影日時は変換すると消えることがあるので、変換する前の写真から先に読む。
+        let heicShot = 0;
+        if (isHeic(f)) {
+          heicShot = await readExifShotTime(f);
+          try { f = await heicToJpeg(f); }
+          catch (e) {
+            setSt(stEl, 'err', `HEICの変換に失敗しました：${e && e.message ? e.message : e}`);
+            btn.disabled = true;
+            return;
+          }
+        }
+        // 種類が空で返ってくる写真があるので、選ぶときと同じ見分け方をする
+        if (isImg(f)) {
           // 【撮影時刻を覚えておく】
           // 選んだファイルがどの順で渡ってくるかは、OSと写真アプリ任せで保証がない。
           // 写真そのものが持っている撮影時刻で並べ替えれば、必ず撮った順になる。
           // 写真の中の撮影日時を優先。読めないときだけファイルの更新日時を使う。
-          const shot = (await readExifShotTime(f)) || f.lastModified || 0;
+          const shot = heicShot || (await readExifShotTime(f)) || f.lastModified || 0;
           imgs.push({ name: f.name, b64: await fileToSendableBase64(f), shot });
         } else {
           // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
@@ -6189,6 +6223,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (usable) imgs.sort((a, b) => (a.shot || 0) - (b.shot || 0));
       pendingSyllabus = imgs;
       setSt(stEl, 'ok', `✅ ${imgs.length}枚読み込み完了`
+                      + (nHeic ? `（HEIC ${nHeic}枚をJPEGに変換しました）` : '')
                       + (usable ? '（撮った順に並べました）' : '')
                       + ' — 範囲を読み取るを押してください');
       btn.disabled = false;
@@ -6198,69 +6233,123 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 【写真の中に埋め込まれた撮影日時を読む】
-  // ファイルの更新日時は、パソコンにコピーしたりiCloud経由で落とすと
+  // ファイルの更新日時は、パソコンにコピーしたりGoogleフォトから落とすと
   // 転送した時刻に書き換わることがある。500枚が全部同じ時刻になると、
   // 「撮った順」が分からなくなり、前後の写真から学校名を当てられなくなる。
   // 写真そのものの中（EXIF）にある撮影日時は、転送しても書き換わらない。
+  // JPEGでもHEIC（iPhoneの標準形式）でも、同じ中身の作りで入っている。
+
+  // EXIFの本体（TIFF形式）から撮影日時を取り出す
+  function tiffShotTime(dv, tiff) {
+    try {
+      const le = dv.getUint16(tiff) === 0x4949;              // バイトの並び順
+      const ifd0 = tiff + dv.getUint32(tiff + 4, le);
+      const readAscii = (o, n) => {
+        let t = '';
+        for (let k = 0; k < n && tiff + o + k < dv.byteLength; k++) {
+          const c = dv.getUint8(tiff + o + k);
+          if (!c) break;
+          t += String.fromCharCode(c);
+        }
+        return t;
+      };
+      const scanIfd = (base, want) => {
+        if (base + 2 > dv.byteLength || base < 0) return null;
+        const n = dv.getUint16(base, le);
+        if (n > 512) return null;                            // 壊れた値で暴走させない
+        for (let k = 0; k < n; k++) {
+          const e = base + 2 + k * 12;
+          if (e + 12 > dv.byteLength) break;
+          const tag = dv.getUint16(e, le);
+          if (want.indexOf(tag) < 0) continue;
+          return { tag, cnt: dv.getUint32(e + 4, le), val: dv.getUint32(e + 8, le) };
+        }
+        return null;
+      };
+      const ptr = scanIfd(ifd0, [0x8769]);                   // 撮影情報のある場所への案内
+      let hit = ptr ? scanIfd(tiff + ptr.val, [0x9003, 0x9004]) : null;
+      if (!hit) hit = scanIfd(ifd0, [0x0132]);               // 無ければ更新日時
+      if (!hit) return 0;
+      const str = readAscii(hit.val, Math.min(hit.cnt, 20)); // "2026:08:21 11:52:20"
+      const m = str.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+      if (!m) return 0;
+      const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+      return isNaN(t) ? 0 : t;
+    } catch (e) { return 0; }
+  }
+
   async function readExifShotTime(file) {
     try {
-      // 先頭の一部だけ読めばよい（EXIFはファイルの先頭に入っている）
-      const buf = await file.slice(0, 256 * 1024).arrayBuffer();
+      // 先頭の一部だけ読めばよい（EXIFはファイルの前のほうに入っている）
+      const buf = await file.slice(0, 512 * 1024).arrayBuffer();
       const dv = new DataView(buf);
-      if (dv.byteLength < 4 || dv.getUint16(0) !== 0xFFD8) return 0;   // JPEGでなければあきらめる
-      let off = 2;
-      while (off + 4 < dv.byteLength) {
-        if (dv.getUint8(off) !== 0xFF) break;
-        const marker = dv.getUint8(off + 1);
-        const size   = dv.getUint16(off + 2);
-        if (marker === 0xE1) {                                          // APP1（ここにEXIFが入る）
-          const start = off + 4;
-          if (dv.getUint32(start) !== 0x45786966) return 0;             // "Exif"
-          const tiff = start + 6;
-          const le = dv.getUint16(tiff) === 0x4949;                     // バイトの並び順
-          const ifd0 = tiff + dv.getUint32(tiff + 4, le);
-          const readAscii = (o, n) => {
-            let t = '';
-            for (let k = 0; k < n && tiff + o + k < dv.byteLength; k++) {
-              const c = dv.getUint8(tiff + o + k);
-              if (!c) break;
-              t += String.fromCharCode(c);
-            }
-            return t;
-          };
-          const scanIfd = (base, want) => {
-            if (base + 2 > dv.byteLength) return null;
-            const n = dv.getUint16(base, le);
-            for (let k = 0; k < n; k++) {
-              const e = base + 2 + k * 12;
-              if (e + 12 > dv.byteLength) break;
-              const tag = dv.getUint16(e, le);
-              if (want.indexOf(tag) < 0) continue;
-              const cnt = dv.getUint32(e + 4, le);
-              const val = dv.getUint32(e + 8, le);
-              return { tag, cnt, val };
-            }
-            return null;
-          };
-          // ExifIFD（撮影日時が入っている場所）へ辿る
-          const ptr = scanIfd(ifd0, [0x8769]);
-          let hit = ptr ? scanIfd(tiff + ptr.val, [0x9003, 0x9004]) : null;
-          if (!hit) hit = scanIfd(ifd0, [0x0132]);                      // 無ければ更新日時
-          if (!hit) return 0;
-          const str = readAscii(hit.val, Math.min(hit.cnt, 20));        // "2026:08:21 09:15:30"
-          const m = str.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
-          if (!m) return 0;
-          const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
-          return isNaN(t) ? 0 : t;
+      const u8 = new Uint8Array(buf);
+
+      // JPEGなら、APP1という区画を辿るのがいちばん確実
+      if (dv.byteLength > 4 && dv.getUint16(0) === 0xFFD8) {
+        let off = 2;
+        while (off + 4 < dv.byteLength) {
+          if (dv.getUint8(off) !== 0xFF) break;
+          const marker = dv.getUint8(off + 1);
+          const size   = dv.getUint16(off + 2);
+          if (marker === 0xE1 && dv.getUint32(off + 4) === 0x45786966) {
+            const t = tiffShotTime(dv, off + 10);
+            if (t) return t;
+            break;
+          }
+          if (marker === 0xD8 || marker === 0xD9 || marker === 0xDA) break;
+          off += 2 + size;
         }
-        if (marker === 0xD8 || marker === 0xD9 || marker === 0xDA) break;
-        off += 2 + size;
+      }
+
+      // HEICなど、それ以外の形式は「Exif\0\0」の印を探して、その先を読む。
+      // 印の直後がEXIF本体の始まり（II か MM）であることまで確かめてから読む。
+      for (let k = 0; k + 12 < u8.length; k++) {
+        if (u8[k] !== 0x45 || u8[k+1] !== 0x78 || u8[k+2] !== 0x69 || u8[k+3] !== 0x66) continue;
+        if (u8[k+4] !== 0 || u8[k+5] !== 0) continue;
+        const t0 = k + 6;
+        const ok = (u8[t0] === 0x49 && u8[t0+1] === 0x49 && u8[t0+2] === 0x2A && u8[t0+3] === 0x00)
+                || (u8[t0] === 0x4D && u8[t0+1] === 0x4D && u8[t0+2] === 0x00 && u8[t0+3] === 0x2A);
+        if (!ok) continue;
+        const t = tiffShotTime(dv, t0);
+        if (t) return t;
       }
     } catch (e) { console.warn('撮影日時が読めませんでした:', file && file.name, e); }
     return 0;
   }
 
-  // 【写真は必ず縮めてから送る】
+  // 【HEIC（iPhoneの標準形式）をJPEGに変える】
+  // ブラウザはHEICをそのままでは開けない。変換の部品は普段は要らないので、
+  // HEICの写真が選ばれたときだけ、その場で取りに行く（起動を遅くしないため）。
+  let _heicLib = null;
+  function loadHeicLib() {
+    if (window.heic2any) return Promise.resolve(true);
+    if (_heicLib) return _heicLib;
+    _heicLib = new Promise(resolve => {
+      let done = false;
+      const finish = ok => { if (!done) { done = true; resolve(ok); } };
+      // 【返事が来ないまま固まらないようにする】
+      // 読み込みが成功も失敗もしないと、待ち続けて画面が止まったままになる。
+      const timer = setTimeout(() => finish(!!window.heic2any), 20000);
+      const sc = document.createElement('script');
+      sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js';
+      sc.onload  = () => { clearTimeout(timer); finish(!!window.heic2any); };
+      sc.onerror = () => { clearTimeout(timer); finish(false); };
+      document.head.appendChild(sc);
+    });
+    // 次に選び直したときに再挑戦できるよう、失敗したら覚えておかない
+    _heicLib.then(ok => { if (!ok) _heicLib = null; });
+    return _heicLib;
+  }
+  async function heicToJpeg(file) {
+    const ok = await loadHeicLib();
+    if (!ok) throw new Error('HEICを変換する部品を読み込めませんでした。インターネットにつながっているか確認してください');
+    const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+    const blob = Array.isArray(out) ? out[0] : out;
+    return new File([blob], String(file.name).replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+  }
+
+  // 【写真は必ず縮めてから送る】  // 【写真は必ず縮めてから送る】
   // 範囲表の写真だけ、生のまま（1枚3〜8MB）送っていた。PDF経由は縮小済みなので、
   // 同じ紙でも写真のほうが費用が高く、リクエスト上限で失敗しやすかった。
   // 縮小できない形式（HEICなど、ブラウザが開けない画像）のときは、
