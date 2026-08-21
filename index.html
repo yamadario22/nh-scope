@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.7</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.8</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6126,6 +6126,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const btn  = document.getElementById('syllabusStartBtn');
     if (!arr.length) { setSt(stEl, 'err', '画像またはPDFを選んでください'); return; }
 
+    // 【一度に多すぎると、読み込み中にブラウザが力尽きる】
+    // 写真1枚ごとに、撮影日時を読む・縮める・保存する、という作業が要る。
+    // 途中で止まると、どこまで読み込めたか分からなくなるのがいちばん困る。
+    // 分けて読み込んでも前の分は消えないので、少しずつのほうが安全。
+    const SAFE_BATCH = 150;
+    if (arr.length > SAFE_BATCH &&
+        !confirm(`${arr.length}件を一度に読み込もうとしています。\n`
+               + `枚数が多いとブラウザが重くなり、途中で止まることがあります。\n`
+               + `${SAFE_BATCH}枚くらいずつに分けるほうが安全です。\n`
+               + `（分けて読み取っても、前に読み取った分は消えません）\n\n`
+               + `このまま ${arr.length}件を読み込みますか。`)) {
+      setSt(stEl, '', '読み込みをやめました。枚数を減らして選び直してください');
+      return;
+    }
+
     document.getElementById('syllabusFileList').innerHTML =
       arr.map(f => `${/\.pdf$/i.test(f.name)?'📄':'📷'} ${esc(f.name)}（${(f.size/1024).toFixed(0)}KB）`).join('<br>');
     document.getElementById('syllabusTitle').textContent = `${arr.length}件のファイル`;
@@ -6139,7 +6154,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           // 【撮影時刻を覚えておく】
           // 選んだファイルがどの順で渡ってくるかは、OSと写真アプリ任せで保証がない。
           // 写真そのものが持っている撮影時刻で並べ替えれば、必ず撮った順になる。
-          imgs.push({ name: f.name, b64: await fileToSendableBase64(f), shot: f.lastModified || 0 });
+          // 写真の中の撮影日時を優先。読めないときだけファイルの更新日時を使う。
+          const shot = (await readExifShotTime(f)) || f.lastModified || 0;
+          imgs.push({ name: f.name, b64: await fileToSendableBase64(f), shot });
         } else {
           // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
           const buf = await f.arrayBuffer();
@@ -6178,6 +6195,69 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     } catch (e) {
       setSt(stEl, 'err', '❌ 読み込みに失敗しました: ' + e.message);
     }
+  }
+
+  // 【写真の中に埋め込まれた撮影日時を読む】
+  // ファイルの更新日時は、パソコンにコピーしたりiCloud経由で落とすと
+  // 転送した時刻に書き換わることがある。500枚が全部同じ時刻になると、
+  // 「撮った順」が分からなくなり、前後の写真から学校名を当てられなくなる。
+  // 写真そのものの中（EXIF）にある撮影日時は、転送しても書き換わらない。
+  async function readExifShotTime(file) {
+    try {
+      // 先頭の一部だけ読めばよい（EXIFはファイルの先頭に入っている）
+      const buf = await file.slice(0, 256 * 1024).arrayBuffer();
+      const dv = new DataView(buf);
+      if (dv.byteLength < 4 || dv.getUint16(0) !== 0xFFD8) return 0;   // JPEGでなければあきらめる
+      let off = 2;
+      while (off + 4 < dv.byteLength) {
+        if (dv.getUint8(off) !== 0xFF) break;
+        const marker = dv.getUint8(off + 1);
+        const size   = dv.getUint16(off + 2);
+        if (marker === 0xE1) {                                          // APP1（ここにEXIFが入る）
+          const start = off + 4;
+          if (dv.getUint32(start) !== 0x45786966) return 0;             // "Exif"
+          const tiff = start + 6;
+          const le = dv.getUint16(tiff) === 0x4949;                     // バイトの並び順
+          const ifd0 = tiff + dv.getUint32(tiff + 4, le);
+          const readAscii = (o, n) => {
+            let t = '';
+            for (let k = 0; k < n && tiff + o + k < dv.byteLength; k++) {
+              const c = dv.getUint8(tiff + o + k);
+              if (!c) break;
+              t += String.fromCharCode(c);
+            }
+            return t;
+          };
+          const scanIfd = (base, want) => {
+            if (base + 2 > dv.byteLength) return null;
+            const n = dv.getUint16(base, le);
+            for (let k = 0; k < n; k++) {
+              const e = base + 2 + k * 12;
+              if (e + 12 > dv.byteLength) break;
+              const tag = dv.getUint16(e, le);
+              if (want.indexOf(tag) < 0) continue;
+              const cnt = dv.getUint32(e + 4, le);
+              const val = dv.getUint32(e + 8, le);
+              return { tag, cnt, val };
+            }
+            return null;
+          };
+          // ExifIFD（撮影日時が入っている場所）へ辿る
+          const ptr = scanIfd(ifd0, [0x8769]);
+          let hit = ptr ? scanIfd(tiff + ptr.val, [0x9003, 0x9004]) : null;
+          if (!hit) hit = scanIfd(ifd0, [0x0132]);                      // 無ければ更新日時
+          if (!hit) return 0;
+          const str = readAscii(hit.val, Math.min(hit.cnt, 20));        // "2026:08:21 09:15:30"
+          const m = str.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+          if (!m) return 0;
+          const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+          return isNaN(t) ? 0 : t;
+        }
+        if (marker === 0xD8 || marker === 0xD9 || marker === 0xDA) break;
+        off += 2 + size;
+      }
+    } catch (e) { console.warn('撮影日時が読めませんでした:', file && file.name, e); }
+    return 0;
   }
 
   // 【写真は必ず縮めてから送る】
