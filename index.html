@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.9</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.11</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -491,7 +491,7 @@
         <div class="uz-sub" id="syllabusSub">写真・PDFどちらも可（複数まとめて）— ドラッグ＆ドロップ、またはクリックして選択</div>
       </div>
       <div id="syllabusFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-      <input type="file" id="syllabusFile" accept="image/*,.pdf" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
+      <input type="file" id="syllabusFile" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.pdf" multiple style="display:none" onchange="onSyllabusFilesSelected(this.files)">
       <!-- 読み取り結果はそのままに、写真だけを貼り直す（AIに送らないので費用ゼロ） -->
       <input type="file" id="syllabusPhotoFix" accept="image/*,.pdf" multiple style="display:none" onchange="onSyllabusPhotosReattach(this.files)">
       <div class="row" style="margin-top:10px;gap:8px">
@@ -6071,17 +6071,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!lastSyllabusResults || !lastSyllabusResults.length) {
       setSt(stEl, 'err', '先に範囲表を読み取ってください'); return;
     }
-    const arr = Array.from(files || []).filter(f =>
-      /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
-    if (!arr.length) { setSt(stEl, 'err', '画像またはPDFを選んでください'); return; }
+    const arr = Array.from(files || []).filter(f => isImgFile(f) || isHeicFile(f) || isPdfFile(f));
+    if (!arr.length) { setSt(stEl, 'err', '写真（.jpg .png .heic）かPDFを選んでください'); return; }
 
     setSt(stEl, 'load', `${arr.length}件を読み込み中...（AIには送らないので費用はかかりません）`);
     const byName = {};
     try {
       for (let i = 0; i < arr.length; i++) {
-        const f = arr[i];
+        let f = arr[i];
         setSt(stEl, 'load', `${i+1}/${arr.length}件目を読み込み中...`);
-        if (/^image\//.test(f.type)) {
+        // 読み取ったときはHEICをJPEGに変えて名前も .jpg にしてある。
+        // 選び直しでも同じように変えないと、名前が合わず結びつかない。
+        if (isHeicFile(f)) {
+          try { f = await heicToJpeg(f); }
+          catch (e) { setSt(stEl, 'err', `HEICの変換に失敗しました：${e && e.message ? e.message : e}`); return; }
+        }
+        if (isImgFile(f)) {
           byName[f.name] = [{ name: f.name, b64: await fileToSendableBase64(f) }];
         } else {
           // 読み取ったときとまったく同じ名前・同じ順序になるようにそろえる
@@ -6124,11 +6129,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // ブラウザによっては、HEICなど見慣れない画像の種類を空っぽで返してくる。
     // 種類だけで判定すると、ふつうの写真まで弾かれてしまう。
     const all = Array.from(files || []);
-    const IMG_EXT  = /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i;
-    const HEIC_EXT = /\.(heic|heif)$/i;
-    const isPdf = f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
-    const isImg = f => (/^image\//.test(f.type) && !/heic|heif/i.test(f.type)) || IMG_EXT.test(f.name);
-    const isHeic = f => HEIC_EXT.test(f.name) || /heic|heif/i.test(f.type);
+    const isPdf = isPdfFile, isImg = isImgFile, isHeic = isHeicFile;
     const arr = all.filter(f => isImg(f) || isHeic(f) || isPdf(f));
     const stEl = document.getElementById('syllabusStatus');
     const btn  = document.getElementById('syllabusStartBtn');
@@ -6317,6 +6318,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     } catch (e) { console.warn('撮影日時が読めませんでした:', file && file.name, e); }
     return 0;
   }
+
+  // 【ファイルの見分け方は、ここだけに書く】
+  // 選ぶ・ドロップする・選び直す、で判定が食い違うと、
+  // 「片方だけHEICが弾かれる」といった分かりにくい状態になる。
+  const SYL_IMG_EXT  = /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i;
+  const SYL_HEIC_EXT = /\.(heic|heif)$/i;
+  function isHeicFile(f) { return SYL_HEIC_EXT.test(f.name || '') || /heic|heif/i.test(f.type || ''); }
+  function isImgFile(f)  { return (/^image\//.test(f.type || '') && !isHeicFile(f)) || SYL_IMG_EXT.test(f.name || ''); }
+  function isPdfFile(f)  { return /\.pdf$/i.test(f.name || '') || f.type === 'application/pdf'; }
 
   // 【HEIC（iPhoneの標準形式）をJPEGに変える】
   // ブラウザはHEICをそのままでは開けない。変換の部品は普段は要らないので、
@@ -10644,10 +10654,12 @@ function findTestByDateEx(hist, school, grade, date) {
       sz.addEventListener('dragleave', () => sz.classList.remove('over'));
       sz.addEventListener('drop', e => {
         e.preventDefault(); sz.classList.remove('over');
-        const fs = Array.from(e.dataTransfer.files).filter(f =>
-          /^image\//.test(f.type) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+        // 【見分けはここでやらない】
+        // ボタンから選んだときと判定が食い違うと、片方だけHEICを弾く、という
+        // 分かりにくい状態になる。判断は onSyllabusFilesSelected に一本化する。
+        const fs = Array.from(e.dataTransfer.files || []);
         if (fs.length) onSyllabusFilesSelected(fs);
-        else setSt(document.getElementById('syllabusStatus'), 'err', '画像またはPDFをドロップしてください');
+        else setSt(document.getElementById('syllabusStatus'), 'err', 'ファイルをドロップしてください');
       });
       // 写真を貼り付けでも受け取れるようにする（スクリーンショットをそのまま貼れる）
       sz.addEventListener('click', () => document.getElementById('syllabusFile').click());
