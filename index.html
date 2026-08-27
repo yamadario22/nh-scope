@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.12</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.14</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -430,7 +430,6 @@
       <span style="color:var(--muted)">このタブの中身：</span>
       <a href="#secTestPdf" style="margin-left:6px">テストPDFの分析</a>　
       <a href="#secSyllabus">テスト範囲表の読み込み</a>　
-      <a href="#secPastSearch">過去問さがし</a>　
       <a href="#secHistory">テスト分析履歴</a>
     </div>
     <!-- 今月いくら使ったか。上限に達したらAIへの送信を止める -->
@@ -501,31 +500,6 @@
       </div>
       <div id="syllabusStatus"></div>
       <div id="syllabusResult" style="margin-top:10px"></div>
-    </div>
-
-    <div class="divider"><span>または — 範囲から使える過去問を探す</span></div>
-    <div class="card">
-      <div class="card-title" id="secPastSearch">🎯 対策プリント用の過去問さがし</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        自校の範囲を入れると、その範囲で使える他校の過去問を探します。<br>
-        <b>範囲が同じか、それより狭いものだけ</b>を出します（未習の内容を生徒に解かせないため）。
-      </p>
-      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="ppGrade" style="padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
-          <option value="中１">中1</option>
-          <option value="中２">中2</option>
-          <option value="中３" selected>中3</option>
-        </select>
-        <span style="font-size:13px">教科書 p.</span>
-        <input type="number" id="ppFrom" min="1" max="200" inputmode="numeric" placeholder="6"
-               style="width:70px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
-        <span style="font-size:13px">〜 p.</span>
-        <input type="number" id="ppTo" min="1" max="200" inputmode="numeric" placeholder="23"
-               style="width:70px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
-        <button class="btn btn-primary btn-sm" onclick="findPastPapers()">🎯 探す</button>
-      </div>
-      <div id="ppUnitPreview" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-      <div id="ppResult" style="margin-top:10px"></div>
     </div>
 
     <div id="testResult"></div>
@@ -607,87 +581,69 @@
   </div>
   <div id="tab-test-search" class="tab-content"><div style="max-width:960px;margin:0 auto;padding:28px 20px 80px">
     <div class="card">
-      <div class="card-title">🗂 テスト検索</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">テスト分析済みのデータから条件に合うテストを検索します。</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+      <div class="card-title">🗂 テスト検索（対策プリント用の過去問さがし）</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.8">
+        分析済みのテストから、指定した範囲で使えるものを探します。<br>
+        <b>指定した範囲と同じか、それより狭いテストだけ</b>を出します（未習の内容を生徒に解かせないため）。
+      </p>
+
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:12px;align-items:end;margin-bottom:12px">
         <div>
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">学年</label>
-          <select id="tsGradeFilter" class="book-select" style="width:100%">
-            <option value="">全て</option>
-            <option value="中１">中１</option>
-            <option value="中２">中２</option>
-            <option value="中３">中３</option>
+          <select id="tsGradeFilter" class="book-select" style="width:100%" onchange="onTsGradeChange()">
+            <option value="">全て（範囲では絞り込めません）</option>
+            <option value="中１">中1</option>
+            <option value="中２">中2</option>
+            <option value="中３">中3</option>
           </select>
         </div>
         <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">開始Unit</label>
-          <select id="tsFromUnit" class="book-select" style="width:100%">
-            <option value="">指定なし</option>
-            <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
-            <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
-            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option><option>Unit 10</option>
-          </select>
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">開始パート</label>
-          <select id="tsFromPart" class="book-select" style="width:100%">
-            <option value="">指定なし</option>
-            <option>Part 1</option><option>Part 2</option><option>Part 3</option>
-            <option>Read and Think 1</option><option>Read and Think 2</option>
-          </select>
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">終わりUnit</label>
-          <select id="tsToUnit" class="book-select" style="width:100%">
-            <option value="">指定なし</option>
-            <option>Unit 1</option><option>Unit 2</option><option>Unit 3</option>
-            <option>Unit 4</option><option>Unit 5</option><option>Unit 6</option>
-            <option>Unit 7</option><option>Unit 8</option><option>Unit 9</option><option>Unit 10</option>
-          </select>
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">終わりパート</label>
-          <select id="tsToPart" class="book-select" style="width:100%">
-            <option value="">指定なし</option>
-            <option>Part 1</option><option>Part 2</option><option>Part 3</option>
-            <option>Read and Think 1</option><option>Read and Think 2</option>
-          </select>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">範囲の入れ方</label>
+          <div class="row" style="gap:16px;align-items:center;height:38px">
+            <label style="font-size:13px;cursor:pointer"><input type="radio" name="tsMode" value="unit" checked onchange="onTsModeChange()"> 単元で入れる</label>
+            <label style="font-size:13px;cursor:pointer"><input type="radio" name="tsMode" value="page" onchange="onTsModeChange()"> 教科書のページで入れる</label>
+          </div>
         </div>
       </div>
+
+      <div id="tsUnitRow" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">範囲の始まり</label>
+          <select id="tsFrom" class="book-select" style="width:100%"><option value="">指定なし</option></select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">範囲の終わり</label>
+          <select id="tsTo" class="book-select" style="width:100%"><option value="">指定なし</option></select>
+        </div>
+      </div>
+
+      <div id="tsPageRow" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:13px">教科書 p.</span>
+        <input type="number" id="tsPageFrom" min="1" max="200" inputmode="numeric" placeholder="6"
+               style="width:76px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+        <span style="font-size:13px">〜 p.</span>
+        <input type="number" id="tsPageTo" min="1" max="200" inputmode="numeric" placeholder="23"
+               style="width:76px;padding:6px 8px;font-size:14px;text-align:center;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px">
+      </div>
+
+      <div id="tsRangeNote" style="font-size:12px;color:var(--muted);margin:8px 0 14px;min-height:18px"></div>
+
       <div style="margin-bottom:14px">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">問題形式（任意）</label>
         <select id="tsQType" class="book-select" style="width:100%">
-          <option value="">指定なし（Unit範囲のみで検索）</option>
-          <optgroup label="語彙・語形">
-            <option>単語の書き（日→英）</option><option>単語の意味（英→日）</option><option>語形変化</option>
-          </optgroup>
-          <optgroup label="文法・構文">
-            <option>適語選択</option><option>穴埋め</option><option>文法穴埋め</option>
-            <option>熟語穴埋め</option><option>整序（並べ替え）</option><option>書き換え（同意文）</option>
-            <option>同意表現</option><option>誤文訂正</option>
-          </optgroup>
-          <optgroup label="英作文・和訳">
-            <option>英作文</option><option>和文英訳</option><option>英文和訳</option><option>条件英作文</option>
-          </optgroup>
-          <optgroup label="読解">
-            <option>長文読解（教科書内）</option><option>長文読解（教科書外）</option>
-            <option>対話文読解（教科書外）</option><option>内容一致</option>
-            <option>適文選択</option><option>内容理解</option><option>グラフ選択</option>
-          </optgroup>
-          <optgroup label="リスニング">
-            <option>リスニング</option><option>図の選択問題</option>
-            <option>穴埋め問題</option><option>正誤問題</option><option>正しい答えを選ぶ問題</option>
-          </optgroup>
+          <option value="">指定なし（範囲だけで探す）</option>
         </select>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
         <div>
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">学校名で絞り込み（任意）</label>
-          <input type="text" id="tsSchool" class="form-in" placeholder="例：豊川南部中" style="font-size:12px">
+          <input type="text" id="tsSchool" class="form-in" placeholder="例：豊川南部中" style="font-size:12px" list="tsSchoolList">
+          <datalist id="tsSchoolList"></datalist>
         </div>
         <div>
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">教師名で絞り込み（任意）</label>
-          <input type="text" id="tsTeacher" class="form-in" placeholder="例：ナガイ" style="font-size:12px">
+          <input type="text" id="tsTeacher" class="form-in" placeholder="例：ナガイ" style="font-size:12px" list="tsTeacherList">
+          <datalist id="tsTeacherList"></datalist>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
@@ -702,8 +658,8 @@
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:1" onclick="runTestSearch()">🔍 検索する</button>
+        <button class="btn btn-secondary" onclick="resetTestSearch()">条件をリセット</button>
       </div>
-      <div id="tsSummary" style="display:none;margin-top:12px;padding:14px;background:#f0f7ff;border-radius:10px;border-left:4px solid var(--blue);font-size:13px;line-height:1.9"></div>
     </div>
     <div id="tsResults"></div>
   </div></div><!-- /test-search inner -->
@@ -2036,6 +1992,8 @@
         if (saved && rsEl && !rsEl.innerHTML) rsEl.innerHTML = saved;
       }
       if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
+      // 学校名・教師名の入力候補は、同期でデータが増えていることがあるので開くたびに作り直す
+      if (name==='test-search') { try { tsFillNameLists(); tsFillQTypeSelect(); } catch(e){} }
     } catch(e) { console.error('switchTab error:', e); }
   }
 
@@ -5982,80 +5940,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (k) set.add(k);
     });
     return set;
-  }
-
-  // ── 対策プリント用の過去問さがし ────────────────────────────────
-  // 自校の範囲で使える他校の過去問を探す。
-  // 範囲が同じか、それより狭いものだけを出す。
-  // 広い範囲の過去問を使うと、まだ習っていない内容を生徒に解かせることになるため。
-  function findPastPapers() {
-    const grade = document.getElementById('ppGrade').value;
-    const from  = parseInt(document.getElementById('ppFrom').value);
-    const to    = parseInt(document.getElementById('ppTo').value);
-    const prevEl = document.getElementById('ppUnitPreview');
-    const el = document.getElementById('ppResult');
-    if (!from || !to) { alert('教科書のページを入れてください。'); return; }
-
-    const myRange = pagesToRangeText(grade, `${from}〜${to}`);
-    if (!myRange) { prevEl.textContent = 'このページは教科書の範囲外です'; el.innerHTML = ''; return; }
-    const my = parseRangeText(myRange);
-    const gradeN = gradeNumOf(grade);
-    const myFrom = rangePos([my.from_unit, my.from_lesson].filter(Boolean).join(' '), gradeN);
-    const myTo   = rangePos([my.to_unit,   my.to_lesson].filter(Boolean).join(' '), gradeN);
-    prevEl.innerHTML = `自校の範囲：<b>${esc(myRange)}</b>（p.${from}〜${to}）`;
-
-    let hist = [];
-    try { hist = histAll(); } catch {}
-
-    const cands = [];
-    hist.forEach(h => {
-      if (normalizeGrade(h.grade||'') !== grade) return;
-      if (!h.range || h.range === '範囲不明') return;
-      const p = parseRangeText(h.range);
-      const f = rangePos([p.from_unit, p.from_lesson].filter(Boolean).join(' '), gradeN);
-      const t = rangePos([p.to_unit,   p.to_lesson].filter(Boolean).join(' '), gradeN);
-      if (f < 0 || t < 0) return;
-      // 自校の範囲に収まっているものだけ（同じか、それより狭い）
-      if (f < myFrom - 0.001 || t > myTo + 0.001) return;
-      const exact = Math.abs(f - myFrom) < 0.001 && Math.abs(t - myTo) < 0.001;
-      cands.push({ h, f, t, exact, width: t - f });
-    });
-
-    // 完全一致を先に、そのあとは範囲が広い順（自校に近い順）
-    cands.sort((a, b) => (b.exact - a.exact) || (b.width - a.width));
-
-    if (!cands.length) {
-      el.innerHTML = `<div style="padding:12px;color:var(--muted);font-size:13px">
-        この範囲で使える過去問は見つかりませんでした。<br>
-        範囲が同じか、それより狭いテストがありません。</div>`;
-      return;
-    }
-
-    el.innerHTML = `
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${cands.length}件見つかりました</div>
-      <div class="tbl-wrap"><table>
-        <thead><tr><th>学校・日付</th><th>範囲</th><th style="width:90px">自校との差</th></tr></thead>
-        <tbody>${cands.map(c => {
-          const pg = rangeBothNotations(c.h.grade, c.h.range, c.h.rangePages);
-          const src = c.h.rangeEditedBy === '範囲表' ? '<span style="color:#059669;font-size:10px">範囲表</span>'
-                    : c.h.rangeEditedBy === '手入力' ? '<span style="color:#059669;font-size:10px">手入力</span>'
-                    : '<span style="color:var(--muted);font-size:10px">推定</span>';
-          return `<tr${c.exact ? ' style="background:#F0FDF4"' : ''}>
-            <td style="font-size:11px">
-              ${esc(c.h.school || extractSchoolName(c.h.name||''))} ${esc(c.h.teacher||'')}<br>
-              <span style="color:var(--muted)">${esc(c.h.testDate || extractTestDate(c.h.name||'') || '')}
-              ${esc(testTermOf(c.h))}</span>
-            </td>
-            <td style="font-size:11px">
-              <b>${esc(pg.unit)}</b>${pg.page ? `<br><span style="color:var(--muted)">${esc(pg.page)}</span>` : ''} ${src}
-            </td>
-            <td style="font-size:11px">
-              ${c.exact ? '<b style="color:#059669">完全一致</b>'
-                        : `<span style="color:var(--muted)">${(c.f - myFrom).toFixed(1)}〜${(c.t - myTo).toFixed(1)} Unit ぶん狭い</span>`}
-            </td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>`;
   }
 
   // ── テスト範囲表の読み込み ──────────────────────────────────────
@@ -10025,18 +9909,6 @@ function findTestByDateEx(hist, school, grade, date) {
     return unit + sub;
   }
 
-  function containsQType(qtypes, target) {
-    if (!target) return true;
-    const tl = target.toLowerCase();
-    for (const qt of (qtypes||[])) {
-      if ((qt.type||'').toLowerCase().includes(tl)) return true;
-      for (const sq of (qt.sub_questions||[])) {
-        if ((sq.type||'').toLowerCase().includes(tl)) return true;
-      }
-    }
-    return false;
-  }
-
   // 文法名・熟語の正規化キー生成（表記揺れ対策、検索・集計の照合用）
   // 例:「現在完了形（経験用法）」「現在完了（経験）」→ 同一キー
   function normKey(s) {
@@ -10065,18 +9937,227 @@ function findTestByDateEx(hist, school, grade, date) {
     return false;
   }
 
+  // ── テスト検索 ────────────────────────────────────────────────────
+  // 指定した範囲に「収まる」テストだけを出す。
+  // 広い範囲の過去問を使うと、まだ習っていない内容を生徒に解かせることになるため。
+
+  // 学年ごとの選べる単元一覧は sectionOptionsList を使う。
+  // 範囲の手直し画面とまったく同じ一覧になるので、名前の食い違いが起きない。
+  // （教科書に実在するものだけ。中1は Part 1〜3 と Read and Think、中2・中3は
+  //   Part 1・2 と Read and Think 1・2。存在しないUnitは出ない）
+  function tsSectionGroups(grade) {
+    const list = sectionOptionsList(grade);
+    const groups = [];
+    let cur = null;
+    list.forEach(name => {
+      let gname = null;
+      if (/^Let'?s\s*Read/i.test(name)) gname = name;
+      else {
+        const m = name.match(/^Unit\s*(\d+)/i);
+        if (m) gname = `Unit ${m[1]}`;
+      }
+      if (gname) { cur = groups.find(x => x.name === gname); if (!cur) { cur = { name: gname, items: [] }; groups.push(cur); } }
+      if (!cur) { cur = { name: 'その他', items: [] }; groups.push(cur); }
+      cur.items.push(name);
+    });
+    return groups;
+  }
+
+  function tsFillSectionSelects() {
+    const grade = (document.getElementById('tsGradeFilter') || {}).value || '';
+    const groups = grade ? tsSectionGroups(grade) : [];
+    ['tsFrom', 'tsTo'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      const keep = sel.value;
+      let html = '<option value="">指定なし</option>';
+      groups.forEach(g => {
+        html += `<optgroup label="${esc(g.name)}">`;
+        g.items.forEach(it => { html += `<option value="${esc(it)}">${esc(it)}</option>`; });
+        html += '</optgroup>';
+      });
+      sel.innerHTML = html;
+      // 同じ単元が新しい学年にもあれば選択を残す（無ければ「指定なし」に戻る）
+      sel.value = keep;
+      if (sel.selectedIndex < 0) sel.value = '';
+      sel.disabled = !grade;
+    });
+    const note = document.getElementById('tsRangeNote');
+    if (note && !grade) note.textContent = '範囲で絞り込むには、先に学年を選んでください（同じ「Unit 3」でも学年ごとに中身が違うため）。';
+    else if (note) note.textContent = '';
+  }
+
+  // 問題形式の選択肢も、実際に分析済みのテストに出てきたものだけを出す。
+  // 決め打ちの一覧だと「実在しない形式」が並んで0件になったり、
+  // 逆にAIが書いた実際の形式名が一覧に無くて選べなかったりする。
+  function tsFillQTypeSelect() {
+    const sel = document.getElementById('tsQType');
+    if (!sel) return;
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    const cnt = new Map();
+    const add = t => { const v = String(t || '').trim(); if (v) cnt.set(v, (cnt.get(v) || 0) + 1); };
+    hist.forEach(h => (h.question_types || []).forEach(qt => {
+      add(qt.type);
+      (qt.sub_questions || []).forEach(sq => add(sq.type));
+    }));
+    const keep = sel.value;
+    const list = [...cnt.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ja'));
+    sel.innerHTML = '<option value="">指定なし（範囲だけで探す）</option>'
+      + list.map(([t, n]) => `<option value="${esc(t)}">${esc(t)}（${n}件）</option>`).join('');
+    sel.value = keep;
+    if (sel.selectedIndex < 0) sel.value = '';
+  }
+
+  // 学校名・教師名の入力候補を、いま持っているデータから作る（打ち間違い防止）
+  function tsFillNameLists() {
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    const schools = new Set(), teachers = new Set();
+    hist.forEach(h => {
+      const s = h.school || extractSchoolName(h.name || '');
+      if (s) schools.add(s);
+      extractTeachers(h.name || '').forEach(t => teachers.add(t));
+    });
+    const fill = (id, set) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = [...set].sort().map(v => `<option value="${esc(v)}"></option>`).join('');
+    };
+    fill('tsSchoolList', schools);
+    fill('tsTeacherList', teachers);
+  }
+
+  function onTsGradeChange() {
+    tsFillSectionSelects();
+    tsMarkStale();
+  }
+
+  function tsMode() {
+    const el = document.querySelector('input[name="tsMode"]:checked');
+    return el ? el.value : 'unit';
+  }
+
+  function onTsModeChange() {
+    const isPage = tsMode() === 'page';
+    const ur = document.getElementById('tsUnitRow');
+    const pr = document.getElementById('tsPageRow');
+    if (ur) ur.style.display = isPage ? 'none' : 'grid';
+    if (pr) pr.style.display = isPage ? 'flex' : 'none';
+    tsMarkStale();
+  }
+
+  // 【条件を変えたら、前の検索結果は消す】
+  // 条件と結果が食い違ったまま画面に残ると、間違った過去問を選んでしまう。
+  function tsMarkStale() {
+    const rs = document.getElementById('tsResults');
+    if (rs && rs.innerHTML.trim()) {
+      rs.innerHTML = `<div style="margin:12px 0;padding:12px;background:#FFFBEB;border:1px solid #FDE68A;
+        border-radius:8px;font-size:13px;color:#92400E">条件を変えました。「🔍 検索する」を押してください。</div>`;
+    }
+  }
+
+  function resetTestSearch() {
+    ['tsGradeFilter','tsQType','tsSchool','tsTeacher','tsGrammar','tsPhrases','tsPageFrom','tsPageTo']
+      .forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+    const m = document.querySelector('input[name="tsMode"][value="unit"]');
+    if (m) m.checked = true;
+    onTsModeChange();
+    tsFillSectionSelects();
+    const rs = document.getElementById('tsResults');
+    if (rs) rs.innerHTML = '';
+    const note = document.getElementById('tsRangeNote');
+    if (note) note.textContent = '';
+  }
+
+  function initTestSearchUI() {
+    tsFillSectionSelects();
+    tsFillNameLists();
+    tsFillQTypeSelect();
+    const card = document.querySelector('#tab-test-search .card');
+    if (!card) return;
+    card.querySelectorAll('input, select').forEach(el => {
+      if (el.id === 'tsGradeFilter' || el.name === 'tsMode') return; // 専用の処理がある
+      el.addEventListener('change', tsMarkStale);
+      if (el.tagName === 'INPUT') {
+        el.addEventListener('input', tsMarkStale);
+        el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runTestSearch(); } });
+      }
+    });
+  }
+
+  // 「Unit 3」のようにPartが付かない指定は、その単元の終わりまでを指す。
+  // +0.8 にしているのは Stage Activity（+0.7）までを含み、
+  // 単元の外にある Let's Read（+0.9）は含めないため。
+  function tsWholeUnit(v) { return /^Unit\s*\d+$/i.test(String(v || '').trim()); }
+
+  // 指定された範囲を、比較用の数値（始まり・終わり）に変換する。
+  // うまくいかないときは reason に理由を入れて返す（黙って0件にしない）。
+  function tsRangeBounds() {
+    const grade = (document.getElementById('tsGradeFilter') || {}).value || '';
+    const gradeN = gradeNumOf(grade);
+    if (tsMode() === 'page') {
+      const from = parseInt((document.getElementById('tsPageFrom') || {}).value);
+      const to   = parseInt((document.getElementById('tsPageTo')   || {}).value);
+      if (!from && !to) return { active: false };
+      if (!grade) return { active: false, reason: 'ページで絞り込むには学年を選んでください。' };
+      if (!from || !to) return { active: false, reason: '教科書のページを、始まりと終わりの両方入れてください。' };
+      if (from > to)    return { active: false, reason: `p.${from}〜p.${to} は始まりと終わりが逆です。` };
+      const text = pagesToRangeText(grade, `${from}〜${to}`);
+      if (!text) return { active: false, reason: `p.${from}〜p.${to} は${grade}の教科書の範囲外です。` };
+      const r = parseRangeText(text);
+      const fName = [r.from_unit, r.from_lesson].filter(Boolean).join(' ');
+      const tName = [r.to_unit,   r.to_lesson  ].filter(Boolean).join(' ');
+      const f = rangePos(fName, gradeN);
+      // 「Unit 3」のようにPartが付かないときは、その単元の終わりまでを指す。
+      // そのまま Unit 3 の先頭（3.0）で比べると、Unit 3 の中身のテストが全部外れる。
+      let t = rangePos(tName, gradeN);
+      if (tsWholeUnit(tName)) t += 0.8;
+      if (f < 0 || t < 0) return { active: false, reason: `p.${from}〜p.${to} の単元が分かりませんでした。` };
+      return { active: true, from: f, to: t, label: `${text}（p.${from}〜${to}）` };
+    }
+    const fromSec = (document.getElementById('tsFrom') || {}).value || '';
+    const toSec   = (document.getElementById('tsTo')   || {}).value || '';
+    if (!fromSec && !toSec) return { active: false };
+    if (!grade) return { active: false, reason: '範囲で絞り込むには学年を選んでください。' };
+    const f = fromSec ? rangePos(fromSec, gradeN) : 0;
+    const t = toSec ? (tsWholeUnit(toSec) ? rangePos(toSec, gradeN) + 0.8 : rangePos(toSec, gradeN)) : 999;
+    if (fromSec && f < 0) return { active: false, reason: `「${fromSec}」の位置が分かりませんでした。` };
+    if (toSec   && t < 0) return { active: false, reason: `「${toSec}」の位置が分かりませんでした。` };
+    if (fromSec && toSec && f > t + 0.001) {
+      return { active: false, reason: `「${fromSec}」は「${toSec}」より後ろです。始まりと終わりが逆になっています。` };
+    }
+    const label = `${fromSec || '教科書のはじめ'} 〜 ${toSec || '教科書のおわり'}`;
+    return { active: true, from: f, to: t, label };
+  }
+
+  // 問題形式は「選んだものそのもの」で照合する。
+  // 選択肢は実際のデータから作っているので、完全一致で取りこぼしは出ない。
+  // 部分一致にすると「穴埋め」を選んだだけで「文法穴埋め」「熟語穴埋め」
+  // 「穴埋め問題」まで出てしまい、絞り込みにならない。
+  function matchesQType(qtypes, target) {
+    if (!target) return true;
+    const norm = x => String(x || '').replace(/[\s　]/g, '').toLowerCase();
+    const tn = norm(target);
+    for (const qt of (qtypes || [])) {
+      if (norm(qt.type) === tn) return true;
+      for (const sq of (qt.sub_questions || [])) {
+        if (norm(sq.type) === tn) return true;
+      }
+    }
+    return false;
+  }
+
   function runTestSearch() {
     const gradeFilter = (document.getElementById('tsGradeFilter')||{}).value || '';
-    const fromUnit  = (document.getElementById('tsFromUnit')  ||{}).value  || '';
-    const fromPart  = (document.getElementById('tsFromPart')  ||{}).value  || '';
-    const toUnit    = (document.getElementById('tsToUnit')    ||{}).value  || '';
-    const toPart    = (document.getElementById('tsToPart')    ||{}).value  || '';
     const qtype     = (document.getElementById('tsQType')     ||{}).value  || '';
     const tsSchool  = ((document.getElementById('tsSchool')  ||{}).value||'').trim().toLowerCase();
     const tsTeacher = ((document.getElementById('tsTeacher') ||{}).value||'').trim().toLowerCase();
     const tsGrammar = ((document.getElementById('tsGrammar') ||{}).value||'').trim().toLowerCase();
     const tsPhrases = ((document.getElementById('tsPhrases') ||{}).value||'').trim().toLowerCase();
     const rsEl      = document.getElementById('tsResults');
+    const noteEl    = document.getElementById('tsRangeNote');
+    tsFillNameLists();
+    tsFillQTypeSelect();
 
     let hist = [];
     try { hist = histAll(); } catch {}
@@ -10086,44 +10167,63 @@ function findTestByDateEx(hist, school, grade, date) {
       return;
     }
 
-    // 指定範囲を精密な小数位置に変換（Unit 2 Part 1 = 2.1 等）
-    // 開始：Unit指定があるときのみ有効（Part単独指定は範囲条件にしない）
-    const filterGradeN = gradeNumOf(gradeFilter);
-    const fromPos = fromUnit ? rangePos(`${fromUnit} ${fromPart}`.trim(), filterGradeN) : 0;
-    // 終わり：Part未指定なら「そのUnitの最後まで」（+0.99）
-    const toPos = toUnit
-      ? (toPart ? rangePos(`${toUnit} ${toPart}`.trim(), filterGradeN) : rangePos(toUnit, filterGradeN) + 0.99)
-      : 999;
-    // Partのみ指定でUnit未指定の場合は範囲指定なしとして扱う
-    const hasRangeFilter = !!(fromUnit || toUnit);
+    const bounds = tsRangeBounds();
+    if (bounds.reason) {
+      if (noteEl) noteEl.innerHTML = `<span style="color:#B45309">⚠️ ${esc(bounds.reason)}</span>`;
+      rsEl.innerHTML = '';
+      return;
+    }
+    if (noteEl) {
+      noteEl.innerHTML = bounds.active ? `探す範囲：<b>${esc(bounds.label)}</b>`
+        : (gradeFilter ? '' : '範囲で絞り込むには、先に学年を選んでください（同じ「Unit 3」でも学年ごとに中身が違うため）。');
+    }
 
-    const results = hist.filter(h => {
-      const rangeStr = h.range || '';
-      const parts = rangeStr.split('〜');
-      const hGradeN  = gradeNumOf(h.grade);
-      const hFromPos = rangePos(parts[0], hGradeN);
-      const hToPos   = rangePos(parts[parts.length-1], hGradeN);
-      const gradeOk   = !gradeFilter || h.grade === gradeFilter;
-      const schoolOk  = !tsSchool  || extractSchoolName(h.name||'').toLowerCase().includes(tsSchool) || (h.name||'').toLowerCase().includes(tsSchool);
-      const teacherOk = !tsTeacher || teacherMatches(h.name||'', tsTeacher);
-      // テストの範囲が指定範囲に完全に収まるか（Part/Read and Thinkレベルで精密比較）
-      const unitOk = !hasRangeFilter ? true : (hFromPos >= fromPos - 0.001 && hToPos <= toPos + 0.001);
-      const qtOk      = !qtype   || containsQType(h.question_types, qtype);
-      const gOk       = !tsGrammar || containsGrammarOrPhrase(h.question_types, tsGrammar, '');
-      const pOk       = !tsPhrases || containsGrammarOrPhrase(h.question_types, '', tsPhrases);
-      return gradeOk && schoolOk && teacherOk && unitOk && qtOk && gOk && pOk;
+    const fromPos = bounds.active ? bounds.from : 0;
+    const toPos   = bounds.active ? bounds.to   : 999;
+    const filterGradeN = gradeNumOf(gradeFilter);
+
+    const results = [];
+    hist.forEach(h => {
+      // 学年は表記のゆれ（中1／中１）に関係なく比べる
+      if (gradeFilter && gradeNumOf(h.grade) !== filterGradeN) return;
+      // 学校名は「学校名として取り出した部分」だけで比べる（ファイル名全体だと教師名や日付にも当たる）
+      if (tsSchool && !(h.school || extractSchoolName(h.name||'')).toLowerCase().includes(tsSchool)) return;
+      if (tsTeacher && !teacherMatches(h.name||'', tsTeacher)) return;
+      if (qtype     && !matchesQType(h.question_types, qtype)) return;
+      if (tsGrammar && !containsGrammarOrPhrase(h.question_types, tsGrammar, '')) return;
+      if (tsPhrases && !containsGrammarOrPhrase(h.question_types, '', tsPhrases)) return;
+
+      let exact = false;
+      if (bounds.active) {
+        const rangeStr = h.range || '';
+        if (!rangeStr || rangeStr === '範囲不明') return;
+        const parts = rangeStr.split(/\s*[〜~]\s*/);
+        const hGradeN  = gradeNumOf(h.grade);
+        const hFromPos = rangePos(parts[0], hGradeN);
+        const hToPos   = rangePos(parts[parts.length-1], hGradeN);
+        if (hFromPos < 0 || hToPos < 0) return;
+        if (hFromPos < fromPos - 0.001 || hToPos > toPos + 0.001) return;
+        exact = Math.abs(hFromPos - fromPos) < 0.001 && Math.abs(hToPos - toPos) < 0.001;
+      }
+      results.push({ h, exact });
     });
-    _lastSearchResults = results;
+
+    // 完全一致を先に、そのあとは新しいテスト順
+    const dateOf = h => h.testDate || extractTestDate(h.name||'') || '';
+    results.sort((a, b) => (b.exact - a.exact) || String(dateOf(b.h)).localeCompare(String(dateOf(a.h))));
 
     if (!results.length) {
-      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">条件に一致するテストが見つかりませんでした。</div></div>`;
+      rsEl.innerHTML = `<div class="empty"><div class="empty-ico">😕</div><div class="empty-txt">条件に一致するテストが見つかりませんでした。${bounds.active?'<br>指定した範囲と同じか、それより狭いテストがありません。':''}</div></div>`;
       return;
     }
 
+    const _n = new Date();
+    const nowFY = schoolYearOf(`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}`);
     rsEl.innerHTML = `
-      <p style="font-size:12px;color:var(--muted);margin:12px 0 8px">${results.length}件見つかりました</p>
+      <p style="font-size:12px;color:var(--muted);margin:12px 0 8px">${results.length}件見つかりました${bounds.active?`（うち完全一致 ${results.filter(r=>r.exact).length}件）`:''}</p>
       <div style="display:flex;flex-direction:column;gap:10px">
-        ${results.map((h,idx) => {
+        ${results.map((r,idx) => {
+          const h = r.h;
           const qtRows = (h.question_types||[]).map(qt => `
             <div style="padding:4px 0;border-bottom:1px solid #f0f0f0;font-size:11px">
               <span style="font-weight:600">${esc(qt.section||'')} ${esc(qt.type||'')}</span>
@@ -10132,27 +10232,35 @@ function findTestByDateEx(hist, school, grade, date) {
               ${qt.phrases?`<div style="color:#dc2626;font-weight:600;padding-left:8px">🔗 ${esc(qt.phrases)}</div>`:''}
               ${(qt.sub_questions||[]).map(sq=>`<div style="padding-left:14px;color:var(--muted)">└ ${esc(sq.type||'')} ${sq.count||''}問${sq.grammar?' 📐'+esc(sq.grammar):''}${sq.phrases?' 🔗'+esc(sq.phrases):''}</div>`).join('')}
             </div>`).join('');
-          const entryYear = parseInt(h.year || (h.date||'').split('/')[0] || '0');
-          const nowYear = new Date().getFullYear();
-          const isStale  = entryYear > 0 && entryYear < nowYear - 1; // 2年以上前
-          const isLatest = entryYear === nowYear;
+          const tDate = dateOf(h);
+          const fy = schoolYearOf(tDate);
+          const isStale  = fy > 0 && fy < nowFY - 1;
+          const isLatest = fy > 0 && fy === nowFY;
+          const pg = rangeBothNotations(h.grade, h.range, h.rangePages);
+          const src = h.rangeEditedBy === '範囲表' ? '<span style="color:#059669;font-size:10px;font-weight:700">範囲表</span>'
+                    : h.rangeEditedBy === '手入力' ? '<span style="color:#059669;font-size:10px;font-weight:700">手入力</span>'
+                    : '<span style="color:var(--muted);font-size:10px">推定</span>';
           return `
-          <div class="card" style="padding:16px${isStale?';opacity:.55;filter:grayscale(.3)':''}">
+          <div class="card" style="padding:16px${r.exact?';border:1.5px solid #059669':''}${isStale?';opacity:.55;filter:grayscale(.3)':''}">
             <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
               <div style="flex:1;min-width:200px">
                 <div style="font-size:12px;color:var(--muted);margin-bottom:2px">
-                  ${esc(h.date||'')}
-                  ${isLatest?`<span style="background:#059669;color:#fff;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">最新 ${entryYear}年</span>`:''}
-                  ${isStale?`<span style="background:#9ca3af;color:#fff;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">${entryYear}年（古いデータ）</span>`:''}
+                  ${esc(tDate || '日付不明')}
+                  ${esc(testTermOf(h))}
+                  ${r.exact?`<span style="background:#059669;color:#fff;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">範囲が完全一致</span>`:''}
+                  ${isLatest?`<span style="background:#1e40af;color:#fff;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">${fy}年度</span>`:''}
+                  ${isStale?`<span style="background:#9ca3af;color:#fff;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">${fy}年度（古い）</span>`:''}
                 </div>
                 <div style="font-weight:700;font-size:13px;margin-bottom:4px">${esc(h.name||'')}</div>
                 <div style="font-size:12px;margin-bottom:4px">
                   ${(h.school||extractSchoolName(h.name||''))?`<span style="color:var(--muted);margin-right:8px">🏫 ${esc(h.school||extractSchoolName(h.name||''))}</span>`:''}
-                  ${extractTeachers(h.name||'').map(t=>`<span style="color:#7c3aed;font-weight:600;cursor:pointer;text-decoration:underline;margin-right:6px" onclick="filterByTeacher('${esc(t)}')" title="この作成者で絞り込む">✍️ ${esc(t)}</span>`).join('')}
+                  ${extractTeachers(h.name||'').map(t=>`<span style="color:#7c3aed;font-weight:600;cursor:pointer;text-decoration:underline;margin-right:6px" onclick="filterByTeacher(${JSON.stringify(t).replace(/"/g,'&quot;')})" title="この作成者で絞り込む">✍️ ${esc(t)}</span>`).join('')}
                 </div>
                 <div style="font-size:12px">
                   ${h.grade?`<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;margin-right:6px">${esc(h.grade)}</span>`:''}
-                  <span style="font-weight:600;color:var(--navy)">${esc(h.range||'')}</span>
+                  <span style="font-weight:600;color:var(--navy)">${esc(pg.unit)}</span>
+                  ${pg.page?`<span style="color:var(--muted);margin-left:6px">${esc(pg.page)}</span>`:''}
+                  <span style="margin-left:6px">${src}</span>
                 </div>
                 ${h.notes?`<div style="font-size:11px;color:#b45309;margin-top:4px">📌 ${esc(h.notes)}</div>`:''}
                 ${(h.question_types||[]).length ? `
@@ -10172,17 +10280,12 @@ function findTestByDateEx(hist, school, grade, date) {
       </div>`;
   }
 
-  // 作成者名で絞り込み（検索結果の作成者クリックで呼ばれる）
-  let _lastSearchResults = [];
-
-  // 傾向サマリー生成（検索結果から学校・作成者の出題傾向をAIが要約）
-  
-
   function filterByTeacher(teacher) {
     const el = document.getElementById('tsTeacher');
     if (el) {
       el.value = teacher;
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 画面を動かすのはおまけ。ここで失敗しても検索は必ず走らせる
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
     }
     runTestSearch();
   }
@@ -10680,6 +10783,7 @@ function findTestByDateEx(hist, school, grade, date) {
     if (!getApiKey()) openSetupGuide();
 
     // 3. ドラッグ&ドロップのみ設定（ファイル選択はHTMLのonchangeで処理）
+    try { initTestSearchUI(); } catch (e) { console.warn('テスト検索の初期化に失敗:', e); }
     setupDrop('tbZone',   onPDFLoaded);
     // testZoneは複数PDF対応
     const tz = document.getElementById('testZone');
