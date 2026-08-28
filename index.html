@@ -232,7 +232,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.14</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.16</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -559,9 +559,10 @@
       <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:10px">両教科書の解析データを読み込んでから使用してください。</p>
       <div class="pills" id="comparePills">
-        <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語比較</div>
-        <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語比較</div>
-        <div class="pill" onclick="setCompareMode('grammar',this)">③ 文法履修表</div>
+        <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語</div>
+        <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語</div>
+        <div class="pill" onclick="setCompareMode('all',this)">③ 単語＋熟語</div>
+        <div class="pill" onclick="setCompareMode('grammar',this)">④ 文法履修表</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <div class="s-wrap" style="flex:1;min-width:180px;margin-bottom:0">
@@ -569,12 +570,6 @@
           <input class="s-input" id="compareSearch" placeholder="単語・熟語・文法を検索..."
                  style="height:40px;font-size:13px" oninput="renderCompare()">
         </div>
-        <select id="compareTypeFilter" class="book-select" onchange="setCompareModeFromFilter()">
-          <option value="">全種類</option>
-          <option value="単語">単語</option>
-          <option value="熟語">熟語</option>
-          <option value="文法">文法</option>
-        </select>
       </div>
     </div>
     <div id="compareResult"></div>
@@ -1225,7 +1220,7 @@
       [/^(?!.*(enjoy|like|good\s*at|look\s*forward))(?:.*動名詞|.*～?ing形?\s*[（(]?名詞)/i, 'Unit 4','Read and Think 1'],
       // Unit 6 の比較：Part 1 ～er / the ～est、Part 2 more ～ than / the most ～、
       //                Read and Think 1 better / the best、Read and Think 2 as ～ as / not as ～ as
-      [/as\s*[～~]?\s*as|原級|not\s*as/i,   'Unit 6','Read and Think 2'],
+      [/as\s*[〜～~]?\s*as|原級|not\s*as/i,   'Unit 6','Read and Think 2'],
       [/\b(better|best)\b/i,                'Unit 6','Read and Think 1'],
       [/\b(more|most)\b/i,                  'Unit 6','Part 2'],
       [/比較級|最上級|比較表現|比較|er\s*than|est\b/i, 'Unit 6','Part 1'],
@@ -3682,7 +3677,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 同じ学校・同じ学年の「前回のテスト」の終わりを、範囲の始まりの下限として使う
       const testDate = extractTestDate(name);
       const prev = findPrevTestEnd({ school: extractSchoolName(name), grade: r.grade, testDate });
-      const prevEndPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
+      const prevEndPos = prev ? rangePos(String(prev.range).split(/\s*[〜～~]\s*/).pop(), gradeNumOf(r.grade)) : null;
       if (!tooBlurry) refineRangeFromLibrary(r, { prevEndPos: (prevEndPos != null && prevEndPos >= 0) ? prevEndPos : null, testDate });
       // 何を「前回のテスト」として使ったかを残す（一覧で確認できるようにする）
       const prevInfo = prev ? { date: prev.date, range: prev.range } : null;
@@ -4406,7 +4401,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   function parseRangeText(str) {
     const s = (str||'').trim();
     if (!s || s === '範囲不明') return { from_unit:'', from_lesson:'', to_unit:'', to_lesson:'' };
-    const parts = s.split(/\s*[〜~]\s*/);
+    const parts = s.split(/\s*[〜～~]\s*/);
     const a = splitRangeSide(parts[0]);
     const b = splitRangeSide(parts[1] !== undefined ? parts[1] : parts[0]);
     return { from_unit:a.unit, from_lesson:a.lesson, to_unit:b.unit, to_lesson:b.lesson };
@@ -4588,7 +4583,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 同じ学校・同じ学年の「前回のテスト」の終わりを、範囲の始まりの下限として使う
       const tDate = h.testDate || extractTestDate(h.name || '');
       const prev = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''), grade: r.grade, testDate: tDate });
-      const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(r.grade)) : null;
+      const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜～~]\s*/).pop(), gradeNumOf(r.grade)) : null;
       refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null, testDate: tDate });
       h.prevTest = prev ? { date: prev.date, range: prev.range } : null;
       const after = buildRangeText(r);
@@ -4858,7 +4853,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const gTestDate = h.testDate || extractTestDate(h.name || '');
     const gPrev     = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''),
                                         grade: g, testDate: gTestDate });
-    const gPrevPos  = gPrev ? rangePos(String(gPrev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(g)) : null;
+    const gPrevPos  = gPrev ? rangePos(String(gPrev.range).split(/\s*[〜～~]\s*/).pop(), gradeNumOf(g)) : null;
     refineRangeFromLibrary(r, {
       prevEndPos: (gPrevPos != null && gPrevPos >= 0) ? gPrevPos : null,
       testDate: gTestDate
@@ -4907,7 +4902,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const dTestDate = h.testDate || extractTestDate(h.name || '');
     const dPrev     = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''),
                                         grade: h.grade || '', testDate: dTestDate });
-    const dPrevPos  = dPrev ? rangePos(String(dPrev.range).split(/\s*[〜~]\s*/).pop(), gradeNumOf(h.grade||'')) : null;
+    const dPrevPos  = dPrev ? rangePos(String(dPrev.range).split(/\s*[〜～~]\s*/).pop(), gradeNumOf(h.grade||'')) : null;
     const d = refineRangeFromLibrary(r, {
       prevEndPos: (dPrevPos != null && dPrevPos >= 0) ? dPrevPos : null,
       testDate: dTestDate
@@ -9689,17 +9684,34 @@ function findTestByDateEx(hist, school, grade, date) {
     renderExamHistory();
   }
 
-  // ── 教科書比較フィルター更新 ────────────────────────────────────────
-  function setCompareModeFromFilter() {
-    const v = (document.getElementById('compareTypeFilter')||{}).value||'';
-    if (v==='単語') { compareMode='vocab'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===0)); }
-    else if (v==='熟語') { compareMode='phrases'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===1)); }
-    else if (v==='文法') { compareMode='grammar'; document.querySelectorAll('#comparePills .pill').forEach((p,i)=>p.classList.toggle('active',i===2)); }
-    renderCompare();
-  }
 
   // ── 教科書比較 ────────────────────────────────────────────────────
+  // 【照合の考え方】
+  // NHとNCは別々にAIが読み取るため、同じ語でも書き方が揺れる。
+  //   e-mail / email 、 etc. / etc 、 be interested in ~ / be interested in 、
+  //   look forward to ~ing / look forward to ...ing 、全角スペース混じり
+  // 完全一致で比べると、これらが全部「片方にしかない」と判定されて一覧が水増しされる。
+  // そこで比較用のキーを作り、記号・空白・ハイフンのゆらぎだけを吸収して照合する。
+  // ※ go/went のような語形変化や単複は吸収しない（本当に別の項目まで消してしまうため）。
+  function compareKey(s) {
+    return String(s || '')
+      .normalize('NFKC')                          // 全角英数・全角スペースを半角に揃える
+      .toLowerCase()
+      .replace(/\.\.\.|[〜～~…‥]/g, '')            // 「~」「...」などの穴埋め記号を落とす
+      .replace(/[.,!?;:"'`’‘“”()\[\]{}]/g, '')     // 句読点・カッコ（中身は残す）
+      .replace(/[\s\-‐‑–—_]/g, '')                // 空白とハイフン（e-mail = email、well-known = well known）
+      .trim();
+  }
+
+  // 表示用の並び順：学年 → Lesson/Unit番号 → アルファベット順
+  function compareSortKey(row) {
+    const g = { '中1': 1, '中2': 2, '中3': 3 }[row.grade] || 9;
+    const m = String(row.unit || '').match(/(\d+)/);
+    return [g, m ? parseInt(m[1]) : 999, compareKey(row.content)];
+  }
+
   let compareMode = 'vocab';
+  let compareLastRows = { nh: [], nc: [] };   // 書き出し用に直近の表示内容を持っておく
 
   function setCompareMode(mode, el) {
     compareMode = mode;
@@ -9708,46 +9720,162 @@ function findTestByDateEx(hist, school, grade, date) {
     renderCompare();
   }
 
+  // 教科書データの状態を調べる（未解析・混入の警告に使う）
+  function compareDataHealth() {
+    const notes = [];
+    const empties = [];
+    (library || []).forEach(b => {
+      if (!isNHBook(b.id) && !isNCBook(b.id)) return;
+      if (!(b.items || []).length) empties.push(b.name || b.id);
+    });
+    if (empties.length) {
+      notes.push({ kind: 'warn', text: `未解析の教科書があります：${empties.join('・')}。この巻の内容は比較に入っていません。` });
+    }
+    // NEW HORIZONの本にNEW CROWNらしい単元名（Lesson 1 / Get Plus など）が入っていないか。
+    // 混入していると、その語は「NHにもある」と見なされ、NCのみの一覧から黙って消える。
+    const bad = [];
+    (library || []).forEach(b => {
+      if (!isNHBook(b.id)) return;
+      const n = (b.items || []).filter(it => FOREIGN_NAME_RE.test(`${it.unit || ''} ${it.lesson || ''}`)).length;
+      if (n) bad.push(`${b.name || b.id}：${n}件`);
+    });
+    if (bad.length) {
+      notes.push({ kind: 'warn', text: `NEW HORIZONの中に他教科書らしい単元名の項目があります（${bad.join('、')}）。混入していると、その語がNEW CROWNのみの一覧から消えます。「異物チェック」で確認してください。` });
+    }
+    return notes;
+  }
+
   function renderCompare() {
     const el = document.getElementById('compareResult');
     if (!el) return;
     const nhItems = getNHItems();
     const ncItems = getNCItems();
     if (!nhItems.length && !ncItems.length) {
+      compareLastRows = { nh: [], nc: [] };
       el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NEW HORIZON・NEW CROWN両方の教科書データを解析してください。</div></div>`;
       return;
     }
-    if (compareMode === 'vocab')   renderCompareItems(el, nhItems, ncItems, '単語');
-    if (compareMode === 'phrases') renderCompareItems(el, nhItems, ncItems, '熟語');
-    if (compareMode === 'grammar') renderGrammarTable(el, nhItems, ncItems);
+    if (compareMode === 'grammar') { compareLastRows = { nh: [], nc: [] }; renderGrammarTable(el, nhItems, ncItems); return; }
+    const types = (compareMode === 'phrases') ? ['熟語']
+                : (compareMode === 'all')     ? ['単語', '熟語']
+                :                               ['単語'];
+    renderCompareItems(el, nhItems, ncItems, types);
   }
 
-  function renderCompareItems(el, nhItems, ncItems, type) {
-    const searchQ = ((document.getElementById('compareSearch')||{}).value||'').toLowerCase();
-    const nhSet = new Set(nhItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
-    const ncSet = new Set(ncItems.filter(i=>i.type===type).map(i=>(i.content||'').toLowerCase().trim()));
-    let nhOnly = nhItems.filter(i=>i.type===type && !ncSet.has((i.content||'').toLowerCase().trim()));
-    let ncOnly = ncItems.filter(i=>i.type===type && !nhSet.has((i.content||'').toLowerCase().trim()));
+  // 片側だけにある項目を、重複をまとめた行の一覧にして返す
+  function compareOnlyRows(mineItems, otherItems, types) {
+    // 【重要】相手側のキーは種類をまたいで集める。
+    // 「get up」がNHでは単語、NCでは熟語に入っていることがあり、
+    // 種類ごとに比べると同じ語が「NHのみ」と「NCのみ」の両方に出てしまう。
+    const otherKeys = new Set();
+    otherItems.forEach(i => { const k = compareKey(i.content); if (k) otherKeys.add(k); });
+
+    const map = new Map();
+    mineItems.forEach(i => {
+      if (!types.includes(i.type)) return;
+      const k = compareKey(i.content);
+      if (!k) return;                 // 中身が空の項目は捨てる
+      if (otherKeys.has(k)) return;
+      const where = [i.grade || '', [i.unit, i.lesson].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+      if (!map.has(k)) {
+        map.set(k, {
+          content: (i.content || '').trim(),
+          translation: (i.translation || '').trim(),
+          type: i.type || '',
+          grade: i.grade || '',
+          unit: [i.unit, i.lesson].filter(Boolean).join(' '),
+          places: []
+        });
+      }
+      const row = map.get(k);
+      if (!row.translation && (i.translation || '').trim()) row.translation = (i.translation || '').trim();
+      if (where && !row.places.includes(where)) row.places.push(where);
+    });
+    const rows = [...map.values()];
+    rows.sort((a, b) => {
+      const ka = compareSortKey(a), kb = compareSortKey(b);
+      return (ka[0] - kb[0]) || (ka[1] - kb[1]) || (ka[2] < kb[2] ? -1 : ka[2] > kb[2] ? 1 : 0);
+    });
+    return rows;
+  }
+
+  function renderCompareItems(el, nhItems, ncItems, types) {
+    const searchQ = ((document.getElementById('compareSearch') || {}).value || '').toLowerCase();
+    let nhOnly = compareOnlyRows(nhItems, ncItems, types);
+    let ncOnly = compareOnlyRows(ncItems, nhItems, types);
     if (searchQ) {
-      nhOnly = nhOnly.filter(i=>(i.content||'').toLowerCase().includes(searchQ)||(i.translation||'').toLowerCase().includes(searchQ));
-      ncOnly = ncOnly.filter(i=>(i.content||'').toLowerCase().includes(searchQ)||(i.translation||'').toLowerCase().includes(searchQ));
+      const hit = r => (r.content || '').toLowerCase().includes(searchQ) || (r.translation || '').toLowerCase().includes(searchQ);
+      nhOnly = nhOnly.filter(hit);
+      ncOnly = ncOnly.filter(hit);
     }
-    const mkTable = (items, unitLabel) => items.length
+    compareLastRows = { nh: nhOnly, nc: ncOnly, types };
+
+    const showType = types.length > 1;
+    const mkTable = (rows, unitLabel) => rows.length
       ? `<div class="tbl-wrap"><table>
-          <thead><tr><th>内容</th><th>訳</th><th>学年</th><th>${unitLabel}</th></tr></thead>
-          <tbody>${items.map(i=>`<tr>
-            <td style="font-weight:600">${esc(i.content||'')}</td>
-            <td style="font-size:12px;color:var(--muted)">${esc(i.translation||'')}</td>
-            <td style="font-size:11px;font-weight:700;color:var(--navy);white-space:nowrap">${esc(i.grade||'')}</td>
-            <td style="font-size:11px;color:var(--muted)">${esc(i.unit||'')}${i.lesson?' '+esc(i.lesson):''}</td>
+          <thead><tr><th>内容</th><th>訳</th>${showType ? '<th>種類</th>' : ''}<th>${unitLabel}</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+            <td style="font-weight:600">${esc(r.content)}</td>
+            <td style="font-size:12px;color:var(--muted)">${esc(r.translation)}</td>
+            ${showType ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.type)}</td>` : ''}
+            <td style="font-size:11px;color:var(--muted)">${esc(r.places.join(' / '))}</td>
           </tr>`).join('')}</tbody>
         </table></div>`
-      : `<p style="font-size:13px;color:var(--muted);padding:8px">なし（または未解析）</p>`;
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="card"><div class="card-title" style="color:var(--navy)">NEW HORIZONのみ（${nhOnly.length}件）</div>${mkTable(nhOnly,'NEW HORIZON 単元')}</div>
-        <div class="card"><div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${ncOnly.length}件）</div>${mkTable(ncOnly,'NEW CROWN 単元')}</div>
+      : `<p style="font-size:13px;color:var(--muted);padding:8px">該当なし</p>`;
+
+    const notes = compareDataHealth();
+    const noteHTML = notes.length
+      ? `<div class="card" style="border-left:4px solid #f59e0b">${notes.map(n =>
+          `<div style="font-size:12px;line-height:1.7">⚠️ ${esc(n.text)}</div>`).join('')}</div>`
+      : '';
+
+    const btns = side => `
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="copyCompareList('${side}')">📋 コピー</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="downloadCompareCSV('${side}')">⬇ CSV</button>
       </div>`;
+
+    el.innerHTML = `
+      ${noteHTML}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="card">
+          <div class="card-title" style="color:var(--navy)">NEW HORIZONのみ（${nhOnly.length}件）</div>
+          ${mkTable(nhOnly, 'NEW HORIZON 掲載箇所')}
+          ${nhOnly.length ? btns('nh') : ''}
+        </div>
+        <div class="card">
+          <div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${ncOnly.length}件）</div>
+          ${mkTable(ncOnly, 'NEW CROWN 掲載箇所')}
+          ${ncOnly.length ? btns('nc') : ''}
+        </div>
+      </div>`;
+  }
+
+  // ── 比較結果の書き出し ────────────────────────────────────────────
+  function compareRowsToTSV(side) {
+    const rows = (compareLastRows || {})[side] || [];
+    const head = ['内容', '訳', '種類', '掲載箇所'].join('\t');
+    return [head, ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / ')].join('\t'))].join('\n');
+  }
+  async function copyCompareList(side) {
+    const txt = compareRowsToTSV(side);
+    try { await navigator.clipboard.writeText(txt); showToast('コピーしました（そのまま表計算に貼れます）', 'ok'); }
+    catch { showToast('コピーできませんでした。CSVで保存してください'); }
+  }
+  function downloadCompareCSV(side) {
+    const rows = (compareLastRows || {})[side] || [];
+    if (!rows.length) return;
+    const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const csv = ['内容,訳,種類,掲載箇所',
+      ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / ')].map(q).join(','))].join('\r\n');
+    // ExcelでUTF-8を正しく開かせるためBOMを付ける
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${side === 'nc' ? 'NEW_CROWNのみ' : 'NEW_HORIZONのみ'}_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function renderGrammarTable(el, nhItems, ncItems) {
@@ -9900,6 +10028,9 @@ function findTestByDateEx(hist, school, grade, date) {
     else if (/Part\s*3/i.test(s))                  sub = 0.25;
     else if (/Read\s*and\s*Think\s*1/i.test(s))    sub = 0.3;
     else if (/Read\s*and\s*Think\s*2/i.test(s))    sub = 0.4;
+    // 中1のRead and Thinkには番号が付かない。ここが無いとsub=0のままになり、
+    // Part 3の後にあるはずのRead and ThinkがUnitの先頭と同じ位置に判定されていた。
+    else if (/Read\s*and\s*Think/i.test(s))         sub = 0.3;
     else if (/Grammar\s*for\s*Communication/i.test(s)) sub = 0.5;
     else if (/Real\s*Life\s*English/i.test(s))     sub = 0.6;
     else if (/Stage\s*Activity/i.test(s))          sub = 0.7;
@@ -10197,7 +10328,7 @@ function findTestByDateEx(hist, school, grade, date) {
       if (bounds.active) {
         const rangeStr = h.range || '';
         if (!rangeStr || rangeStr === '範囲不明') return;
-        const parts = rangeStr.split(/\s*[〜~]\s*/);
+        const parts = rangeStr.split(/\s*[〜～~]\s*/);
         const hGradeN  = gradeNumOf(h.grade);
         const hFromPos = rangePos(parts[0], hGradeN);
         const hToPos   = rangePos(parts[parts.length-1], hGradeN);
