@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.17</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.18</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -10061,11 +10061,35 @@ function findTestByDateEx(hist, school, grade, date) {
       .trim();
   }
 
+  // 【語尾の変化をカッコで示す書き方に対応する】
+  // 教科書には「place(s)」「child(ren)」「go(es)」「a(n)」のような書き方が出てくる。
+  // これまではカッコだけを外して中身を残していたため「places」となり、
+  // もう一方の「place」と別物と判定されていた（NEW HORIZONに載っている place が
+  // 「NEW CROWNのみ」に出てしまう原因）。
+  // カッコを外した形と、中身ごと落とした形の両方で照合する。
+  // 【中身ごと落とすのは語尾の印だけに限る】「look (at)」のようにカッコの中身に
+  // 意味がある場合まで落とすと、本来NEW CROWNだけにある熟語が消えてしまう。
+  // 直前が文字で、中身が語尾によく使う綴りのときだけを対象にする。
+  const INFLECT_PAREN = /([A-Za-z])\((s|es|d|ed|ing|n|en|ren|ies|ves|r|st|ly)\)/gi;
+  function compareKeys(s) {
+    const base = compareKey(s);
+    const bare = compareKey(String(s || '').replace(INFLECT_PAREN, '$1'));
+    const keys = [];
+    if (base) keys.push(base);
+    if (bare && bare !== base) keys.push(bare);
+    return keys;
+  }
+  // まとめ・表示に使う代表の鍵（語尾を落とした形を優先）
+  function compareGroupKey(s) {
+    const ks = compareKeys(s);
+    return ks.length ? ks[ks.length - 1] : '';
+  }
+
   // 表示用の並び順：学年 → Lesson/Unit番号 → アルファベット順
   function compareSortKey(row) {
     const g = { '中1': 1, '中2': 2, '中3': 3 }[row.grade] || 9;
     const m = String(row.unit || '').match(/(\d+)/);
-    return [g, m ? parseInt(m[1]) : 999, compareKey(row.content)];
+    return [g, m ? parseInt(m[1]) : 999, compareGroupKey(row.content)];
   }
 
   let compareMode = 'vocab';
@@ -10127,14 +10151,15 @@ function findTestByDateEx(hist, school, grade, date) {
     // 「get up」がNHでは単語、NCでは熟語に入っていることがあり、
     // 種類ごとに比べると同じ語が「NHのみ」と「NCのみ」の両方に出てしまう。
     const otherKeys = new Set();
-    otherItems.forEach(i => { const k = compareKey(i.content); if (k) otherKeys.add(k); });
+    otherItems.forEach(i => compareKeys(i.content).forEach(k => otherKeys.add(k)));
 
     const map = new Map();
     mineItems.forEach(i => {
       if (!types.includes(i.type)) return;
-      const k = compareKey(i.content);
-      if (!k) return;                 // 中身が空の項目は捨てる
-      if (otherKeys.has(k)) return;
+      const ks = compareKeys(i.content);
+      if (!ks.length) return;         // 中身が空の項目は捨てる
+      if (ks.some(x => otherKeys.has(x))) return;
+      const k = ks[ks.length - 1];    // 「place(s)」と「place」を1行にまとめる
       const where = [i.grade || '', [i.unit, i.lesson].filter(Boolean).join(' ')].filter(Boolean).join(' ');
       if (!map.has(k)) {
         map.set(k, {
