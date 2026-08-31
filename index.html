@@ -10,6 +10,7 @@
   <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-auth-compat.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     :root {
@@ -230,9 +231,41 @@
 </head>
 <body>
 
+<!-- ══ ログイン画面 ══ -->
+<div id="loginOv" style="display:flex;position:fixed;inset:0;z-index:9999;background:#0f172a;
+     align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:14px;padding:28px 26px;width:100%;max-width:380px;
+              box-shadow:0 20px 60px rgba(0,0,0,.35)">
+    <div style="font-size:22px;font-weight:700;margin-bottom:4px">NH<span style="color:#2563eb">Scope</span></div>
+    <div id="loginMsg" style="font-size:13px;color:#64748b;margin-bottom:18px">接続しています…</div>
+    <div id="loginForm" style="display:none">
+    <input id="loginPw" type="password" placeholder="パスワード" autocomplete="current-password"
+           style="width:100%;box-sizing:border-box;padding:11px 12px;font-size:16px;
+                  border:1px solid #cbd5e1;border-radius:8px;outline:none">
+    <div id="loginErr" style="display:none;font-size:12px;color:#dc2626;margin-top:8px"></div>
+    <button id="loginBtn" onclick="doLogin()"
+            style="width:100%;margin-top:14px;padding:11px;font-size:15px;font-weight:600;color:#fff;
+                   background:#2563eb;border:0;border-radius:8px;cursor:pointer">ログイン</button>
+    <div style="font-size:11px;color:#94a3b8;margin-top:14px;line-height:1.7">
+      入力は、この端末では最初の1回だけです。<br>
+      次回からは自動でログインされます。
+    </div>
+    </div><!-- /loginForm -->
+    <div id="loginOffline" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0">
+      <div style="font-size:12px;color:#b45309;line-height:1.7;margin-bottom:8px">
+        ネットにつながらないため、ログインできません。<br>
+        この端末に保存されているデータだけで使えます（他の校舎とは同期されません）。
+      </div>
+      <button onclick="skipLogin()"
+              style="width:100%;padding:9px;font-size:13px;color:#334155;background:#f1f5f9;
+                     border:1px solid #cbd5e1;border-radius:8px;cursor:pointer">このまま手元のデータで使う</button>
+    </div>
+  </div>
+</div>
+
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.16</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.17</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -353,7 +386,12 @@
 
     <div id="tbPreview"></div>
 
-    <div class="divider"><span>または — 画像ファイル（PNG/JPEG）を直接投入（iLovePDF不要）</span></div>
+    <!-- 毎回は使わない操作をたたんでおく。開けば中身はそのまま。 -->
+    <details id="setupMore" style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);list-style:revert">
+      その他の操作（画像から解析・リスト表示のリセット）
+    </summary>
+    <div style="margin-top:12px">
     <div class="card">
       <div class="card-title">🖼️ 画像ファイルから直接解析</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">スマホで撮った写真（見開き2ページでもOK）やPNG/JPEGを直接投入できます。PDF変換不要。各ページ隅の印字ページ番号がはっきり写るように撮影してください（番号がUnit補正の基準になります）。</p>
@@ -394,6 +432,8 @@
         単語・熟語・文法のデータは消えません。</p>
       <button class="btn btn-secondary btn-sm" onclick="resetBookList()">↺ リスト表示をリセット</button>
     </div>
+    </div>
+    </details>
   </div>
 
   <!-- ══ TAB 2: データ編集 ════════════════════════════════════════ -->
@@ -426,16 +466,18 @@
       <select class="book-select book-sel-sync" onchange="switchBook(this.value)"></select>
       <span style="font-size:12px;color:var(--muted)">（テスト範囲の特定に使用）</span>
     </div>
-    <div style="max-width:960px;margin:8px auto 0;font-size:12px">
-      <span style="color:var(--muted)">このタブの中身：</span>
-      <a href="#secTestPdf" style="margin-left:6px">テストPDFの分析</a>　
-      <a href="#secSyllabus">テスト範囲表の読み込み</a>　
-      <a href="#secHistory">テスト分析履歴</a>
+    <!-- 3つの作業を切り替えて表示する。以前は縦に全部並んでいて、
+         履歴まで届くのにかなりスクロールが必要だった。 -->
+    <div class="pills" id="testSecPills" style="max-width:960px;margin:8px auto 0">
+      <div class="pill active" data-sec="pdf"      onclick="setTestSection('pdf',this)">📄 テストPDFの分析</div>
+      <div class="pill"        data-sec="syllabus" onclick="setTestSection('syllabus',this)">📋 範囲表の読み込み<span id="secCountSyl"></span></div>
+      <div class="pill"        data-sec="history"  onclick="setTestSection('history',this)">📋 テスト分析履歴<span id="secCountHist"></span></div>
     </div>
     <!-- 今月いくら使ったか。上限に達したらAIへの送信を止める -->
     <div id="usageBar" style="max-width:960px;margin:8px auto 0;padding:8px 12px;border:1px solid var(--line);
                               border-radius:8px;font-size:12px"></div>
     <div id="testWarn" class="warn" style="display:none">⚠️ 教科書データが未読込です（分析は可能ですが精度が下がります）。</div>
+    <div id="testSec-pdf">
     <div class="card">
       <div class="card-title" id="secTestPdf">📄 テストPDF（複数ファイル対応）</div>
       <div class="upload-zone" id="testZone">
@@ -477,7 +519,11 @@
       <div id="testStatus"></div>
     </div>
 
-    <div class="divider"><span>または — 範囲表の写真から範囲を取り込む</span></div>
+    <div id="testResult"></div>
+    <div style="margin:6px 0 0"><button class="btn btn-secondary btn-sm" onclick="shareTestReport()" style="font-size:12px">🖨 共有レポート</button></div>
+    </div><!-- /testSec-pdf -->
+
+    <div id="testSec-syllabus" style="display:none">
     <div class="card">
       <div class="card-title" id="secSyllabus">📋 テスト範囲表の読み込み</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
@@ -501,10 +547,11 @@
       <div id="syllabusStatus"></div>
       <div id="syllabusResult" style="margin-top:10px"></div>
     </div>
+    </div><!-- /testSec-syllabus -->
 
-    <div id="testResult"></div>
-    <div style="margin:6px 0 0"><button class="btn btn-secondary btn-sm" onclick="shareTestReport()" style="font-size:12px">🖨 共有レポート</button></div>
-    <div id="testHistory"></div>
+    <div id="testSec-history" style="display:none">
+      <div id="testHistory"></div>
+    </div>
   </div>
 
   <!-- ══ TAB 4: 検索 ═══════════════════════════════════════════════ -->
@@ -568,7 +615,7 @@
         <div class="s-wrap" style="flex:1;min-width:180px;margin-bottom:0">
           <span class="s-ico">🔍</span>
           <input class="s-input" id="compareSearch" placeholder="単語・熟語・文法を検索..."
-                 style="height:40px;font-size:13px" oninput="renderCompare()">
+                 style="height:40px;font-size:13px" oninput="cmpPageNH=0;cmpPageNC=0;renderCompare()">
         </div>
       </div>
     </div>
@@ -623,6 +670,11 @@
 
       <div id="tsRangeNote" style="font-size:12px;color:var(--muted);margin:8px 0 14px;min-height:18px"></div>
 
+      <details id="tsMore" style="margin-bottom:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);list-style:revert">
+        詳しい条件（問題形式・学校名・教師名・文法・熟語）<span id="tsMoreCount"></span>
+      </summary>
+      <div style="margin-top:12px">
       <div style="margin-bottom:14px">
         <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">問題形式（任意）</label>
         <select id="tsQType" class="book-select" style="width:100%">
@@ -651,6 +703,8 @@
           <input type="text" id="tsPhrases" class="form-in" placeholder="例：It is said that" style="font-size:12px">
         </div>
       </div>
+      </div>
+      </details>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" style="flex:1" onclick="runTestSearch()">🔍 検索する</button>
         <button class="btn btn-secondary" onclick="resetTestSearch()">条件をリセット</button>
@@ -1924,28 +1978,12 @@
   }
    // 後方互換
 
-  function resetLibrary() {
-    try {
-      library  = DEFAULT_BOOKS.map(b => ({ ...b, items: [] }));
-      activeId = library[0].id;
-      renderBookSel();
-      renderPreview();
-      renderUnitView();
-      updateBadge();
-      saveBackup();
-      // フィードバックをDOMに表示
-      const btn = document.querySelector('[onclick="resetLibrary()"]');
-      if (btn) {
-        const orig = btn.textContent;
-        btn.textContent = '✅ 初期化しました';
-        btn.style.color = 'var(--green)';
-        setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 2500);
-      }
-    } catch(e) {
-      const card = document.querySelector('[onclick="resetLibrary()"]')?.closest('.card');
-      if (card) card.innerHTML += `<p style="color:red;font-size:12px;margin-top:8px">エラー: ${e.message}</p>`;
-    }
-  }
+  // 【削除済み】resetLibrary()
+  // どこからも呼ばれていない関数だったが、中身は「6冊すべてを手元で空にし、
+  // 選択中の1冊だけを空の状態でクラウドに保存する」という危険なものだった。
+  // 実行されれば、その1冊が全校舎から消えて戻せない。誤って配線されないよう消した。
+  // 画面のボタン（↺ リスト表示をリセット）が呼んでいるのは resetBookList() で、
+  // こちらは表示を描き直すだけの安全な処理。
 
   async function deleteBook() {
     if (library.length <= 1) { alert('最後の1冊は削除できません。'); return; }
@@ -1954,8 +1992,22 @@
     }
     const ok = await showConfirm(`「${activeBook()?.name}」を削除しますか？`);
     if (!ok) return;
-    library = library.filter(b => b.id !== activeId);
+    const goneId = activeId;
+    library = library.filter(b => b.id !== goneId);
     switchBook(library[0].id);
+    persistLibrary();
+    // 【クラウドからも消す】ここを消さないと、次に同期したときに復活してしまう。
+    deleteBookFromFirestore(goneId);
+  }
+
+  async function deleteBookFromFirestore(bookId) {
+    if (!canCloud() || !bookId) return;
+    try {
+      await db.collection(FB_LIBRARY_COL).doc(bookId).delete();
+    } catch(e) {
+      console.warn('Firestore book delete error:', e);
+      try { showToast('⚠️ 教科書をクラウドから削除できませんでした（次の同期で戻ることがあります）', 'error'); } catch {}
+    }
   }
 
   function renderBookSel() {
@@ -1972,6 +2024,36 @@
     if (delBtn) delBtn.disabled = library.length <= 1;
   }
 
+  // ── テスト分析タブの中の切り替え ──────────────────────────────
+  let testSection = 'pdf';
+  function setTestSection(sec, el) {
+    testSection = sec;
+    ['pdf','syllabus','history'].forEach(s => {
+      const d = document.getElementById('testSec-' + s);
+      if (d) d.style.display = (s === sec) ? '' : 'none';
+    });
+    document.querySelectorAll('#testSecPills .pill').forEach(p =>
+      p.classList.toggle('active', p.dataset.sec === sec));
+    if (sec === 'history') { try { renderTestHistory(); } catch(e) {} }
+    updateTestSecCounts();
+  }
+
+  // 【たたんだ中身が消えたように見えないように】
+  // 切り替え式にすると、開いていない側に何件あるのか分からなくなる。
+  // 件数をピルに出しておけば、閉じていても中身があることが分かる。
+  function updateTestSecCounts() {
+    try {
+      const s = document.getElementById('secCountSyl');
+      const n = (lastSyllabusResults || []).length;
+      if (s) s.textContent = n ? `（${n}）` : '';
+    } catch(e) {}
+    try {
+      const h = document.getElementById('secCountHist');
+      const n = histAll().length;
+      if (h) h.textContent = n ? `（${n}）` : '';
+    } catch(e) {}
+  }
+
   // ── TABS ───────────────────────────────────────────────────────────
   function switchTab(name) {
     try {
@@ -1981,6 +2063,7 @@
       if (name==='edit')   { try { renderUnitView(); } catch(e){} document.getElementById('editWarn').style.display   = nd?'block':'none'; }
       if (name==='test') {
         document.getElementById('testWarn').style.display = nd?'block':'none';
+        setTestSection(testSection);
         // タブに戻ったとき保存済み結果を復元
         const saved = localStorage.getItem('nhscope_test_result');
         const rsEl = document.getElementById('testResult');
@@ -1988,7 +2071,7 @@
       }
       if (name==='search') document.getElementById('searchWarn').style.display = nd?'block':'none';
       // 学校名・教師名の入力候補は、同期でデータが増えていることがあるので開くたびに作り直す
-      if (name==='test-search') { try { tsFillNameLists(); tsFillQTypeSelect(); } catch(e){} }
+      if (name==='test-search') { try { tsFillNameLists(); tsFillQTypeSelect(); updateTsMoreCount(); } catch(e){} }
     } catch(e) { console.error('switchTab error:', e); }
   }
 
@@ -2058,7 +2141,17 @@
 
   // ── Firebase 初期化 ───────────────────────────────────────────────
   let db = null;
+  let auth = null;
   let FIREBASE_READY = false;
+  // ── ログイン ──────────────────────────────────────────────────────
+  // 【なぜ要るか】Firestoreのルールを「ログイン済みのみ」にするため。
+  // ルールが公開のままだと、公開リポジトリに書いてある接続情報だけで、
+  // 誰でもAPIキーや生徒データを読み書きできてしまう。
+  // 共有アカウントは1つだけ。端末ごとに最初の1回パスワードを入れれば、
+  // 以後はブラウザが覚えている（永続ログイン）ので入力は不要。
+  const SHARED_EMAIL = 'staff@nhscope.local';
+  let AUTH_OK = false;   // ログイン済みか
+  let AUTH_SKIPPED = false; // オフラインで手元のデータだけ使う
   const FB_LIBRARY_COL  = 'nhscope_library';
   const FB_CONFIG_COL   = 'nhscope_config';
   const FB_TESTS_COL    = 'nhscope_test_entries'; // テスト1件=1ドキュメント方式
@@ -2082,6 +2175,7 @@
         ? firebase.apps[0]
         : firebase.initializeApp(cfg);
       db = firebase.firestore(app);
+      try { auth = firebase.auth(app); } catch(e) { console.warn('Auth init failed:', e); }
       FIREBASE_READY = true;
     } catch(e) { console.warn('Firebase init failed:', e); }
   }
@@ -2097,6 +2191,93 @@
     }
     console.warn('Firebase SDK 5秒以内に読み込まれませんでした');
   }
+
+  // ログインの状態を見張って、済んだら本体を動かす
+  function startAuthFlow() {
+    const ov = document.getElementById('loginOv');
+    if (!FIREBASE_READY || !auth) {
+      // ネットにつながっていない／SDKが読めない → 締め出さずに逃げ道を出す
+      if (ov) {
+        ov.style.display = 'flex';
+        const om = document.getElementById('loginOffline');
+        if (om) om.style.display = 'block';
+        const lm = document.getElementById('loginMsg');
+        if (lm) lm.textContent = 'サーバーに接続できませんでした';
+      }
+      return;
+    }
+    // ログイン状態をこの端末に残す（次回から入力不要）
+    try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch(e) {}
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        AUTH_OK = true;
+        if (ov) ov.style.display = 'none';
+        afterLogin();
+      } else {
+        AUTH_OK = false;
+        if (ov) {
+          ov.style.display = 'flex';
+          const fm = document.getElementById('loginForm');
+          if (fm) fm.style.display = 'block';
+          const lm = document.getElementById('loginMsg');
+          if (lm) lm.textContent = 'パスワードを入力してください';
+          const pw = document.getElementById('loginPw');
+          if (pw) { pw.value = ''; setTimeout(() => { try { pw.focus(); } catch(e){} }, 60); }
+        }
+      }
+    });
+    const pw = document.getElementById('loginPw');
+    if (pw) pw.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  }
+
+  async function doLogin() {
+    const pwEl  = document.getElementById('loginPw');
+    const btn   = document.getElementById('loginBtn');
+    const errEl = document.getElementById('loginErr');
+    const pw = (pwEl && pwEl.value || '').trim();
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (!pw) { showLoginErr('パスワードを入力してください。'); return; }
+    if (!auth) { showLoginErr('サーバーに接続できていません。'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'ログイン中…'; }
+    try {
+      await auth.signInWithEmailAndPassword(SHARED_EMAIL, pw);
+      // 成功すると onAuthStateChanged が動いて画面が閉じる
+    } catch (e) {
+      const code = (e && e.code) || '';
+      let msg = 'ログインできませんでした。';
+      if (/wrong-password|invalid-credential|invalid-login/i.test(code)) msg = 'パスワードが違います。';
+      else if (/user-not-found/i.test(code)) msg = 'アカウントが見つかりません。管理者に確認してください。';
+      else if (/too-many-requests/i.test(code)) msg = '間違いが続いたため、しばらく待ってからお試しください。';
+      else if (/network/i.test(code)) msg = 'ネットワークにつながりません。接続を確認してください。';
+      else if (/operation-not-allowed/i.test(code)) msg = 'メール／パスワードのログインが有効になっていません（管理者の設定が必要です）。';
+      showLoginErr(msg);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'ログイン'; }
+    }
+  }
+  function showLoginErr(msg) {
+    const el = document.getElementById('loginErr');
+    if (el) { el.textContent = msg; el.style.display = 'block'; }
+  }
+  // オフラインのとき、手元のデータだけで使う
+  function skipLogin() {
+    AUTH_SKIPPED = true;
+    const ov = document.getElementById('loginOv');
+    if (ov) ov.style.display = 'none';
+    setSyncBadge('error');
+    try { showToast('オフラインで開いています。変更は他の校舎に共有されません', 'error'); } catch(e) {}
+  }
+  // ログイン後に一度だけ動かす
+  let _afterLoginDone = false;
+  async function afterLogin() {
+    if (_afterLoginDone) return;
+    _afterLoginDone = true;
+    await syncFromFirestore();
+    if (!getApiKey()) openSetupGuide();
+  }
+
+  // クラウドに読み書きしてよいか（ログイン済みでないとルールに弾かれる）
+  function canCloud() { return !!(FIREBASE_READY && db && AUTH_OK); }
 
   function setSyncBadge(state, note) {
     const el = document.getElementById('syncBadge');
@@ -2131,8 +2312,10 @@
 
   async function manualSync() {
     if (_manualSyncing) return;
-    if (!FIREBASE_READY || !db) {
-      alert('Firebaseに接続していません。ネットワーク接続を確認してください。');
+    if (!canCloud()) {
+      alert(AUTH_SKIPPED
+        ? 'オフラインで開いています。同期するには、いったんページを開き直してログインしてください。'
+        : 'Firebaseに接続していません。ネットワーク接続を確認してください。');
       return;
     }
     _manualSyncing = true;
@@ -2151,7 +2334,7 @@
 
   // Firestoreから全データを読み込む
   async function syncFromFirestore() {
-    if (!FIREBASE_READY || !db) { setSyncBadge('error'); return; }
+    if (!canCloud()) { setSyncBadge('error'); return; }
     setSyncBadge('syncing', '（設定）');
     try {
       // 設定（APIキー・モデル）を読み込み
@@ -2160,8 +2343,15 @@
         const s = cfgDoc.data();
         if (s.geminiApiKey) { localStorage.setItem(KEY_STORE, s.geminiApiKey); }
         if (s.geminiModel)  { localStorage.setItem(MODEL_STORE, s.geminiModel); }
+        if (Number.isFinite(s.usageLimit) && s.usageLimit > 0) {
+          usageLimitShared = s.usageLimit;
+          try { localStorage.setItem(LIMIT_KEY, String(s.usageLimit)); } catch {}
+        }
         try { updateKeyBanner(); } catch {}
       }
+      // 今月の利用量（全校舎の合計）
+      await loadUsageFromFirestore();
+      try { renderUsageBar(); } catch {}
 
       // 教科書データを読み込み
       setSyncBadge('syncing', '（教科書）');
@@ -2174,7 +2364,11 @@
         if (book) {
           // 競合解決：リモートがローカルより新しい時だけ上書き（取り直しデータの巻き戻り防止）
           const localTime = book.localUpdatedAt || 0;
-          if (data.items && remoteTime >= localTime) {
+          // 【空で上書きしない】クラウド側が空（未解析のまま保存された等）のとき、
+          // 手元に中身があれば絶対に上書きしない。1回の事故で全校舎のデータが消えるため。
+          if (data.items && !data.items.length && (book.items || []).length) {
+            console.warn('クラウド側が空のため上書きを見送りました:', doc.id);
+          } else if (data.items && remoteTime >= localTime) {
             book.items = data.items.slice().sort((a,b)=>(a.page||0)-(b.page||0));
             book.localUpdatedAt = remoteTime;
             updated = true;
@@ -2185,7 +2379,9 @@
           const duplicate = library.find(b => b.name === data.name);
           if (duplicate) {
             // 既存の教科書にアイテムをマージ（更新時刻が新しい方を優先）
-            if (data.items && remoteTime >= (duplicate.localUpdatedAt||0)) {
+            if (data.items && !data.items.length && (duplicate.items || []).length) {
+              console.warn('クラウド側が空のため上書きを見送りました:', doc.id);
+            } else if (data.items && remoteTime >= (duplicate.localUpdatedAt||0)) {
               duplicate.items = data.items.slice().sort((a,b)=>(a.page||0)-(b.page||0));
               duplicate.localUpdatedAt = remoteTime;
               updated = true;
@@ -2207,8 +2403,8 @@
         renderBookSel();
         renderPreview();
         updateBadge();
-        // localStorageキャッシュを更新
-        try { localStorage.setItem(BACKUP_KEY, JSON.stringify({library, activeId})); } catch {}
+        // 手元の控えを更新
+        persistLibrary();
       }
 
       // テスト履歴を読み込み（セッション内キャッシュで読み取りコスト削減）
@@ -2292,7 +2488,7 @@
 
   // 教科書データをFirestoreに保存
   async function saveLibraryToFirestore(bookId) {
-    if (!FIREBASE_READY || !db) return;
+    if (!canCloud()) return;
     const book = library.find(b => b.id === bookId);
     if (!book) return;
     setSyncBadge('saving');
@@ -2312,7 +2508,7 @@
 
   // テスト1件をFirestoreに保存（IDを返す）
   async function saveTestEntryToFirestore(entry) {
-    if (!FIREBASE_READY || !db) return null;
+    if (!canCloud()) return null;
     try {
       const ref = await db.collection(FB_TESTS_COL).add({
         ...entry,
@@ -2328,7 +2524,7 @@
 
   // テスト1件をFirestoreから削除
   async function deleteTestFromFirestore(firestoreId) {
-    if (!FIREBASE_READY || !db || !firestoreId) return;
+    if (!canCloud() || !firestoreId) return;
     try {
       await db.collection(FB_TESTS_COL).doc(firestoreId).delete();
     } catch(e) { console.warn('Firestore test delete error:', e); }
@@ -2336,7 +2532,7 @@
 
   // テスト1件の一部項目だけをFirestoreで書き換える（範囲の再判定などで使用）
   async function updateTestInFirestore(firestoreId, patch) {
-    if (!FIREBASE_READY || !db || !firestoreId || !patch) return false;
+    if (!canCloud() || !firestoreId || !patch) return false;
     try {
       await db.collection(FB_TESTS_COL).doc(firestoreId).update(patch);
       return true;
@@ -2348,12 +2544,12 @@
 
   // 設定をFirestoreに保存（APIキー・モデルを全員で共有）
   async function saveSettingsToFirestore() {
-    if (!FIREBASE_READY || !db) return;
+    if (!canCloud()) return;
     try {
       await db.collection(FB_CONFIG_COL).doc('settings').set({
         geminiApiKey: getApiKey(),
         geminiModel:  getModel()
-      });
+      }, { merge: true });
     } catch(e) { console.warn('Firestore settings save error:', e); }
   }
 
@@ -2470,6 +2666,13 @@
     if (!key)   throw new Error('APIキーが設定されていません。');
     if (!model) throw new Error('モデルが未設定です。青いバーでモデルを設定してください。');
 
+    // 【上限をここでも見る】教科書解析はこの関数を使う。以前はここに上限の確認も
+    // 使った量の記録も無かったため、いちばん枚数の多い処理が上限を無視して走り、
+    // 「今月の利用」にも一切載っていなかった。
+    assertUnderUsageLimit();
+    addUsage(guessCallYen(parts));
+    try { renderUsageBar(); } catch {}
+
     const waitTimes = [15000, 30000, 60000, 120000, 240000]; // 指数バックオフ
 
     for (let i = 0; i <= waitTimes.length; i++) {
@@ -2551,35 +2754,98 @@
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }
-  function getUsage() {
+  // 【全校舎ぶんを合算する】
+  // 利用量を端末ごとに数えていたため、16校舎で使うと上限が実質16倍になっていた。
+  // クラウドに月ごとの合計を持ち、開いたときに読み込む。自分が使った分は
+  // その場で足すので、画面の数字はすぐ動く。他の校舎の分は同期のたびに入る。
+  let usageShared = null;   // { month, calls, yen }
+
+  async function loadUsageFromFirestore() {
+    if (!canCloud()) return;
+    const k = usageMonthKey();
+    try {
+      const d = await db.collection(FB_CONFIG_COL).doc('usage_' + k).get();
+      const v = d.exists ? (d.data() || {}) : {};
+      usageShared = { month: k, calls: v.calls || 0, yen: v.yen || 0 };
+    } catch(e) { console.warn('利用量の読み込みに失敗:', e); }
+  }
+
+  function localUsage() {
     try {
       const all = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}');
       return all[usageMonthKey()] || { calls: 0, yen: 0 };
     } catch { return { calls: 0, yen: 0 }; }
   }
+  function getUsage() {
+    const k = usageMonthKey();
+    // クラウドの合計が読めていればそれを使う。読めていなければ手元の数だけ
+    if (usageShared && usageShared.month === k) {
+      return { calls: usageShared.calls, yen: usageShared.yen, shared: true };
+    }
+    return { ...localUsage(), shared: false };
+  }
   function addUsage(yen) {
+    const k = usageMonthKey();
     try {
       const all = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}');
-      const k = usageMonthKey();
       const cur = all[k] || { calls: 0, yen: 0 };
       all[k] = { calls: cur.calls + 1, yen: Math.round((cur.yen + yen) * 10) / 10 };
       localStorage.setItem(USAGE_KEY, JSON.stringify(all));
     } catch {}
+    if (usageShared && usageShared.month === k) {
+      usageShared.calls += 1;
+      usageShared.yen = Math.round((usageShared.yen + yen) * 10) / 10;
+    }
+    // クラウド側は足し算で書く（同時に使っても数が合う）
+    if (canCloud()) {
+      try {
+        db.collection(FB_CONFIG_COL).doc('usage_' + k).set({
+          calls: firebase.firestore.FieldValue.increment(1),
+          yen:   firebase.firestore.FieldValue.increment(yen)
+        }, { merge: true }).catch(e => console.warn('利用量の記録に失敗:', e));
+      } catch(e) { console.warn('利用量の記録に失敗:', e); }
+    }
   }
+  // 上限も全校舎で共有する（1台で変えたら全員に効く）
+  let usageLimitShared = null;
   function getUsageLimit() {
+    if (Number.isFinite(usageLimitShared) && usageLimitShared > 0) return usageLimitShared;
     const v = parseInt(localStorage.getItem(LIMIT_KEY) || '');
     return Number.isFinite(v) && v > 0 ? v : DEFAULT_LIMIT;
   }
   function setUsageLimit(v) {
     const n = parseInt(v);
-    if (Number.isFinite(n) && n > 0) localStorage.setItem(LIMIT_KEY, String(n));
+    if (Number.isFinite(n) && n > 0) {
+      localStorage.setItem(LIMIT_KEY, String(n));
+      usageLimitShared = n;
+      if (canCloud()) {
+        try {
+          db.collection(FB_CONFIG_COL).doc('settings')
+            .set({ usageLimit: n }, { merge: true })
+            .catch(e => console.warn('上限の共有に失敗:', e));
+        } catch(e) {}
+      }
+    }
     renderUsageBar();
   }
 
-  // 1回あたりのおよその費用（実測より）：テスト分析 ¥13／範囲表 ¥1.5
+  // 1回あたりのおよその費用（実測より）：テスト分析 ¥13／範囲表1枚 ¥1.5
+  // 教科書解析は1回2ページ送るので、1枚¥1.5換算で¥3とみなす。
   function guessCallYen(parts) {
     const imgs = (parts || []).filter(x => x && x.inlineData).length;
-    return imgs >= 3 ? 13 : 1.5;
+    if (imgs >= 3) return 13;
+    return Math.max(1.5, imgs * 1.5);
+  }
+
+  // 上限を超えていたら、AIに送る前に止める
+  function assertUnderUsageLimit() {
+    const u = getUsage(), lim = getUsageLimit();
+    if (u.yen >= lim) {
+      throw new Error(`今月の利用が上限（¥${lim.toLocaleString()}）に達しています。`
+        + `使った量：約¥${Math.round(u.yen).toLocaleString()}（${u.calls}回`
+        + `${u.shared ? '・全校舎の合計' : '・この端末のみ'}）。`
+        + `続ける場合は、テスト分析タブの「今月の利用」から上限を上げてください。`);
+    }
   }
 
   async function callGeminiJSON(parts, systemText, schema, maxTok=12000, opts={}) {
@@ -2589,12 +2855,7 @@
     if (!model) throw new Error('モデルが未設定です。');
 
     // 【上限に達していたら送らない】
-    const u = getUsage(), lim = getUsageLimit();
-    if (u.yen >= lim) {
-      throw new Error(`今月の利用が上限（¥${lim.toLocaleString()}）に達しています。`
-        + `使った量：約¥${Math.round(u.yen).toLocaleString()}（${u.calls}回）。`
-        + `続ける場合は、テスト分析タブの「今月の利用」から上限を上げてください。`);
-    }
+    assertUnderUsageLimit();
     addUsage(guessCallYen(parts));
     try { renderUsageBar(); } catch {}
 
@@ -3147,11 +3408,15 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
       document.getElementById('unitTable').innerHTML='<div class="empty"><div class="empty-ico">📭</div><div class="empty-txt">このUnitに項目がありません</div></div>';
       return;
     }
-    document.getElementById('unitTable').innerHTML = `
+    const upg = pageSlice(list, unitPage, UNIT_PER_PAGE);
+    unitPage = upg.page;
+    const pageList = upg.rows;
+    document.getElementById('unitTable').innerHTML =
+      pagerHtml(upg, list.length, 'goUnitPage', UNIT_PER_PAGE) + `
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>Unit</th><th>ページ</th><th>種類</th><th>内容</th><th>訳・説明</th><th>メモ</th><th></th></tr></thead>
-          <tbody>${list.map(item=>{
+          <tbody>${pageList.map(item=>{
             const idx=items.indexOf(item);
             return `<tr>
               <td style="font-size:12px;color:var(--muted)">${esc(item.unit||'-')}</td>
@@ -3165,10 +3430,14 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
           }).join('')}
           </tbody>
         </table>
-      </div>`;
+      </div>` + pagerHtml(upg, list.length, 'goUnitPage', UNIT_PER_PAGE);
   }
 
-  function selectUnit(u) { activeUnit=u; renderUnitView(); }
+  const UNIT_PER_PAGE = 100;
+  let unitPage = 0;
+  function goUnitPage(n) { unitPage = n; renderUnitView(); }
+
+  function selectUnit(u) { activeUnit=u; unitPage=0; renderUnitView(); }
 
   function openEdit(idx) {
     editingIdx=idx;
@@ -3891,6 +4160,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   let selectedHistYear = 'all';
 
   function setHistYear(year) {
+    histPage = 0;
     selectedHistYear = year;
     renderTestHistory();
   }
@@ -4099,6 +4369,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   function setHistFilter(key, value) {
+    histPage = 0;
     histFilter[key] = value;
     renderHistTable();
   }
@@ -4142,6 +4413,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   function clearHistFilter() {
+    histPage = 0;
     histFilter = { grade:'', term:'', school:'' };
     const input = document.getElementById('histSchoolInput');
     if (input) input.value = '';
@@ -4199,12 +4471,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     el.style.background  = pct >= 80 ? (u.yen >= lim ? '#FEF2F2' : '#FFFBEB') : 'var(--bg)';
     el.innerHTML = `
       <b>今月の利用</b>　約 <b style="color:${color}">¥${Math.round(u.yen).toLocaleString()}</b>
-      ／ 上限 ¥${lim.toLocaleString()}（${u.calls}回）
+      ／ 上限 ¥${lim.toLocaleString()}（${u.calls}回・${u.shared ? '全校舎の合計' : 'この端末のみ'}）
       <div style="height:6px;background:var(--line);border-radius:3px;margin:5px 0">
         <div style="height:6px;width:${pct}%;background:${color};border-radius:3px"></div>
       </div>
       <span style="color:var(--muted);font-size:11px">
-        テスト分析1件 約¥13／範囲表1枚 約¥1.5 での概算です。上限に達すると送信を止めます。
+        テスト分析1件 約¥13／範囲表1枚 約¥1.5／教科書解析1回（2ページ）約¥3 での概算です。
+        教科書解析もふくめ、上限に達したら送信を止めます。
       </span>
       <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:0 6px"
               onclick="const v=prompt('今月の上限（円）',getUsageLimit());if(v)setUsageLimit(v)">上限を変える</button>`;
@@ -4290,14 +4563,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   // 表だけを描き直す。検索欄は作り直さない（作り直すとカーソルが外れ、日本語入力が壊れる）
   function renderHistTable() {
+    try { updateTestSecCounts(); } catch(e) {}
     const el = document.getElementById('testHistTable');
     if (!el) return;
     let allHist = [];
     try { allHist = histAll(); } catch {}
-    const hist = filteredHist(allHist);
+    const hist0 = filteredHist(allHist);
     const cnt = document.getElementById('histCount');
-    if (cnt) cnt.textContent = `${hist.length}件`;
-    el.innerHTML = `
+    if (cnt) cnt.textContent = `${hist0.length}件`;
+    const pg = pageSlice(hist0, histPage, HIST_PER_PAGE);
+    histPage = pg.page;
+    const hist = pg.rows;
+    el.innerHTML = pagerHtml(pg, hist0.length, 'goHistPage', HIST_PER_PAGE) + `
           <div class="tbl-wrap"><table>
             <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
             <tbody>${!hist.length ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">条件に合うテストがありません</td></tr>` : ''}${hist.map((h,idx)=>{
@@ -4380,8 +4657,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             }).join('')}
             </tbody>
           </table></div>
-`;
+` + pagerHtml(pg, hist0.length, 'goHistPage', HIST_PER_PAGE);
   }
+
+  const HIST_PER_PAGE = 50;
+  let histPage = 0;
+  function goHistPage(n) { histPage = n; renderHistTable(); window.scrollTo(0, document.getElementById('testHistTable').offsetTop - 80); }
 
   // ── 保存済みテストの範囲を再判定 ────────────────────────────────
   // ページ→Unit対応表や教科書データを直したあと、Geminiを呼ばずに範囲だけ作り直す。
@@ -7564,6 +7845,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   function renderSyllabusResult(results, focusIdx) {
+    try { updateTestSecCounts(); } catch(e) {}
     lastSyllabusResults = results;
     const el = document.getElementById('syllabusResult');
     // 【描き直しても画面が飛ばないようにする】
@@ -8018,6 +8300,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
       syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
+                          // 【番号だけでは足りない】テスト履歴は新しい分析が先頭に入るので、
+                          // 「上から何番目」はすぐズレる。IDとファイル名も持たせて、
+                          // 書き込む直前に本人確認をする。
+                          matchId: match ? (match.h.firestoreId || '') : '',
+                          matchDate: match ? (match.h.date || '') : '',
                           safe, fixedByHand: !!(fx.school || fx.grade),
                           testName, noMatchWhy,
                           uncollected: !!syllabusUncollected[`${school}|${grade}|${date}`],
@@ -8632,12 +8919,32 @@ function findTestByDateEx(hist, school, grade, date) {
     renderTestHistory();
   }
 
+  // 【範囲表の行が、どのテストを指しているかを確かめて返す】
+  // 番号（matchIdx）だけを信じると、途中でテストを1件分析したり削除したりしただけで
+  // 全部1つずつズレて、隣のテストに範囲を書き込んでしまう。
+  // ID → ファイル名＋日付 → 番号（ただし名前が一致するときだけ）の順に確かめる。
+  function findSyllabusTarget(hist, row) {
+    if (!row) return null;
+    if (row.matchId) {
+      const byId = hist.find(x => x && x.firestoreId === row.matchId);
+      if (byId) return byId;
+    }
+    if (row.matchName) {
+      const same = hist.filter(x => x && (x.name || '') === row.matchName
+                                 && (!row.matchDate || (x.date || '') === row.matchDate));
+      if (same.length === 1) return same[0];
+    }
+    const byIdx = hist[row.matchIdx];
+    if (byIdx && (!row.matchName || (byIdx.name || '') === row.matchName)) return byIdx;
+    return null;   // 見つからない・別物 → 書き込まない
+  }
+
   async function applySyllabus(i, silent, defer) {
     const row = syllabusRows[i];
     if (!row || row.matchIdx < 0 || !row.unitText) return false;
     let hist = [];
     try { hist = defer ? (defer.hist || []) : histAll(); } catch {}
-    const h = hist[row.matchIdx];
+    const h = findSyllabusTarget(hist, row);
     if (!h) return false;
     const r = row.r;
     // 【いちばん最初の範囲は消さずに残す】
@@ -8723,7 +9030,7 @@ function findTestByDateEx(hist, school, grade, date) {
     renderTestHistory();
 
     let msg = `${n}件の範囲を更新しました。`;
-    if (ng)     msg += `\n${ng}件は書き込めませんでした。`;
+    if (ng)     msg += `\n${ng}件は書き込めませんでした（対象のテストが見つからないか、削除された可能性があります）。`;
     if (saveNg) msg += '\n⚠️ 手元への保存に失敗しました。ブラウザの空き容量を確認してください。';
     if (sendNg) msg += `\n⚠️ ${sendNg}件は他の校舎への共有に失敗しました（手元には保存されています）。`;
     alert(msg);
@@ -9715,6 +10022,7 @@ function findTestByDateEx(hist, school, grade, date) {
 
   function setCompareMode(mode, el) {
     compareMode = mode;
+    cmpPageNH = 0; cmpPageNC = 0;
     document.querySelectorAll('#comparePills .pill').forEach(p => p.classList.remove('active'));
     if (el) el.classList.add('active');
     renderCompare();
@@ -9811,7 +10119,18 @@ function findTestByDateEx(hist, school, grade, date) {
     compareLastRows = { nh: nhOnly, nc: ncOnly, types };
 
     const showType = types.length > 1;
-    const mkTable = (rows, unitLabel) => rows.length
+    // 【ページ送り】数百件を一度に出すと縦に長くなりすぎる。表示だけ区切る。
+    // 「コピー」「CSV」は compareLastRows（全件）を使うので、書き出しは全件のまま。
+    const mkTable = (rows, unitLabel, side) => rows.length
+      ? (() => {
+          const pgc = pageSlice(rows, side === 'nh' ? cmpPageNH : cmpPageNC, CMP_PER_PAGE);
+          if (side === 'nh') cmpPageNH = pgc.page; else cmpPageNC = pgc.page;
+          const fn = side === 'nh' ? 'goComparePageNH' : 'goComparePageNC';
+          return pagerHtml(pgc, rows.length, fn, CMP_PER_PAGE) + mkRows(pgc.rows, unitLabel)
+               + pagerHtml(pgc, rows.length, fn, CMP_PER_PAGE);
+        })()
+      : `<p style="font-size:13px;color:var(--muted);padding:8px">該当なし</p>`;
+    const mkRows = (rows, unitLabel) => rows.length
       ? `<div class="tbl-wrap"><table>
           <thead><tr><th>内容</th><th>訳</th>${showType ? '<th>種類</th>' : ''}<th>${unitLabel}</th></tr></thead>
           <tbody>${rows.map(r => `<tr>
@@ -9821,7 +10140,7 @@ function findTestByDateEx(hist, school, grade, date) {
             <td style="font-size:11px;color:var(--muted)">${esc(r.places.join(' / '))}</td>
           </tr>`).join('')}</tbody>
         </table></div>`
-      : `<p style="font-size:13px;color:var(--muted);padding:8px">該当なし</p>`;
+      : '';
 
     const notes = compareDataHealth();
     const noteHTML = notes.length
@@ -9840,16 +10159,21 @@ function findTestByDateEx(hist, school, grade, date) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="card">
           <div class="card-title" style="color:var(--navy)">NEW HORIZONのみ（${nhOnly.length}件）</div>
-          ${mkTable(nhOnly, 'NEW HORIZON 掲載箇所')}
+          ${mkTable(nhOnly, 'NEW HORIZON 掲載箇所', 'nh')}
           ${nhOnly.length ? btns('nh') : ''}
         </div>
         <div class="card">
           <div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${ncOnly.length}件）</div>
-          ${mkTable(ncOnly, 'NEW CROWN 掲載箇所')}
+          ${mkTable(ncOnly, 'NEW CROWN 掲載箇所', 'nc')}
           ${ncOnly.length ? btns('nc') : ''}
         </div>
       </div>`;
   }
+
+  const CMP_PER_PAGE = 100;
+  let cmpPageNH = 0, cmpPageNC = 0;
+  function goComparePageNH(n) { cmpPageNH = n; renderCompare(); }
+  function goComparePageNC(n) { cmpPageNC = n; renderCompare(); }
 
   // ── 比較結果の書き出し ────────────────────────────────────────────
   function compareRowsToTSV(side) {
@@ -9890,38 +10214,77 @@ function findTestByDateEx(hist, school, grade, date) {
       return;
     }
     // 文法名を正規化（空白・構造説明・記号を除いた核で照合）
-    const normGrammar = s => (s||'')
-      .replace(/have\s*\+.*$|be動詞.*$|\+.*$/,'') // 「have + 過去分詞」等の構造説明を除去
-      .replace(/[（(].*?[）)]/g, m => m)          // カッコ内（経験・完了等）は残す
-      .replace(/形$/,'')                           // 「現在完了形」→「現在完了」
-      .replace(/[\s　]/g,'')
-      .toLowerCase()
-      .trim();
+    // 【直した点】以前は「be動詞」で始まる名前と「have + …」を丸ごと消していたため、
+    // 「be動詞」「be動詞の過去形」「have + 過去分詞」が空になり、履修表から丸ごと
+    // 消えていた（いちばん基本の文法が1件も出ない状態だった）。
+    // 構造説明（＋のうしろ）だけを落とし、空になったら元の名前に戻す。
+    const normGrammar = s => {
+      const src = String(s || '').normalize('NFKC').trim();
+      let t = src
+        .replace(/[（(][^）)]*[+][^）)]*[）)]/g, '')  // 「（have + 過去分詞）」のような補足を落とす
+        .replace(/\s*[+]\s*.*$/, '')                // 「現在完了 + 過去分詞」→「現在完了」
+        .replace(/用法/g, '')
+        .replace(/形$/, '')                          // 「現在完了形」→「現在完了」
+        .replace(/[\s　・]/g, '')
+        .toLowerCase()
+        .trim();
+      if (t) return t;
+      // 全部消えてしまったときは、元の名前をそのまま鍵にする（項目を失わない）
+      return src.replace(/[\s　・]/g, '').toLowerCase();
+    };
+
+    // 【初めて出てくるところを残す】以前は同じ文法が複数のUnitにあると
+    // 最後に読んだものだけが残っていた。履修表は「どこで習うか」の表なので、
+    // いちばん早いところを載せる。
+    const gOrd = {'中1':1,'中2':2,'中3':3};
+    const unitOrd = it => {
+      const m = String([it.unit, it.lesson].filter(Boolean).join(' ')).match(/(\d+)/);
+      return m ? parseInt(m[1]) : 999;
+    };
+    const earlier = (a, b) => {
+      const ga = gOrd[a.grade] || 9, gb = gOrd[b.grade] || 9;
+      if (ga !== gb) return ga < gb;
+      const ua = unitOrd(a), ub = unitOrd(b);
+      if (ua !== ub) return ua < ub;
+      return (a.page || 9999) < (b.page || 9999);
+    };
 
     const map = {};
-    nhGrammar.forEach(i => {
-      const k = normGrammar(i.content);
-      if (!k) return;
-      if (!map[k]) map[k] = {content:(i.content||'').trim(),nhGrade:'',nhUnit:'',ncGrade:'',ncUnit:''};
-      map[k].content = (i.content||'').trim(); // NH表記を優先
-      map[k].nhGrade = i.grade;
-      map[k].nhUnit  = [i.unit,i.lesson].filter(Boolean).join(' ');
+    const pick = (list, side) => {
+      list.forEach(i => {
+        const k = normGrammar(i.content);
+        if (!k) return;
+        if (!map[k]) map[k] = {content:(i.content||'').trim(),
+                               nhGrade:'',nhUnit:'',ncGrade:'',ncUnit:'',
+                               _nh:null,_nc:null};
+        const slot = side === 'nh' ? '_nh' : '_nc';
+        if (!map[k][slot] || earlier(i, map[k][slot])) map[k][slot] = i;
+      });
+    };
+    pick(nhGrammar, 'nh');
+    pick(ncGrammar, 'nc');
+    Object.values(map).forEach(r => {
+      if (r._nh) {
+        r.content = (r._nh.content || '').trim();   // NH表記を優先
+        r.nhGrade = r._nh.grade;
+        r.nhUnit  = [r._nh.unit, r._nh.lesson].filter(Boolean).join(' ');
+        r._nhOrd  = [gOrd[r._nh.grade] || 9, unitOrd(r._nh)];
+      }
+      if (r._nc) {
+        if (!r._nh) r.content = (r._nc.content || '').trim();
+        r.ncGrade = r._nc.grade;
+        r.ncUnit  = [r._nc.unit, r._nc.lesson].filter(Boolean).join(' ');
+        r._ncOrd  = [gOrd[r._nc.grade] || 9, unitOrd(r._nc)];
+      }
+      if (!r._nhOrd) r._nhOrd = r._ncOrd || [9, 999];
     });
-    ncGrammar.forEach(i => {
-      const k = normGrammar(i.content);
-      if (!k) return;
-      if (!map[k]) map[k] = {content:(i.content||'').trim(),nhGrade:'',nhUnit:'',ncGrade:'',ncUnit:''};
-      // NH表記が既にあればそれを優先、なければNC表記を使う
-      if (!map[k].nhGrade) map[k].content = (i.content||'').trim();
-      map[k].ncGrade = i.grade;
-      map[k].ncUnit  = [i.unit,i.lesson].filter(Boolean).join(' ');
-    });
-    const gOrd = {'中1':1,'中2':2,'中3':3};
     // 上部の検索窓（compareSearch）で絞り込み（normKeyで「現在完了形」↔「現在完了（継続）」等の表記ゆれを吸収）
     const searchQ = ((document.getElementById('compareSearch')||{}).value||'').toLowerCase().trim();
     const searchKey = searchQ ? normKey(searchQ) : '';
     let rows = Object.values(map).sort((a,b)=>
-      (gOrd[a.nhGrade||a.ncGrade]||9)-(gOrd[b.nhGrade||b.ncGrade]||9)
+      (a._nhOrd[0] - b._nhOrd[0])
+      || (a._nhOrd[1] - b._nhOrd[1])
+      || String(a.content).localeCompare(String(b.content), 'ja')
     );
     if (searchQ) {
       rows = rows.filter(r =>
@@ -10198,12 +10561,40 @@ function findTestByDateEx(hist, school, grade, date) {
     if (rs) rs.innerHTML = '';
     const note = document.getElementById('tsRangeNote');
     if (note) note.textContent = '';
+    updateTsMoreCount();
+    const d = document.getElementById('tsMore');
+    if (d) d.open = false;
+  }
+
+  // 【たたんでも見えなくならないように】
+  // 中に条件が入っているのに閉じたままだと、なぜ結果が少ないのか分からなくなる。
+  // 件数を見出しに出し、条件が入っているときは自動で開く。
+  const TS_MORE_IDS = ['tsQType','tsSchool','tsTeacher','tsGrammar','tsPhrases'];
+  function updateTsMoreCount() {
+    const n = TS_MORE_IDS.filter(id => {
+      const e = document.getElementById(id);
+      return e && String(e.value || '').trim() !== '';
+    }).length;
+    const lab = document.getElementById('tsMoreCount');
+    if (lab) {
+      lab.textContent = n ? `　🔵 ${n}件の条件が入っています` : '';
+      lab.style.color = n ? 'var(--blue)' : '';
+    }
+    const d = document.getElementById('tsMore');
+    if (d && n && !d.open) d.open = true;
   }
 
   function initTestSearchUI() {
     tsFillSectionSelects();
     tsFillNameLists();
     tsFillQTypeSelect();
+    TS_MORE_IDS.forEach(id => {
+      const e = document.getElementById(id);
+      if (!e) return;
+      e.addEventListener('input',  updateTsMoreCount);
+      e.addEventListener('change', updateTsMoreCount);
+    });
+    updateTsMoreCount();
     const card = document.querySelector('#tab-test-search .card');
     if (!card) return;
     card.querySelectorAll('input, select').forEach(el => {
@@ -10438,6 +10829,7 @@ function findTestByDateEx(hist, school, grade, date) {
   // 起きていた（クラウド454件・手元367件という食い違いが実際に発生）。
   // IndexedDBは数百MBまで入る。読み書きが非同期なので、起動時に一度だけ全件を
   // メモリに読み込み、以後の読み出しはメモリから返す（画面側の書き方は変えない）。
+  const IDB_LIB   = 'library';   // 教科書データ（旧: localStorage の5MB枠）
   const IDB_NAME  = 'nhscope';
   const IDB_STORE = 'kv';
   const IDB_TESTS = 'tests';
@@ -10524,6 +10916,26 @@ function findTestByDateEx(hist, school, grade, date) {
     } catch(e) { console.warn('旧データの引っ越しに失敗:', e); }
   }
 
+  // 教科書データの保存。IndexedDBに書き、localStorageにも写しを残す。
+  // 【なぜIndexedDBか】教科書6冊ぶんはlocalStorageの5MB枠に収まらなくなる。
+  // これまでは溢れても catch{} で握りつぶしていたため、保存できていないことに
+  // 誰も気づけなかった。失敗したら画面に出す。
+  let _libWarned = false;
+  function persistLibrary() {
+    const snapshot = { library, activeId };
+    idbSet(IDB_LIB, snapshot)
+      .then(() => { _libWarned = false; })
+      .catch(e => {
+        console.error('教科書データの保存に失敗:', e);
+        if (!_libWarned) {
+          _libWarned = true;
+          try { showToast('⚠️ 教科書データを手元に保存できませんでした。ブラウザの空き容量を確認してください', 'error'); } catch {}
+        }
+      });
+    // 写し（古い版のブラウザ・IndexedDBが使えない場合の保険）。溢れても本体には影響しない
+    try { localStorage.setItem(BACKUP_KEY, JSON.stringify(snapshot)); } catch {}
+  }
+
   function saveBackup() {
     if (!Array.isArray(library) || library.length === 0) return;
     // 現在編集中の教科書に最終更新時刻を刻む（複数端末の競合解決に使う）
@@ -10535,7 +10947,7 @@ function findTestByDateEx(hist, school, grade, date) {
         book.items.sort((a, b) => (a.page||0) - (b.page||0));
       }
     });
-    try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ library, activeId })); } catch {}
+    persistLibrary();
     saveLibraryToFirestore(activeId);
   }
 
@@ -10801,6 +11213,28 @@ function findTestByDateEx(hist, school, grade, date) {
     el.innerHTML=`<div class="status-bar ${cls}" style="min-height:38px;align-items:center;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${type==='load'?'<div class="spinner"></div>':''}${msg}</div>`;
   }
+  // ── ページ送りの共通部品 ────────────────────────────────────────
+  // 【なぜ要るか】テスト履歴・教科書データ編集・教科書比較は、これまで全件を
+  // 一度に出していた。数百件になると縦に長くなりすぎて目で追えず、描画も重い。
+  // 範囲表で使っている「50件ずつ」と同じ考え方を、他の一覧にも入れる。
+  function pageSlice(list, page, per) {
+    const total = Math.max(1, Math.ceil(list.length / per));
+    const p = Math.min(Math.max(0, page), total - 1);
+    return { rows: list.slice(p * per, (p + 1) * per), page: p, total };
+  }
+  function pagerHtml(info, count, fnName, per) {
+    if (count <= per) return '';
+    const from = info.page * per + 1, to = Math.min((info.page + 1) * per, count);
+    return `<div style="display:flex;align-items:center;justify-content:center;gap:10px;
+                        padding:10px 0;font-size:12px;color:var(--muted);flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" style="font-size:11px" ${info.page===0?'disabled':''}
+              onclick="${fnName}(${info.page-1})">← 前</button>
+      <span>${count}件中 ${from}〜${to}件目（${info.page+1}/${info.total}ページ）</span>
+      <button class="btn btn-secondary btn-sm" style="font-size:11px" ${info.page>=info.total-1?'disabled':''}
+              onclick="${fnName}(${info.page+1})">次 →</button>
+    </div>`;
+  }
+
   function esc(s) {
     if (s==null) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -10831,11 +11265,15 @@ function findTestByDateEx(hist, school, grade, date) {
     // 1. データ読み込み（優先順: localStorage > 埋め込みデータ > デフォルト）
     let loaded = false;
 
-    // localStorage
+    // 手元の保存（IndexedDBが本体。無ければ旧localStorageから拾う）
     try {
-      const raw = localStorage.getItem(BACKUP_KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
+      let d = null;
+      try { d = await idbGet(IDB_LIB); } catch(e) { console.warn('教科書データの読み出しに失敗:', e); }
+      if (!d) {
+        const raw = localStorage.getItem(BACKUP_KEY);
+        if (raw) d = JSON.parse(raw);
+      }
+      if (d) {
         const valid = (d.library || []).filter(b =>
           b && typeof b.id === 'string' && b.id &&
           typeof b.name === 'string' && b.name &&
@@ -10958,11 +11396,7 @@ function findTestByDateEx(hist, school, grade, date) {
         if (pdfs.length) onExamFilesSelected(pdfs);
       });
     }
-    initFirebaseWhenReady().then(() => {
-      syncFromFirestore().then(() => {
-        if (!getApiKey()) openSetupGuide();
-      });
-    });
+    initFirebaseWhenReady().then(() => startAuthFlow());
   })();
 </script>
 </html>
