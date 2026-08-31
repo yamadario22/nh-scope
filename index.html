@@ -10104,6 +10104,32 @@ function findTestByDateEx(hist, school, grade, date) {
   }
 
   // 教科書データの状態を調べる（未解析・混入の警告に使う）
+  // 【内容が日本語になっている項目を見つける】
+  // 「集合時間・場所 ／ time and place to meet」のように、内容と訳が逆に
+  // 記録されていることがある。こうなると英語側と絶対に一致しないので、
+  // その語は必ず「〜のみ」の一覧に出てきてしまう（抽出結果のゴミになる）。
+  // 文法は名前が日本語で正しいので対象外。単語・熟語だけを見る。
+  const JP_CHAR_RE = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/;
+  function japaneseContentItems() {
+    const out = [];
+    (library || []).forEach(b => {
+      if (!isNHBook(b.id) && !isNCBook(b.id)) return;
+      (b.items || []).forEach(it => {
+        if (it.type !== '単語' && it.type !== '熟語') return;
+        if (!JP_CHAR_RE.test(String(it.content || ''))) return;
+        out.push({
+          book: b.name || b.id,
+          unit: [it.unit, it.lesson].filter(Boolean).join(' '),
+          page: it.page || '',
+          type: it.type || '',
+          content: it.content || '',
+          translation: it.translation || ''
+        });
+      });
+    });
+    return out;
+  }
+
   function compareDataHealth() {
     const notes = [];
     const empties = [];
@@ -10125,7 +10151,59 @@ function findTestByDateEx(hist, school, grade, date) {
     if (bad.length) {
       notes.push({ kind: 'warn', text: `NEW HORIZONの中に他教科書らしい単元名の項目があります（${bad.join('、')}）。混入していると、その語がNEW CROWNのみの一覧から消えます。「異物チェック」で確認してください。` });
     }
+    // 内容と訳が逆になっている疑いのある項目
+    const jp = japaneseContentItems();
+    if (jp.length) {
+      const byBook = {};
+      jp.forEach(r => { byBook[r.book] = (byBook[r.book] || 0) + 1; });
+      const SHOW_MAX = 300;
+      const shown = jp.slice(0, SHOW_MAX);
+      notes.push({ kind: 'warn', html: `
+        <div style="font-size:12px;line-height:1.7">⚠️ 内容が日本語になっている項目が ${jp.length}件 あります（${
+          Object.entries(byBook).map(([b,n]) => `${esc(b)}：${n}件`).join('、')
+        }）。内容と訳が逆に記録されている可能性があります。英語側と一致しないため、
+        これらは必ず「〜のみ」の一覧に出てきます。</div>
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);list-style:revert">
+            該当する項目を見る${jp.length > SHOW_MAX ? `（先頭${SHOW_MAX}件）` : ''}
+          </summary>
+          <div style="margin-top:8px">
+            <div class="tbl-wrap" style="max-height:340px;overflow:auto"><table>
+              <thead><tr><th>教科書</th><th>Unit</th><th>ページ</th><th>種類</th><th>内容（日本語）</th><th>訳・説明</th></tr></thead>
+              <tbody>${shown.map(r => `<tr>
+                <td style="font-size:11px">${esc(r.book)}</td>
+                <td style="font-size:11px;color:var(--muted)">${esc(r.unit)}</td>
+                <td style="font-size:11px;color:var(--blue);font-weight:700">p.${esc(String(r.page))}</td>
+                <td style="font-size:11px;color:var(--muted)">${esc(r.type)}</td>
+                <td style="font-size:12px;font-weight:600">${esc(r.content)}</td>
+                <td style="font-size:12px;color:var(--muted)">${esc(r.translation)}</td>
+              </tr>`).join('')}</tbody>
+            </table></div>
+            <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="copyJapaneseContentList()">📋 コピー</button>
+              <span style="font-size:11px;color:var(--muted)">
+                直すときは「📋 教科書データ編集」タブで、上のページを開いて✏️から入れ替えてください（自動では直しません）。
+              </span>
+            </div>
+          </div>
+        </details>` });
+    }
     return notes;
+  }
+
+  // 一覧をExcelに貼れる形でコピーする
+  async function copyJapaneseContentList() {
+    const rows = japaneseContentItems();
+    const tsv = ['教科書\tUnit\tページ\t種類\t内容\t訳・説明']
+      .concat(rows.map(r => [r.book, r.unit, r.page, r.type, r.content, r.translation]
+        .map(v => String(v == null ? '' : v).replace(/[\t\r\n]/g, ' ')).join('\t')))
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(tsv);
+      showToast(`${rows.length}件をコピーしました`, 'ok');
+    } catch(e) {
+      showToast('コピーできませんでした', 'error');
+    }
   }
 
   function renderCompare() {
@@ -10221,7 +10299,8 @@ function findTestByDateEx(hist, school, grade, date) {
     const notes = compareDataHealth();
     const noteHTML = notes.length
       ? `<div class="card" style="border-left:4px solid #f59e0b">${notes.map(n =>
-          `<div style="font-size:12px;line-height:1.7">⚠️ ${esc(n.text)}</div>`).join('')}</div>`
+          n.html ? n.html
+                 : `<div style="font-size:12px;line-height:1.7">⚠️ ${esc(n.text)}</div>`).join('')}</div>`
       : '';
 
     const btns = side => `
