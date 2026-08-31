@@ -288,6 +288,19 @@
 
 <!-- BOOK SWITCHER BAR -->
 <!-- API KEY BANNER -->
+<!-- 設定が済んでいるときは、この1行だけを出す。
+     APIキーとモデルのバーは合わせて2段ぶんの高さを常に占めていた。
+     押せば下の入力欄が開く（中身は今までと同じ）。 -->
+<div id="keySummary" style="display:none;background:#ECFDF5;border-bottom:1px solid #A7F3D0;
+     padding:6px 24px;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
+  <span style="color:var(--green);font-weight:600">🔑 APIキー設定済</span>
+  <span id="keySummaryKey" style="font-family:monospace;color:#6B7280"></span>
+  <span style="color:#6B7280">｜</span>
+  <span style="color:var(--green);font-weight:600">🤖 <span id="keySummaryModel"></span></span>
+  <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="toggleKeySettings()">変更</button>
+</div>
+
+<div id="keyBarsFull">
 <div id="keyBanner" style="background:#FFF8E1;border-bottom:1px solid #FDE68A;padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <span style="font-size:13px;font-weight:600;color:#92400E">🔑 APIキー設定</span>
   <input id="keyInputBanner" type="text" placeholder="APIキー（AIzaSy...）"
@@ -306,7 +319,10 @@
   <button onclick="saveModelManual()" class="btn btn-secondary btn-sm">変更</button>
   <span id="modelStatus" style="font-size:12px;color:#0369A1"></span>
   <span style="font-size:11px;color:#6B7280">自動検出が間違っている場合は「gemini-1.5-flash」と直接入力して変更</span>
+  <button id="keyCloseBtn" class="btn btn-ghost btn-sm" style="display:none;font-size:11px;margin-left:auto"
+          onclick="toggleKeySettings()">✕ 閉じる</button>
 </div>
+</div><!-- /keyBarsFull -->
 
 <div class="main">
 
@@ -2562,6 +2578,38 @@
     localStorage.setItem(MODEL_STORE, val);
     document.getElementById('modelStatus').innerHTML =
       `<span style="color:var(--green);font-weight:600">✅ ${val}</span>`;
+    saveSettingsToFirestore();
+    applyKeyBarLayout();
+  }
+
+  // 設定済みなら1行にたたむ。未設定なら入力欄を開いたままにする。
+  function applyKeyBarLayout() {
+    const key   = getApiKey();
+    const sum   = document.getElementById('keySummary');
+    const full  = document.getElementById('keyBarsFull');
+    if (!sum || !full) return;
+    // 中身は常に最新にしておく（開いている間に変更しても、閉じたときに古い値が出ないように）
+    const tail = key.length > 4 ? key.slice(-4) : key;
+    const kEl = document.getElementById('keySummaryKey');
+    const mEl = document.getElementById('keySummaryModel');
+    // 【キーは伏せる】画面を撮って人に見せる場面があるため、末尾4文字だけ出す
+    if (kEl) kEl.textContent = key ? '（末尾 ' + tail + '）' : '';
+    if (mEl) mEl.textContent = getModel() || '未設定';
+    if (key && !keySettingsOpen) {
+      sum.style.display  = 'flex';
+      full.style.display = 'none';
+    } else {
+      sum.style.display  = 'none';
+      full.style.display = '';
+    }
+    // キーがまだ無いときは閉じられない（閉じると設定できなくなるため）
+    const cb = document.getElementById('keyCloseBtn');
+    if (cb) cb.style.display = key ? '' : 'none';
+  }
+  let keySettingsOpen = false;
+  function toggleKeySettings() {
+    keySettingsOpen = !keySettingsOpen;
+    applyKeyBarLayout();
   }
 
   function updateKeyBanner() {
@@ -2586,6 +2634,7 @@
     if (model && mSt) {
       mSt.innerHTML = `<span style="color:var(--green);font-weight:600">✅ ${model}</span>`;
     }
+    applyKeyBarLayout();
   }
 
   async function saveApiKeyBanner() {
@@ -2603,6 +2652,7 @@
       stEl.innerHTML = `<span style="color:var(--green);font-weight:600">✅ 設定完了：${manualModel}</span>`;
       document.getElementById('keyBanner').style.background = '#ECFDF5';
       document.getElementById('keyBanner').style.borderBottomColor = '#A7F3D0';
+      applyKeyBarLayout();
       return;
     }
 
@@ -2637,6 +2687,7 @@
         <span style="color:var(--muted);font-size:11px"> | 検出モデル：${models.slice(0,5).join(', ')}</span>`;
       document.getElementById('keyBanner').style.background = '#ECFDF5';
       document.getElementById('keyBanner').style.borderBottomColor = '#A7F3D0';
+      applyKeyBarLayout();
 
     } catch(e) {
       stEl.innerHTML = `<span style="color:var(--red)">❌ ${e.message}</span>`;
