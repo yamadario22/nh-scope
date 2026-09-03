@@ -561,6 +561,7 @@
         <button type="button" class="btn btn-ghost btn-sm" onclick="clearSyllabus()" title="選択中の写真を解除します">✕</button>
       </div>
       <div id="syllabusStatus"></div>
+      <div id="syllabusRetryBar" style="display:none;margin-top:8px"></div>
       <div id="syllabusResult" style="margin-top:10px"></div>
     </div>
     </div><!-- /testSec-syllabus -->
@@ -6613,6 +6614,46 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
   }
 
+  // 範囲表を連続で読み取るときの、1件ごとの送信間隔（ms）。
+  // 間隔を空けずに送り続けるとAPIのレート制限に当たりやすくなるため、ここで調整できるようにする。
+  const SYLLABUS_REQUEST_DELAY = 1000;
+
+  // 1件の写真を送って範囲表の内容を読み取る。
+  // 【手書きが読めなかったときだけ、探し直す】
+  // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
+  // （縦向き・表の外・赤ペンなど）。1回目は表の中身を読むのが主目的なので
+  // 見落としやすい。そこで、読めなかったときに限り「手書きを探すことだけ」を
+  // 頼む2回目を送る。目的を1つに絞ったほうが見つかりやすい。
+  // 読めている写真では走らないので、余分な費用はかからない。
+  async function readOneSyllabusImage(img) {
+    const r = await callGeminiJSON(
+      [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
+       { text: SYLLABUS_PROMPT }],
+      '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
+      SYLLABUS_SCHEMA, 20000, getFastModeOpts());
+    const missing = !String(r.school || '').trim()
+      || /^(null|undefined|なし|不明|記載なし)$/i.test(String(r.school || '').trim())
+      || !gradeNumOf(normalizeGrade(String(r.grade || '')));
+    if (missing) {
+      try {
+        const h = await callGeminiJSON(
+          [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
+           { text: HANDWRITING_PROMPT }],
+          '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
+          { type: 'OBJECT', properties: {
+              school: { type: 'STRING' }, grade: { type: 'STRING' },
+              found_text: { type: 'STRING' }, where: { type: 'STRING' } } },
+          4000, {});
+        if (h) {
+          if (h.school && !String(r.school || '').trim()) r.school = h.school;
+          if (h.grade  && !gradeNumOf(normalizeGrade(String(r.grade || '')))) r.grade = h.grade;
+          if (h.found_text) r.grade_raw = `${r.grade_raw || ''}${r.grade_raw ? ' ／ ' : ''}手書き：${h.found_text}${h.where ? `（${h.where}）` : ''}`;
+        }
+      } catch(e) { console.warn('手書きの探し直しに失敗:', e); }
+    }
+    return r;
+  }
+
   async function runSyllabusRead() {
     if (!pendingSyllabus || !pendingSyllabus.length) return;
     const stEl = document.getElementById('syllabusStatus');
@@ -6656,41 +6697,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         + (prevResults.length ? `（読み取り済み ${prevResults.length} 枚に追加します）` : ''));
       const img = todo[i];
       try {
-        const r = await callGeminiJSON(
-          [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-           { text: SYLLABUS_PROMPT }],
-          '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
-          SYLLABUS_SCHEMA, 20000, getFastModeOpts());
-        // 【手書きが読めなかったときだけ、探し直す】
-        // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
-        // （縦向き・表の外・赤ペンなど）。1回目は表の中身を読むのが主目的なので
-        // 見落としやすい。そこで、読めなかったときに限り「手書きを探すことだけ」を
-        // 頼む2回目を送る。目的を1つに絞ったほうが見つかりやすい。
-        // 読めている写真では走らないので、余分な費用はかからない。
-        const missing = !String(r.school || '').trim()
-          || /^(null|undefined|なし|不明|記載なし)$/i.test(String(r.school || '').trim())
-          || !gradeNumOf(normalizeGrade(String(r.grade || '')));
-        if (missing) {
-          try {
-            const h = await callGeminiJSON(
-              [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-               { text: HANDWRITING_PROMPT }],
-              '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
-              { type: 'OBJECT', properties: {
-                  school: { type: 'STRING' }, grade: { type: 'STRING' },
-                  found_text: { type: 'STRING' }, where: { type: 'STRING' } } },
-              4000, {});
-            if (h) {
-              if (h.school && !String(r.school || '').trim()) r.school = h.school;
-              if (h.grade  && !gradeNumOf(normalizeGrade(String(r.grade || '')))) r.grade = h.grade;
-              if (h.found_text) r.grade_raw = `${r.grade_raw || ''}${r.grade_raw ? ' ／ ' : ''}手書き：${h.found_text}${h.where ? `（${h.where}）` : ''}`;
-            }
-          } catch(e) { console.warn('手書きの探し直しに失敗:', e); }
-        }
+        const r = await readOneSyllabusImage(img);
         results.push({ file: img.name, r, shot: img.shot || 0 });
       } catch (e) {
         results.push({ file: img.name, error: e.message, shot: img.shot || 0 });
       }
+      // 【1件ごとに間隔を空ける】立て続けに送ると、短時間に集中してAPIのレート制限に
+      // 引っかかりやすくなる。最後の1件のあとは待たない。
+      if (i < todo.length - 1) await sleep(SYLLABUS_REQUEST_DELAY);
     }
 
     setSt(stEl, 'ok', `✅ ${results.length}枚の読み取りが終わりました`
@@ -6705,6 +6719,70 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 【ここで保存する】保存しないと、リロードした時点で読み直し（＝費用）になる。
     // 写真を保存するのはここだけ（重いので手直しのたびには書かない）。
     saveSyllabusState(true);
+  }
+
+  // 失敗した行だけをまとめて読み直すボタンの表示を更新する。
+  // renderSyllabusResult() から毎回呼ばれるので、失敗が0件になれば自動で消える。
+  function updateSyllabusRetryBar() {
+    const bar = document.getElementById('syllabusRetryBar');
+    if (!bar) return;
+    const failed = (lastSyllabusResults || []).filter(x => x && x.error).length;
+    if (!failed) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.style.display = '';
+    bar.innerHTML = `<button type="button" class="btn btn-secondary" style="width:100%"
+      onclick="retryFailedSyllabusRows()">🔁 失敗した${failed}件だけ読み直す</button>`;
+  }
+
+  // 失敗した行だけをまとめて読み直す。成功した行は通常の結果行に置き換わり、
+  // まだ失敗する行はエラー行のまま残る（このボタンをもう一度押せば再挑戦できる）。
+  async function retryFailedSyllabusRows() {
+    const idxs = (lastSyllabusResults || [])
+      .map((x, i) => (x && x.error) ? i : -1)
+      .filter(i => i >= 0);
+    if (!idxs.length) return;
+
+    // 写真を貼り直していない等で手元に無い行は、読み直しようがないので外す
+    const todo = idxs.filter(i => pendingSyllabus && pendingSyllabus[i] && pendingSyllabus[i].b64);
+    const noPhoto = idxs.length - todo.length;
+    if (noPhoto) {
+      alert(`${noPhoto}件は写真が手元に無いため読み直せません。\n`
+          + `「写真を貼り直す」からやり直してください。`);
+    }
+    if (!todo.length) return;
+
+    const ok = await showConfirm(
+      `失敗した ${todo.length} 件を、もう一度AIに読み取らせます。\n\n`
+      + `・費用は1枚あたり約 ¥1〜2 かかります\n`
+      + `・成功した行は通常の結果に置き換わります\n`
+      + `・まだ失敗する行はエラー行のまま残ります`,
+      '読み直す');
+    if (!ok) return;
+
+    const stEl = document.getElementById('syllabusStatus');
+    const bar  = document.getElementById('syllabusRetryBar');
+    if (bar) bar.querySelectorAll('button').forEach(b => b.disabled = true);
+
+    let okCount = 0, ngCount = 0;
+    for (let n = 0; n < todo.length; n++) {
+      const i = todo[n];
+      const img = pendingSyllabus[i];
+      setSt(stEl, 'load', `失敗した行を読み直し中... (${n+1}/${todo.length})`);
+      try {
+        const r = await readOneSyllabusImage(img);
+        lastSyllabusResults[i] = { file: img.name, r, shot: img.shot || 0 };
+        okCount++;
+      } catch (e) {
+        lastSyllabusResults[i] = { file: img.name, error: e.message, shot: img.shot || 0 };
+        ngCount++;
+      }
+      if (n < todo.length - 1) await sleep(SYLLABUS_REQUEST_DELAY);
+    }
+
+    saveSyllabusState(true);   // 【保存する】読み直した結果もリロードで消えないように
+    setSt(stEl, ngCount ? 'err' : 'ok',
+      ngCount ? `再読み取り完了：成功 ${okCount}件／まだ失敗 ${ngCount}件`
+              : `✅ 再読み取り完了：${okCount}件すべて成功しました`);
+    renderSyllabusResult(lastSyllabusResults);
   }
 
   // 【学校名の候補をAIに渡すのは、やめた】
@@ -7804,7 +7882,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!row) return '';
     if (row.readError) {
       return `<tr data-row="${i}"><td colspan="4" style="color:#DC2626;font-size:12px">
-                ${esc(row.file||'')}：読み取りに失敗しました（${esc(row.readError)}）
+                ${esc(row.file||'')}：読み取りに失敗しました（${esc(friendlyError(row.readError))}）
                 <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-left:6px"
                         onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
               </td></tr>`;
@@ -7898,6 +7976,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   function renderSyllabusResult(results, focusIdx) {
     try { updateTestSecCounts(); } catch(e) {}
     lastSyllabusResults = results;
+    try { updateSyllabusRetryBar(); } catch(e) {}
     const el = document.getElementById('syllabusResult');
     // 【描き直しても画面が飛ばないようにする】
     // 491行を毎回まるごと描き直すため、ボタンを押すたびに見ていた位置を見失っていた。
