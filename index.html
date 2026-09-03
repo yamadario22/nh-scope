@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.20</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.21</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -627,6 +627,11 @@
         <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語</div>
         <div class="pill" onclick="setCompareMode('all',this)">③ 単語＋熟語</div>
         <div class="pill" onclick="setCompareMode('grammar',this)">④ 文法履修表</div>
+      </div>
+      <div class="pills" id="compareClassPills" style="margin-top:6px">
+        <div class="pill active" onclick="setCompareClassMode('normal',this)">通常の語</div>
+        <div class="pill" onclick="setCompareClassMode('proper',this)">固有名詞（人名・地名など）</div>
+        <div class="pill" onclick="setCompareClassMode('sentence',this)">文・フレーズ</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <div class="s-wrap" style="flex:1;min-width:180px;margin-bottom:0">
@@ -10134,7 +10139,7 @@ function findTestByDateEx(hist, school, grade, date) {
     return String(s || '')
       .normalize('NFKC')                          // 全角英数・全角スペースを半角に揃える
       .toLowerCase()
-      .replace(/\.\.\.|[〜～~…‥]/g, '')            // 「~」「...」などの穴埋め記号を落とす
+      .replace(/\.\.\.|[〜～~…‥=]/g, '')           // 「~」「...」「=」などの穴埋め・言い換え記号を落とす
       .replace(/[.,!?;:"'`’‘“”()\[\]{}]/g, '')     // 句読点・カッコ（中身は残す）
       .replace(/[\s\-‐‑–—_]/g, '')                // 空白とハイフン（e-mail = email、well-known = well known）
       .trim();
@@ -10171,14 +10176,183 @@ function findTestByDateEx(hist, school, grade, date) {
     return [g, m ? parseInt(m[1]) : 999, compareGroupKey(row.content)];
   }
 
+  // 【語形変化を吸収した照合】
+  // ここから下は「片方の本にしかない」と判定する前の、追加の候補キー作り。
+  // compareKeys()（上）はそのまま残し、同じ側の一覧をまとめる時など、
+  // これまでの挙動に影響する場所には使わない。ここで作る候補は、
+  // 「NEW HORIZONにあるか」を確かめる照合だけに使い、一致した場合は
+  // 必ず確認用の一覧（compareExclusionLog）に理由付きで残す
+  // （broke／babies／observed／impressed／reminded／looks／changing のように、
+  //   原形はNEW HORIZONにあるのに活用形のせいで「NEW CROWNのみ」に残っていた語への対応）。
+
+  // 中学英語でよく出る不規則変化（活用形・複数形・比較級 → 原形）
+  const IRREGULAR_BASE = {
+    am:'be', is:'be', are:'be', was:'be', were:'be', been:'be', being:'be',
+    went:'go', gone:'go', came:'come', saw:'see', seen:'see', did:'do', done:'do',
+    had:'have', has:'have', made:'make', took:'take', taken:'take', gave:'give', given:'give',
+    got:'get', gotten:'get', knew:'know', known:'know', thought:'think', said:'say',
+    told:'tell', found:'find', felt:'feel', left:'leave', kept:'keep', held:'hold',
+    brought:'bring', bought:'buy', taught:'teach', caught:'catch', broke:'break', broken:'break',
+    spoke:'speak', spoken:'speak', wrote:'write', written:'write', drove:'drive', driven:'drive',
+    rode:'ride', ridden:'ride', rose:'rise', risen:'rise', chose:'choose', chosen:'choose',
+    ate:'eat', eaten:'eat', fell:'fall', fallen:'fall', forgot:'forget', forgotten:'forget',
+    began:'begin', begun:'begin', drank:'drink', drunk:'drink', sang:'sing', sung:'sing',
+    swam:'swim', swum:'swim', ran:'run', sat:'sit', met:'meet', became:'become',
+    understood:'understand', stood:'stand', grew:'grow', grown:'grow', threw:'throw', thrown:'throw',
+    blew:'blow', blown:'blow', flew:'fly', flown:'fly', drew:'draw', drawn:'draw',
+    wore:'wear', worn:'wear', tore:'tear', torn:'tear', woke:'wake', woken:'wake',
+    won:'win', lost:'lose', sent:'send', spent:'spend', built:'build', lent:'lend',
+    bent:'bend', slept:'sleep', swept:'sweep', wept:'weep', fed:'feed', led:'lead',
+    bred:'breed', shot:'shoot', dealt:'deal', meant:'mean', lit:'light', shone:'shine',
+    rang:'ring', rung:'ring', sank:'sink', sunk:'sink', sprang:'spring', sprung:'spring',
+    swung:'swing', struck:'strike', bit:'bite', bitten:'bite', hid:'hide', hidden:'hide',
+    slid:'slide', dreamt:'dream', dreamed:'dream',
+    children:'child', feet:'foot', teeth:'tooth', men:'man', women:'woman',
+    mice:'mouse', people:'person', geese:'goose', oxen:'ox', lives:'life', wives:'wife',
+    leaves:'leaf', knives:'knife', babies:'baby',
+    better:'good', best:'good', worse:'bad', worst:'bad', more:'many', most:'many',
+    less:'little', least:'little', farther:'far', farthest:'far', further:'far', furthest:'far'
+  };
+  // 規則変化（複数形-s/-es、過去形-ed、-ing）の候補を機械的に作る。
+  // 正解と決めつけず候補を出すだけなので、それらしい形を複数出しても害はない
+  // （最終的に「もう一方の本に本当に存在するか」でしか一致しない）。
+  function regularStemCandidates(word) {
+    const w = String(word || '').toLowerCase();
+    const cands = new Set();
+    if (/[^aeiou]ies$/.test(w)) cands.add(w.replace(/ies$/, 'y'));                 // babies→baby
+    if (/(s|x|z|ch|sh|o)es$/.test(w)) cands.add(w.replace(/es$/, ''));             // watches→watch
+    if (/[^s]s$/.test(w) && w.length > 2) cands.add(w.replace(/s$/, ''));          // looks→look
+    if (/ed$/.test(w)) {
+      cands.add(w.replace(/ed$/, ''));                                            // reminded→remind
+      cands.add(w.replace(/d$/, ''));                                             // observed→observe
+      const m = w.match(/^(.*)([b-df-hj-np-tv-z])\2ed$/);
+      if (m) cands.add(m[1] + m[2]);                                              // stopped→stop
+    }
+    if (/ing$/.test(w)) {
+      const stem = w.replace(/ing$/, '');
+      cands.add(stem);                                                            // looking→look
+      cands.add(stem + 'e');                                                      // changing→change
+      const m = stem.match(/^(.*)([b-df-hj-np-tv-z])\2$/);
+      if (m) cands.add(m[1] + m[2]);                                              // running→run
+    }
+    cands.delete(w);
+    cands.delete('');
+    return [...cands];
+  }
+  // 1語の語形変化候補（不規則表 → 規則変化の順）
+  function lemmaCandidates(rawWord) {
+    const w = compareKey(rawWord);
+    if (!w) return [];
+    const out = new Set();
+    if (IRREGULAR_BASE[w]) out.add(IRREGULAR_BASE[w]);
+    regularStemCandidates(w).forEach(c => out.add(c));
+    out.delete(w);
+    return [...out];
+  }
+  const ARTICLE_RE = /^(a|an|the)\s+/i;
+  // 【照合専用の候補キー】通常のcompareKeys()には混ぜず、こちらだけで使う。
+  // rule: 'raw'（今まで通りの照合＝無条件に除外）／
+  //       'lemma'（語形変化）／'article'（冠詞落とし）／'weak-lastword'（修飾語＋名詞の弱い一致）
+  // 後ろの3つで一致した項目は、必ず確認用の一覧に理由付きで残す。
+  function compareMatchCandidates(content) {
+    const raw = String(content || '').trim();
+    const out = [];
+    compareKeys(raw).forEach(k => out.push({ key: k, rule: 'raw' }));
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length === 1) {
+      lemmaCandidates(raw).forEach(k => { if (k) out.push({ key: k, rule: 'lemma' }); });
+    }
+    if (ARTICLE_RE.test(raw)) {
+      compareKeys(raw.replace(ARTICLE_RE, '')).forEach(k => { if (k) out.push({ key: k, rule: 'article' }); });
+    }
+    const afterArticle = raw.replace(ARTICLE_RE, '');
+    const aWords = afterArticle.split(/\s+/).filter(Boolean);
+    if (aWords.length === 2) {
+      const last = compareKey(aWords[1]);
+      if (last) out.push({ key: last, rule: 'weak-lastword' });   // 例：boiled egg → egg、dog cafe → cafe
+    }
+    return out;
+  }
+  const CMP_MATCH_RULE_LABEL = {
+    lemma: '語形変化', article: '冠詞を除く', 'weak-lastword': '修飾語を除く（弱い一致）'
+  };
+
+  // 【文・フレーズ／固有名詞かどうかの判定】
+  // どちらでもないものを「通常の語」として初期表示する。
+  // 削除はせず、切り替えで見られるようにするための分類。
+  function isSentenceLikeCompare(content) {
+    const s = String(content || '').trim();
+    if (!s) return false;
+    if (/[.!?]\s*$/.test(s)) return true;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length < 3) return false;
+    return /^(I|You|He|She|It|We|They|This|That|These|Those|What|How|Where|When|Why|Who|Which|Whose|Do|Does|Did|Is|Are|Was|Were|Can|Could|Will|Would|Shall|Should|Must|May|Might|There|Let's|Let|My|Your|His|Her|Its|Our|Their)\b/.test(s);
+  }
+  // 【固有名詞の判定】1語で大文字始まりであることを必須条件にする
+  // （skateboard→スケートボード のような、訳がカタカナなだけの普通の語を巻き込まないため）。
+  // 訳がカタカナのみ・空欄は、大文字始まりの条件と組み合わせたときだけの補助材料にする。
+  function isProperNounLikeCompare(content, translation) {
+    const s = String(content || '').trim();
+    if (!s) return false;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length >= 2 && words.length <= 4 && words.every(w => /^[A-Z]/.test(w))) return true;
+    if (words.length === 1 && /^[A-Z]/.test(words[0])) {
+      const t = String(translation || '').trim();
+      if (!t) return true;
+      if (/^[゠-ヿー・\s]+$/.test(t)) return true;
+    }
+    return false;
+  }
+  function classifyCompareRow(content, translation) {
+    if (isSentenceLikeCompare(content)) return 'sentence';
+    if (isProperNounLikeCompare(content, translation)) return 'proper';
+    return 'normal';
+  }
+  const CMP_CLASS_LABEL = { normal: '通常の語', proper: '固有名詞（人名・地名など）', sentence: '文・フレーズ' };
+
+  // ── 人が仕分けた「採用／保留／除外」の印（この端末だけに保存。設定とは別置き） ──
+  const CMP_JUDGE_KEY = 'nhscope_compare_judgments';
+  let compareJudgments = {};
+  function loadCompareJudgments() {
+    try { compareJudgments = JSON.parse(localStorage.getItem(CMP_JUDGE_KEY) || '{}'); }
+    catch { compareJudgments = {}; }
+  }
+  function saveCompareJudgmentsToStorage() {
+    try { localStorage.setItem(CMP_JUDGE_KEY, JSON.stringify(compareJudgments)); } catch {}
+  }
+  function compareJudgeKey(side, content) { return side + '::' + compareGroupKey(content); }
+  function getCompareJudgment(side, content) { return compareJudgments[compareJudgeKey(side, content)] || ''; }
+  function setCompareJudgment(side, content, status) {
+    const k = compareJudgeKey(side, content);
+    if (status) compareJudgments[k] = status; else delete compareJudgments[k];
+    saveCompareJudgmentsToStorage();
+    renderCompare();
+  }
+  const CMP_JUDGE_LABEL = { adopt: '採用', hold: '保留', exclude: '除外' };
+
   let compareMode = 'vocab';
   let compareLastRows = { nh: [], nc: [] };   // 書き出し用に直近の表示内容を持っておく
+  let compareClassMode = 'normal';            // 通常の語／固有名詞／文・フレーズ の切り替え
+  let compareJudgeFilter = '';                // 採用／保留／除外での絞り込み（空＝すべて）
+  let compareExclusionLog = { nh: [], nc: [] }; // 語形変化・冠詞落とし等で除外した項目の確認用一覧
 
   function setCompareMode(mode, el) {
     compareMode = mode;
     cmpPageNH = 0; cmpPageNC = 0;
     document.querySelectorAll('#comparePills .pill').forEach(p => p.classList.remove('active'));
     if (el) el.classList.add('active');
+    renderCompare();
+  }
+  function setCompareClassMode(mode, el) {
+    compareClassMode = mode;
+    cmpPageNH = 0; cmpPageNC = 0;
+    document.querySelectorAll('#compareClassPills .pill').forEach(p => p.classList.remove('active'));
+    if (el) el.classList.add('active');
+    renderCompare();
+  }
+  function setCompareJudgeFilter(v) {
+    compareJudgeFilter = v;
+    cmpPageNH = 0; cmpPageNC = 0;
     renderCompare();
   }
 
@@ -10392,34 +10566,74 @@ function findTestByDateEx(hist, school, grade, date) {
       el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NEW HORIZON・NEW CROWN両方の教科書データを解析してください。</div></div>`;
       return;
     }
-    if (compareMode === 'grammar') { compareLastRows = { nh: [], nc: [] }; renderGrammarTable(el, nhItems, ncItems); return; }
+    const classPillsEl = document.getElementById('compareClassPills');
+    if (compareMode === 'grammar') {
+      if (classPillsEl) classPillsEl.style.display = 'none';
+      compareLastRows = { nh: [], nc: [] };
+      renderGrammarTable(el, nhItems, ncItems);
+      return;
+    }
+    if (classPillsEl) classPillsEl.style.display = '';
     const types = (compareMode === 'phrases') ? ['熟語']
                 : (compareMode === 'all')     ? ['単語', '熟語']
                 :                               ['単語'];
     renderCompareItems(el, nhItems, ncItems, types);
   }
 
+  // 【種類（単語／熟語）の表示は、保存データのtypeではなく内容の見た目で決め直す】
+  // 抽出プロンプト・保存データ自体は変えず、比較タブの表示・絞り込みだけに使う。
+  // スペースを含む＝複数語＝熟語、含まない＝単語、とみなす（文法はそのまま）。
+  function compareDisplayType(item) {
+    if (item.type === '文法') return '文法';
+    return /\s/.test(String(item.content || '').trim()) ? '熟語' : '単語';
+  }
+
   // 片側だけにある項目を、重複をまとめた行の一覧にして返す
-  function compareOnlyRows(mineItems, otherItems, types) {
+  function compareOnlyRows(mineItems, otherItems, types, side) {
     // 【重要】相手側のキーは種類をまたいで集める。
     // 「get up」がNHでは単語、NCでは熟語に入っていることがあり、
     // 種類ごとに比べると同じ語が「NHのみ」と「NCのみ」の両方に出てしまう。
-    const otherKeys = new Set();
-    otherItems.forEach(i => compareKeys(i.content).forEach(k => otherKeys.add(k)));
+    // weak-lastword（修飾語を除く弱い一致）は索引には使わない。索引側まで弱くすると
+    // 誤って一致とみなす組み合わせが増えすぎるため、常に相手側の「素の形」で受ける。
+    const otherIndex = new Map();
+    otherItems.forEach(i => {
+      compareMatchCandidates(i.content).forEach(c => {
+        if (c.rule === 'weak-lastword') return;
+        if (!otherIndex.has(c.key)) otherIndex.set(c.key, (i.content || '').trim());
+      });
+    });
 
+    const excluded = [];
     const map = new Map();
     mineItems.forEach(i => {
-      if (!types.includes(i.type)) return;
+      const dType = compareDisplayType(i);
+      if (!types.includes(dType)) return;
+      const mine = compareMatchCandidates(i.content);
+      if (!mine.length) return;        // 中身が空の項目は捨てる
+      let hit = null;
+      for (const c of mine) { if (otherIndex.has(c.key)) { hit = c; break; } }
+      if (hit) {
+        // 'raw'（従来通りの記号・カッコゆれの吸収）による一致は今まで通り無条件で除外。
+        // それ以外のルールで一致した分だけ、確認できるよう控えておく。
+        if (hit.rule !== 'raw') {
+          excluded.push({
+            content: (i.content || '').trim(),
+            matchedWith: otherIndex.get(hit.key),
+            rule: hit.rule,
+            weak: hit.rule === 'weak-lastword'
+          });
+        }
+        return;
+      }
       const ks = compareKeys(i.content);
-      if (!ks.length) return;         // 中身が空の項目は捨てる
-      if (ks.some(x => otherKeys.has(x))) return;
+      if (!ks.length) return;
       const k = ks[ks.length - 1];    // 「place(s)」と「place」を1行にまとめる
       const where = [i.grade || '', [i.unit, i.lesson].filter(Boolean).join(' ')].filter(Boolean).join(' ');
       if (!map.has(k)) {
         map.set(k, {
           content: (i.content || '').trim(),
           translation: (i.translation || '').trim(),
-          type: i.type || '',
+          type: dType,
           grade: i.grade || '',
           unit: [i.unit, i.lesson].filter(Boolean).join(' '),
           places: []
@@ -10429,6 +10643,7 @@ function findTestByDateEx(hist, school, grade, date) {
       if (!row.translation && (i.translation || '').trim()) row.translation = (i.translation || '').trim();
       if (where && !row.places.includes(where)) row.places.push(where);
     });
+    if (side) compareExclusionLog[side] = excluded;
     const rows = [...map.values()];
     rows.sort((a, b) => {
       const ka = compareSortKey(a), kb = compareSortKey(b);
@@ -10439,44 +10654,102 @@ function findTestByDateEx(hist, school, grade, date) {
 
   function renderCompareItems(el, nhItems, ncItems, types) {
     const searchQ = ((document.getElementById('compareSearch') || {}).value || '').toLowerCase();
-    let nhOnly = compareOnlyRows(nhItems, ncItems, types);
-    let ncOnly = compareOnlyRows(ncItems, nhItems, types);
+    let nhOnly = compareOnlyRows(nhItems, ncItems, types, 'nh');
+    let ncOnly = compareOnlyRows(ncItems, nhItems, types, 'nc');
     if (searchQ) {
       const hit = r => (r.content || '').toLowerCase().includes(searchQ) || (r.translation || '').toLowerCase().includes(searchQ);
       nhOnly = nhOnly.filter(hit);
       ncOnly = ncOnly.filter(hit);
+    }
+    // 【分類（通常の語／固有名詞／文・フレーズ）で絞り込む】削除ではなく表示の絞り込み。
+    // ピルに件数を出すため、絞り込む前に3分類それぞれの件数を数えておく。
+    const classCounts = { normal: 0, proper: 0, sentence: 0 };
+    [...nhOnly, ...ncOnly].forEach(r => { classCounts[classifyCompareRow(r.content, r.translation)]++; });
+    try {
+      const map = { normal: '通常の語', proper: '固有名詞（人名・地名など）', sentence: '文・フレーズ' };
+      document.querySelectorAll('#compareClassPills .pill').forEach(p => {
+        const mode = Object.keys(map).find(k => p.textContent.trim().startsWith(map[k]));
+        if (mode) p.textContent = `${map[mode]}（${classCounts[mode]}）`;
+      });
+    } catch(e) {}
+    nhOnly = nhOnly.filter(r => classifyCompareRow(r.content, r.translation) === compareClassMode);
+    ncOnly = ncOnly.filter(r => classifyCompareRow(r.content, r.translation) === compareClassMode);
+    // 審査進捗（分類・検索後、印での絞り込み前の件数を母数にする）
+    const judgeStats = (rows, side) => {
+      const withJudge = rows.filter(r => getCompareJudgment(side, r.content));
+      const hold = withJudge.filter(r => getCompareJudgment(side, r.content) === 'hold');
+      return { total: rows.length, judged: withJudge.length, hold: hold.length };
+    };
+    const nhStats = judgeStats(nhOnly, 'nh');
+    const ncStats = judgeStats(ncOnly, 'nc');
+    // 【採用／保留／除外で絞り込む】
+    if (compareJudgeFilter === 'unjudged') {
+      nhOnly = nhOnly.filter(r => !getCompareJudgment('nh', r.content));
+      ncOnly = ncOnly.filter(r => !getCompareJudgment('nc', r.content));
+    } else if (compareJudgeFilter) {
+      nhOnly = nhOnly.filter(r => getCompareJudgment('nh', r.content) === compareJudgeFilter);
+      ncOnly = ncOnly.filter(r => getCompareJudgment('nc', r.content) === compareJudgeFilter);
     }
     compareLastRows = { nh: nhOnly, nc: ncOnly, types };
 
     const showType = types.length > 1;
     // 【ページ送り】数百件を一度に出すと縦に長くなりすぎる。表示だけ区切る。
     // 「コピー」「CSV」は compareLastRows（全件）を使うので、書き出しは全件のまま。
+    const judgeBtns = (side, idx, cur) => `
+      <div style="display:flex;gap:3px;white-space:nowrap">
+        ${['adopt', 'hold', 'exclude'].map(s => `
+          <button class="btn btn-sm ${cur === s ? 'btn-primary' : 'btn-secondary'}" style="font-size:10px;padding:2px 6px"
+                  onclick="setCompareJudgmentByIndex('${side}',${idx},'${s}')">${CMP_JUDGE_LABEL[s]}</button>`).join('')}
+      </div>`;
     const mkTable = (rows, unitLabel, side) => rows.length
       ? (() => {
           const pgc = pageSlice(rows, side === 'nh' ? cmpPageNH : cmpPageNC, CMP_PER_PAGE);
           if (side === 'nh') cmpPageNH = pgc.page; else cmpPageNC = pgc.page;
           const fn = side === 'nh' ? 'goComparePageNH' : 'goComparePageNC';
-          return pagerHtml(pgc, rows.length, fn, CMP_PER_PAGE) + mkRows(pgc.rows, unitLabel)
+          const offset = pgc.page * CMP_PER_PAGE;
+          return pagerHtml(pgc, rows.length, fn, CMP_PER_PAGE) + mkRows(pgc.rows, unitLabel, side, offset)
                + pagerHtml(pgc, rows.length, fn, CMP_PER_PAGE);
         })()
       : `<p style="font-size:13px;color:var(--muted);padding:8px">該当なし</p>`;
-    const mkRows = (rows, unitLabel) => rows.length
+    const mkRows = (rows, unitLabel, side, offset) => rows.length
       ? `<div class="tbl-wrap"><table>
-          <thead><tr><th>内容</th><th>訳</th>${showType ? '<th>種類</th>' : ''}<th>${unitLabel}</th></tr></thead>
-          <tbody>${rows.map(r => `<tr>
+          <thead><tr><th>内容</th><th>訳</th>${showType ? '<th>種類</th>' : ''}<th>${unitLabel}</th><th>判定</th></tr></thead>
+          <tbody>${rows.map((r, i) => `<tr>
             <td style="font-weight:600">${esc(r.content)}</td>
             <td style="font-size:12px;color:var(--muted)">${esc(r.translation)}</td>
             ${showType ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.type)}</td>` : ''}
             <td style="font-size:11px;color:var(--muted)">${esc(r.places.join(' / '))}</td>
+            <td>${judgeBtns(side, offset + i, getCompareJudgment(side, r.content))}</td>
           </tr>`).join('')}</tbody>
         </table></div>`
       : '';
 
     const notes = compareDataHealth();
-    const noteHTML = notes.length
+    // 【語形変化・冠詞落としで除外した項目の確認欄】人が誤判定に気づけるように、
+    // 「のみ」一覧から消えた理由を必ず残す。件数が多いので折りたたみにする。
+    const exclusionPanel = side => {
+      const rows = compareExclusionLog[side] || [];
+      if (!rows.length) return '';
+      const label = side === 'nh' ? 'NEW HORIZON' : 'NEW CROWN';
+      return `<details style="margin-top:8px">
+        <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--muted);list-style:revert">
+          この正規化ルールで一致とみなして除外した項目（${label}側・${rows.length}件）
+        </summary>
+        <div class="tbl-wrap" style="max-height:260px;overflow:auto;margin-top:6px"><table>
+          <thead><tr><th>${label}の内容</th><th>一致とみなした相手</th><th>ルール</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+            <td style="font-size:12px">${esc(r.content)}</td>
+            <td style="font-size:12px;color:var(--muted)">${esc(r.matchedWith)}</td>
+            <td style="font-size:11px;${r.weak ? 'color:#B45309;font-weight:700' : 'color:var(--muted)'}">${esc(CMP_MATCH_RULE_LABEL[r.rule] || r.rule)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </details>`;
+    };
+    const noteHTML = (notes.length || compareExclusionLog.nh.length || compareExclusionLog.nc.length)
       ? `<div class="card" style="border-left:4px solid #f59e0b">${notes.map(n =>
           n.html ? n.html
-                 : `<div style="font-size:12px;line-height:1.7">⚠️ ${esc(n.text)}</div>`).join('')}</div>`
+                 : `<div style="font-size:12px;line-height:1.7">⚠️ ${esc(n.text)}</div>`).join('')}
+          ${exclusionPanel('nh')}${exclusionPanel('nc')}</div>`
       : '';
 
     const btns = side => `
@@ -10484,33 +10757,66 @@ function findTestByDateEx(hist, school, grade, date) {
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="copyCompareList('${side}')">📋 コピー</button>
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="downloadCompareCSV('${side}')">⬇ CSV</button>
       </div>`;
+    const progress = s => `<div style="font-size:11px;color:var(--muted);margin-top:2px">
+      審査済み ${s.judged}/${s.total}件（保留 ${s.hold}件）</div>`;
 
     el.innerHTML = `
       ${noteHTML}
+      <div style="display:flex;gap:8px;align-items:center;margin:6px 0 10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted)">判定で絞り込み：</span>
+        <select class="book-select" style="font-size:12px;padding:4px 8px" onchange="setCompareJudgeFilter(this.value)">
+          <option value="" ${!compareJudgeFilter ? 'selected' : ''}>すべて</option>
+          <option value="unjudged" ${compareJudgeFilter === 'unjudged' ? 'selected' : ''}>未定</option>
+          <option value="adopt" ${compareJudgeFilter === 'adopt' ? 'selected' : ''}>採用</option>
+          <option value="hold" ${compareJudgeFilter === 'hold' ? 'selected' : ''}>保留</option>
+          <option value="exclude" ${compareJudgeFilter === 'exclude' ? 'selected' : ''}>除外</option>
+        </select>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="card">
           <div class="card-title" style="color:var(--navy)">NEW HORIZONのみ（${nhOnly.length}件）</div>
+          ${progress(nhStats)}
           ${mkTable(nhOnly, 'NEW HORIZON 掲載箇所', 'nh')}
           ${nhOnly.length ? btns('nh') : ''}
         </div>
         <div class="card">
           <div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${ncOnly.length}件）</div>
+          ${progress(ncStats)}
           ${mkTable(ncOnly, 'NEW CROWN 掲載箇所', 'nc')}
           ${ncOnly.length ? btns('nc') : ''}
         </div>
       </div>`;
   }
+  function setCompareJudgmentByIndex(side, idx, status) {
+    const row = (compareLastRows[side] || [])[idx];
+    if (!row) return;
+    const cur = getCompareJudgment(side, row.content);
+    setCompareJudgment(side, row.content, cur === status ? '' : status);
+  }
 
   const CMP_PER_PAGE = 100;
+  // 【前回どこまで見たかを覚えておく】数百件を何回かに分けて見るための、ページ位置の記憶。
+  const CMP_PAGE_KEY = 'nhscope_compare_page';
   let cmpPageNH = 0, cmpPageNC = 0;
-  function goComparePageNH(n) { cmpPageNH = n; renderCompare(); }
-  function goComparePageNC(n) { cmpPageNC = n; renderCompare(); }
+  function loadComparePage() {
+    try {
+      const v = JSON.parse(localStorage.getItem(CMP_PAGE_KEY) || '{}');
+      cmpPageNH = Number.isFinite(v.nh) ? v.nh : 0;
+      cmpPageNC = Number.isFinite(v.nc) ? v.nc : 0;
+    } catch { cmpPageNH = 0; cmpPageNC = 0; }
+  }
+  function saveComparePage() {
+    try { localStorage.setItem(CMP_PAGE_KEY, JSON.stringify({ nh: cmpPageNH, nc: cmpPageNC })); } catch {}
+  }
+  function goComparePageNH(n) { cmpPageNH = n; saveComparePage(); renderCompare(); }
+  function goComparePageNC(n) { cmpPageNC = n; saveComparePage(); renderCompare(); }
 
   // ── 比較結果の書き出し ────────────────────────────────────────────
   function compareRowsToTSV(side) {
     const rows = (compareLastRows || {})[side] || [];
-    const head = ['内容', '訳', '種類', '掲載箇所'].join('\t');
-    return [head, ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / ')].join('\t'))].join('\n');
+    const head = ['内容', '訳', '種類', '掲載箇所', '判定'].join('\t');
+    return [head, ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / '),
+      CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || ''].join('\t'))].join('\n');
   }
   async function copyCompareList(side) {
     const txt = compareRowsToTSV(side);
@@ -10521,8 +10827,9 @@ function findTestByDateEx(hist, school, grade, date) {
     const rows = (compareLastRows || {})[side] || [];
     if (!rows.length) return;
     const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const csv = ['内容,訳,種類,掲載箇所',
-      ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / ')].map(q).join(','))].join('\r\n');
+    const csv = ['内容,訳,種類,掲載箇所,判定',
+      ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / '),
+        CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || ''].map(q).join(','))].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -11678,6 +11985,10 @@ function findTestByDateEx(hist, school, grade, date) {
     // 前回の範囲表の読み取り結果と手直しを戻す。
     // 戻さないと、リロードのたびに読み直し（＝AIへの再送信＝費用）になる。
     try { await loadSyllabusState(); } catch(e) { console.error('loadSyllabusState:', e); }
+
+    // 教科書比較タブの「採用／保留／除外」の印と、前回どこまで見たかを復元する
+    try { loadCompareJudgments(); } catch(e) { console.error('loadCompareJudgments:', e); }
+    try { loadComparePage(); } catch(e) { console.error('loadComparePage:', e); }
 
     // APIキー未設定ならセットアップガイドを表示
     if (!getApiKey()) openSetupGuide();
