@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.22</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.23</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -465,6 +465,7 @@
         <span style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" onclick="fixAppendixSectionNames()" title="巻末（資料編）のセクション名が「Lesson 1」などと誤記録されているものを、正しい名前に自動で直します">🏷 巻末の名前を自動で直す</button>
           <button class="btn btn-secondary btn-sm" onclick="exportBackupCSV()" title="重複削除などの操作を行う前に、今のデータをファイルに残しておけます（Unitの絞り込みに関係なく全件）">💾 バックアップCSV</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportAllBooksCSV()" title="登録されている全教科書（NEW HORIZON中1〜3、NEW CROWN中1〜3）のデータを1つのCSVにまとめて書き出します">📚 全教科書CSV</button>
           <button class="btn btn-secondary btn-sm" onclick="deduplicateData()" title="同じ内容の項目をまとめます（早いページの方を残します）">🔁 重複削除</button>
           <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
           <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
@@ -11657,6 +11658,34 @@ function findTestByDateEx(hist, school, grade, date) {
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     alert(`${items.length}件を書き出しました。`);
+  }
+
+  // ── CSV出力（全教科書一括バックアップ用）───────────────────────
+  // NEW HORIZON中1〜3・NEW CROWN中1〜3のデータを1つのCSVにまとめて書き出す。
+  // exportBackupCSVと同じく、並べ替え・重複除去・正規化は一切行わない。
+  function exportAllBooksCSV() {
+    const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const rows = [];
+    const counts = [];
+    DEFAULT_BOOKS.forEach(defBook => {
+      const book = bookById(defBook.id);
+      const items = book?.items || [];
+      counts.push(`${book?.name || defBook.name} ${items.length}件`);
+      items.forEach(it => {
+        rows.push([book.name, it.unit, it.page || '', it.type, it.content, it.translation, it.notes].map(q).join(','));
+      });
+    });
+    if (!rows.length) { alert('データがありません。'); return; }
+    const csv = ['教科書,Unit,ページ,種類,内容,訳・説明,メモ', ...rows].join('\r\n');
+    // ExcelでUTF-8を正しく開かせるためBOMを付ける
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `全教科書_バックアップ_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    alert(`${counts.join(' / ')} / 合計 ${rows.length}件を書き出しました。`);
   }
 
   // ── CSV取込（exportCSVと同じ列構成のファイルを読み込む。バックアップ復元用） ──
