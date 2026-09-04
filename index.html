@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.23</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.24</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -410,8 +410,8 @@
     <div style="margin-top:12px">
     <div class="card">
       <div class="card-title">🖼️ 画像ファイルから直接解析</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">スマホで撮った写真（見開き2ページでもOK）やPNG/JPEGを直接投入できます。PDF変換不要。各ページ隅の印字ページ番号がはっきり写るように撮影してください（番号がUnit補正の基準になります）。</p>
-      <input type="file" id="imgFiles" accept=".png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="onImagesLoaded(this.files)">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">スマホで撮った写真（見開き2ページでもOK）やPNG/JPEG、iPhoneのHEIC/HEIFを直接投入できます。PDF変換不要。各ページ隅の印字ページ番号がはっきり写るように撮影してください（番号がUnit補正の基準になります）。</p>
+      <input type="file" id="imgFiles" accept=".png,.jpg,.jpeg,.webp,.heic,.heif,image/*" multiple style="display:none" onchange="onImagesLoaded(this.files)">
       <button type="button" class="btn btn-secondary" style="width:100%" onclick="document.getElementById('imgFiles').click()">🖼️ 画像ファイルを選択（複数可）</button>
       <div id="imgStatus" style="font-size:13px;color:var(--muted);margin-top:8px"></div>
       <div id="imgSetupCard" style="display:none;margin-top:12px">
@@ -11755,10 +11755,33 @@ function findTestByDateEx(hist, school, grade, date) {
   let currentImageFiles = [];
 
   async function onImagesLoaded(files) {
-    currentImageFiles = Array.from(files);
+    const raw = Array.from(files);
     const statusEl = document.getElementById('imgStatus');
-    statusEl.textContent = `${currentImageFiles.length}枚の画像を選択しました`;
-    document.getElementById('imgSetupCard').style.display = 'block';
+    const nHeic = raw.filter(isHeicFile).length;
+    if (nHeic) statusEl.textContent = `${raw.length}枚を確認中...（HEICの変換に少し時間がかかります）`;
+
+    // HEIC/HEIFはブラウザがそのまま開けないので、解析前にJPEGへ変える。
+    // 1枚失敗しても他の枚数まで無駄にしないよう、続けて残りを処理する。
+    const converted = [];
+    const failed = [];
+    for (const f of raw) {
+      if (isHeicFile(f)) {
+        try { converted.push(await heicToJpeg(f)); }
+        catch (e) { failed.push(`${f.name}：${e && e.message ? e.message : e}`); }
+      } else {
+        converted.push(f);
+      }
+    }
+    currentImageFiles = converted;
+
+    let msg = `${converted.length}枚の画像を選択しました`;
+    if (nHeic) msg += `（HEIC ${nHeic - failed.length}/${nHeic}枚をJPEGに変換）`;
+    if (failed.length) {
+      statusEl.innerHTML = `${esc(msg)}<br><span class="s-err" style="display:inline-block;padding:4px 8px;border-radius:6px;margin-top:4px">⚠️ 変換に失敗したファイル：${failed.map(esc).join('、 ')}</span>`;
+    } else {
+      statusEl.textContent = msg;
+    }
+    document.getElementById('imgSetupCard').style.display = converted.length ? 'block' : 'none';
   }
 
   function clearImageFiles() {
