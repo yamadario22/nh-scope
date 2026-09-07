@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.25</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.26</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -2303,6 +2303,19 @@
   // クラウドに読み書きしてよいか（ログイン済みでないとルールに弾かれる）
   function canCloud() { return !!(FIREBASE_READY && db && AUTH_OK); }
 
+  // Firestoreに送る前に、値が undefined のキーだけを落とす。
+  // Firestoreは undefined を受け付けず必ず書き込みエラーになる一方、
+  // null は「値を空にする」という意味のある値として受け付けるため、
+  // null まで落とすと意図が変わってしまう。undefined だけを対象にする。
+  function stripUndefinedForFirestore(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    const out = {};
+    for (const k of Object.keys(obj)) {
+      if (obj[k] !== undefined) out[k] = obj[k];
+    }
+    return out;
+  }
+
   function setSyncBadge(state, note) {
     const el = document.getElementById('syncBadge');
     if (!el) return;
@@ -2441,9 +2454,9 @@
           setSyncBadge('syncing');
           for (const t of oldTests) {
             if (!t.firestoreId) {
-              const ref = await db.collection(FB_TESTS_COL).add({
+              const ref = await db.collection(FB_TESTS_COL).add(stripUndefinedForFirestore({
                 ...t, createdAt: firebase.firestore.FieldValue.serverTimestamp()
-              });
+              }));
               t.firestoreId = ref.id;
             }
           }
@@ -2517,11 +2530,11 @@
     if (!book) return;
     setSyncBadge('saving');
     try {
-      await db.collection(FB_LIBRARY_COL).doc(bookId).set({
+      await db.collection(FB_LIBRARY_COL).doc(bookId).set(stripUndefinedForFirestore({
         name: book.name, items: book.items,
         localUpdatedAt: book.localUpdatedAt || Date.now(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      }));
       setSyncBadge('ok');
     } catch(e) {
       console.warn('Firestore library save error:', e);
@@ -2534,10 +2547,10 @@
   async function saveTestEntryToFirestore(entry) {
     if (!canCloud()) return null;
     try {
-      const ref = await db.collection(FB_TESTS_COL).add({
+      const ref = await db.collection(FB_TESTS_COL).add(stripUndefinedForFirestore({
         ...entry,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      }));
       return ref.id;
     } catch(e) {
       console.warn('Firestore test save error:', e);
@@ -2562,8 +2575,9 @@
   async function updateTestInFirestore(fullTest, patch) {
     if (!canCloud() || !fullTest || !fullTest.firestoreId || !patch) return false;
     const firestoreId = fullTest.firestoreId;
+    const cleanPatch = stripUndefinedForFirestore(patch);
     try {
-      await db.collection(FB_TESTS_COL).doc(firestoreId).update(patch);
+      await db.collection(FB_TESTS_COL).doc(firestoreId).update(cleanPatch);
       return true;
     } catch(e) {
       const notFound = (e && e.code === 'not-found')
@@ -2571,10 +2585,10 @@
       if (!notFound) { console.warn('Firestore test update error:', e); return false; }
       try {
         const { firestoreId: _drop, ...rest } = fullTest;
-        await db.collection(FB_TESTS_COL).doc(firestoreId).set({
-          ...rest, ...patch,
+        await db.collection(FB_TESTS_COL).doc(firestoreId).set(stripUndefinedForFirestore({
+          ...rest, ...cleanPatch,
           createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        }));
         return true;
       } catch(e2) { console.warn('Firestore test recreate error:', e2); return false; }
     }
@@ -9842,7 +9856,7 @@ function findTestByDateEx(hist, school, grade, date) {
 
       if (FIREBASE_READY && db) {
         try {
-          const ref = await db.collection(FB_EXAMS_COL).add({ ...entry, createdAt:firebase.firestore.FieldValue.serverTimestamp() });
+          const ref = await db.collection(FB_EXAMS_COL).add(stripUndefinedForFirestore({ ...entry, createdAt:firebase.firestore.FieldValue.serverTimestamp() }));
           entry.firestoreId = ref.id;
         } catch(e) {
           console.warn('Firestore exam save error:', e);
@@ -10143,7 +10157,7 @@ function findTestByDateEx(hist, school, grade, date) {
     exam.summaries[pIdx].wc_confirmed = true; // 人が確認・修正した印
     saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
-      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update({ summaries: exam.summaries }); } catch {}
+      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ summaries: exam.summaries })); } catch {}
     }
     renderExamHistory();
   }
@@ -10212,7 +10226,7 @@ function findTestByDateEx(hist, school, grade, date) {
     exam.confirmed = !exam.confirmed;
     saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
-      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update({ confirmed: exam.confirmed }); } catch {}
+      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ confirmed: exam.confirmed })); } catch {}
     }
     renderExamHistory();
   }
