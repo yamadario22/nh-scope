@@ -265,7 +265,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.24</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.25</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -2555,16 +2555,103 @@
   }
 
   // テスト1件の一部項目だけをFirestoreで書き換える（範囲の再判定などで使用）
-  async function updateTestInFirestore(firestoreId, patch) {
-    if (!canCloud() || !firestoreId || !patch) return false;
+  // クラウド側に文書が無い場合（同期の取りこぼしなど）は update() が必ず失敗するため、
+  // 手元のテスト一式（fullTest）を丸ごと書き込んで作り直す。
+  // ここで patch だけを set(merge:true) すると question_types などが欠けた文書が
+  // 新規作成されてしまうので、それはやらない。
+  async function updateTestInFirestore(fullTest, patch) {
+    if (!canCloud() || !fullTest || !fullTest.firestoreId || !patch) return false;
+    const firestoreId = fullTest.firestoreId;
     try {
       await db.collection(FB_TESTS_COL).doc(firestoreId).update(patch);
       return true;
-    } catch(e) { console.warn('Firestore test update error:', e); return false; }
+    } catch(e) {
+      const notFound = (e && e.code === 'not-found')
+        || /no document to update/i.test((e && e.message) || '');
+      if (!notFound) { console.warn('Firestore test update error:', e); return false; }
+      try {
+        const { firestoreId: _drop, ...rest } = fullTest;
+        await db.collection(FB_TESTS_COL).doc(firestoreId).set({
+          ...rest, ...patch,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return true;
+      } catch(e2) { console.warn('Firestore test recreate error:', e2); return false; }
+    }
+  }
+
+  // 【手元とクラウドがズレているテストをまとめて送り直す】
+  // v10.17前後のログイン方式の切り替わりなどで、手元にはあるのにクラウドに
+  // 一度も届いていないテストが後から見つかることがある。
+  // ズレている件数を先に数えて確認してから、まとめて送り直す。
+  // - firestoreIdを持っていない → add()して新規作成し、返ってきたIDを手元にも保存する
+  // - firestoreIdを持っているがクラウドに文書が無い → updateTestInFirestoreの
+  //   「無ければ作る」フォールバックに任せる（テスト一式を書き込むので中身が欠けない）
+  async function resyncTestsToCloud() {
+    if (!canCloud()) { alert('クラウド同期が有効になっていません（ログインしていない可能性があります）。'); return; }
+    let hist = [];
+    try { hist = histAll(); } catch { alert('テスト履歴の読み込みに失敗しました。'); return; }
+    if (!hist.length) { alert('テスト分析履歴がありません。'); return; }
+
+    const btn = document.querySelector('button[onclick="resyncTestsToCloud()"]');
+    const setBtn = (label, disabled) => { if (btn) { btn.disabled = disabled; btn.textContent = label; } };
+
+    setBtn('確認しています…', true);
+    let cloudIds;
+    try {
+      cloudIds = new Set();
+      const snap = await db.collection(FB_TESTS_COL).get();
+      snap.forEach(doc => cloudIds.add(doc.id));
+    } catch(e) {
+      setBtn('☁️ クラウドに送り直す', false);
+      alert('クラウドの状態を確認できませんでした：' + (e && e.message ? e.message : e));
+      return;
+    }
+
+    const targets = hist.filter(h => !h.firestoreId || !cloudIds.has(h.firestoreId));
+    setBtn('☁️ クラウドに送り直す', false);
+
+    if (!targets.length) { alert('クラウドとズレているテストはありませんでした。'); return; }
+
+    const ok = await showConfirm(
+      `クラウドとズレているテストが ${targets.length}件あります。送り直しますか？\n`
+      + '（Geminiは使わないので料金はかかりません。既にクラウドにある文書は上書きしません）',
+      '送り直す'
+    );
+    if (!ok) return;
+
+    setBtn(`送り直しています… 0/${targets.length}`, true);
+    let sent = 0, failed = 0;
+    const CHUNK = 10;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const chunk = targets.slice(i, i + CHUNK);
+      const results = await Promise.all(chunk.map(async h => {
+        try {
+          if (!h.firestoreId) {
+            const id = await saveTestEntryToFirestore(h);
+            if (id) { h.firestoreId = id; return true; }
+            return false;
+          }
+          return await updateTestInFirestore(h, {
+            range: h.range, rangePrev: h.rangePrev, grade: h.grade,
+            question_types: h.question_types, tested_vocab: h.tested_vocab, key_items: h.key_items
+          });
+        } catch(e) { console.warn('resync error:', e); return false; }
+      }));
+      results.forEach(r => r ? sent++ : failed++);
+      setBtn(`送り直しています… ${Math.min(i + CHUNK, targets.length)}/${targets.length}`, true);
+      // 途中でブラウザに描き直す隙を与える（固まらないように）
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    try { histSave(hist); } catch { try { showToast('⚠️ firestoreIdの手元への保存に失敗しました', 'error'); } catch {} }
+    setBtn('☁️ クラウドに送り直す', false);
+    renderTestHistory();
+    alert(`${sent}件をクラウドに送り直しました。` + (failed ? `\n${failed}件は失敗しました（もう一度お試しください）。` : ''));
   }
 
   // 後方互換（旧コードから呼ばれる場合のダミー）
-  
+
 
   // 設定をFirestoreに保存（APIキー・モデルを全員で共有）
   async function saveSettingsToFirestore() {
@@ -4608,6 +4695,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 title="10月に2学期中間テストを行う学校を登録します。登録していない学校に10月の日付が入っていたら、月の読み違いとして警告を出します">🍁 10月にテストがある学校</button>
               <button class="btn btn-ghost btn-sm" onclick="rejudgeTestRanges()"
                 title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
+              <button class="btn btn-ghost btn-sm" onclick="resyncTestsToCloud()"
+                title="手元にはあるのにクラウドに無い（または消えてしまった）テストをまとめて送り直します（Geminiは使わないので料金はかかりません）">☁️ クラウドに送り直す</button>
               <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
             </span>
           </div>
@@ -4978,7 +5067,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     for (const c of changes) {
       const h = hist[c.idx];
       if (!h.firestoreId) continue;
-      const okFs = await updateTestInFirestore(h.firestoreId, { range: h.range, rangePrev: h.rangePrev, grade: h.grade });
+      const okFs = await updateTestInFirestore(h, { range: h.range, rangePrev: h.rangePrev, grade: h.grade });
       if (okFs) synced++; else failed++;
     }
 
@@ -5161,7 +5250,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.prevGradePages = prevText ? prev.pages : null;
     try { histSave(hist); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
-    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, {
+    if (h.firestoreId) await updateTestInFirestore(h, {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力', rangePages: h.rangePages,
       prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade, prevGradePages: h.prevGradePages });
     closeRangeEdit();
@@ -5210,7 +5299,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.range = newRange;
     try { histSave(hist); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
-    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, { grade: h.grade, range: h.range, gradePrev: h.gradePrev, rangePrev: h.rangePrev });
+    if (h.firestoreId) await updateTestInFirestore(h, { grade: h.grade, range: h.range, gradePrev: h.gradePrev, rangePrev: h.rangePrev });
     renderTestHistory();
     alert(`学年を${g}に直し、範囲を「${newRange}」に計算し直しました。`);
   }
@@ -9051,7 +9140,7 @@ function findTestByDateEx(hist, school, grade, date) {
     h.rangePrev = now;                 // もう一度押せば行き来できる
     h.rangeEditedBy = '';              // 機械の判定に戻すので、印は外す
     try { histSave(hist); } catch {}
-    if (h.firestoreId) await updateTestInFirestore(h.firestoreId,
+    if (h.firestoreId) await updateTestInFirestore(h,
       { range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '' });
     renderTestHistory();
   }
@@ -9102,9 +9191,9 @@ function findTestByDateEx(hist, school, grade, date) {
       prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade,
       prevGradePages: h.prevGradePages, otherMaterials: h.otherMaterials };
     // まとめて反映のときは、保存と共有をあとで1回にまとめる（速さのため）
-    if (defer) { if (h.firestoreId) defer.patches.push([h.firestoreId, patch]); return true; }
+    if (defer) { if (h.firestoreId) defer.patches.push([h, patch]); return true; }
     try { histSave(hist); } catch { return false; }
-    if (h.firestoreId) await updateTestInFirestore(h.firestoreId, patch);
+    if (h.firestoreId) await updateTestInFirestore(h, patch);
     if (!silent) { renderTestHistory(); alert(`${h.name} の範囲を「${row.unitText}」に更新しました。`); }
     return true;
   }
@@ -9158,8 +9247,8 @@ function findTestByDateEx(hist, school, grade, date) {
     let sent = 0, sendNg = 0;
     for (let k = 0; k < defer.patches.length; k += 8) {
       const chunk = defer.patches.slice(k, k + 8);
-      const res = await Promise.all(chunk.map(([id, p]) =>
-        updateTestInFirestore(id, p).catch(() => false)));
+      const res = await Promise.all(chunk.map(([h, p]) =>
+        updateTestInFirestore(h, p).catch(() => false)));
       res.forEach(x => x ? sent++ : sendNg++);
       if (btn) btn.textContent = `反映しています… ${Math.min(k + 8, defer.patches.length)}/${defer.patches.length}`;
     }
