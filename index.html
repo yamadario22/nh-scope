@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.28</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.29</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -2363,7 +2363,6 @@
       // セッションキャッシュをクリアして強制再読込
       sessionStorage.removeItem('nhscope_tests_loaded');
       sessionStorage.removeItem('nhscope_exams_loaded');
-      sessionStorage.removeItem('nhscope_crownonly_loaded');
       await syncFromFirestore();
       try { renderTestHistory(); } catch {}
       try { renderExamHistory(); } catch {}
@@ -2518,13 +2517,18 @@
         sessionStorage.setItem('nhscope_exams_loaded', '1');
       }
 
-      // 教科書比較「NEW CROWNのみ」の手動仕分け上書きを読み込み（セッション内キャッシュ）
-      if (!sessionStorage.getItem('nhscope_crownonly_loaded')) {
-        setSyncBadge('syncing', '（NEW CROWNのみの仕分け）');
-        await loadCrownOnlyOverrides();
-        sessionStorage.setItem('nhscope_crownonly_loaded', '1');
-        try { if (compareMode === 'crownOnly') renderCompare(); } catch(e) {}
-      }
+      // 教科書比較「NEW CROWNのみ」の手動仕分け上書きを読み込み。
+      // 【セッションキャッシュにしてはいけない】テスト・入試の履歴とは違い、
+      // ここはこの一覧を編集した本人がリロードして直後に確認する画面。
+      // テスト履歴等と同じ「セッション内キャッシュ」にすると、同じタブで
+      // 一度でも読み込んだ後は sessionStorage のフラグがリロードをまたいで残り続け
+      // （sessionStorageはタブを閉じるまで消えない）、保存した仕分けがクラウドには
+      // 正しく書き込まれているのに、リロードしても再取得されず自動分類に戻って
+      // 見える、という不具合の原因になっていた。件数も他の履歴系より少なく、
+      // 毎回取り直すコストは小さいため、キャッシュせず必ず読み込み直す。
+      setSyncBadge('syncing', '（NEW CROWNのみの仕分け）');
+      await loadCrownOnlyOverrides();
+      try { if (compareMode === 'crownOnly') renderCompare(); } catch(e) {}
 
       setSyncBadge('ok');
       setTimeout(() => setSyncBadge('ok'), 3000);
