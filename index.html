@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Syne:wght@800&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-firestore-compat.js"></script>
@@ -265,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.26</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.27</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -629,6 +630,7 @@
         <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語</div>
         <div class="pill" onclick="setCompareMode('all',this)">③ 単語＋熟語</div>
         <div class="pill" onclick="setCompareMode('grammar',this)">④ 文法履修表</div>
+        <div class="pill" onclick="setCompareMode('crownOnly',this)">⑤ NEW CROWNのみ</div>
       </div>
       <div class="pills" id="compareClassPills" style="margin-top:6px">
         <div class="pill active" onclick="setCompareClassMode('normal',this)">通常の語</div>
@@ -2179,6 +2181,7 @@
   const FB_LIBRARY_COL  = 'nhscope_library';
   const FB_CONFIG_COL   = 'nhscope_config';
   const FB_TESTS_COL    = 'nhscope_test_entries'; // テスト1件=1ドキュメント方式
+  const FB_CROWNONLY_COL = 'nhscope_crownonly_overrides'; // 教科書比較「NEW CROWNのみ」の手動仕分け上書き
 
   function initFirebase() {
     try {
@@ -2360,6 +2363,7 @@
       // セッションキャッシュをクリアして強制再読込
       sessionStorage.removeItem('nhscope_tests_loaded');
       sessionStorage.removeItem('nhscope_exams_loaded');
+      sessionStorage.removeItem('nhscope_crownonly_loaded');
       await syncFromFirestore();
       try { renderTestHistory(); } catch {}
       try { renderExamHistory(); } catch {}
@@ -2512,6 +2516,14 @@
           try { renderExamHistory(); } catch {}
         }
         sessionStorage.setItem('nhscope_exams_loaded', '1');
+      }
+
+      // 教科書比較「NEW CROWNのみ」の手動仕分け上書きを読み込み（セッション内キャッシュ）
+      if (!sessionStorage.getItem('nhscope_crownonly_loaded')) {
+        setSyncBadge('syncing', '（NEW CROWNのみの仕分け）');
+        await loadCrownOnlyOverrides();
+        sessionStorage.setItem('nhscope_crownonly_loaded', '1');
+        try { if (compareMode === 'crownOnly') renderCompare(); } catch(e) {}
       }
 
       setSyncBadge('ok');
@@ -10443,7 +10455,7 @@ function findTestByDateEx(hist, school, grade, date) {
 
   function setCompareMode(mode, el) {
     compareMode = mode;
-    cmpPageNH = 0; cmpPageNC = 0;
+    cmpPageNH = 0; cmpPageNC = 0; cmpPageCO = 0;
     document.querySelectorAll('#comparePills .pill').forEach(p => p.classList.remove('active'));
     if (el) el.classList.add('active');
     renderCompare();
@@ -10676,6 +10688,12 @@ function findTestByDateEx(hist, school, grade, date) {
       if (classPillsEl) classPillsEl.style.display = 'none';
       compareLastRows = { nh: [], nc: [] };
       renderGrammarTable(el, nhItems, ncItems);
+      return;
+    }
+    if (compareMode === 'crownOnly') {
+      if (classPillsEl) classPillsEl.style.display = 'none';
+      compareLastRows = { nh: [], nc: [] };
+      renderCrownOnlyView(el);
       return;
     }
     if (classPillsEl) classPillsEl.style.display = '';
@@ -11054,6 +11072,331 @@ function findTestByDateEx(hist, school, grade, date) {
           </tr>`).join('')}</tbody>
         </table></div>
       </div>`;
+  }
+
+  // ══ 教科書比較「NEW CROWNのみ」専用ビュー ══════════════════════════
+  // NEW HORIZONに載っていない語（NEW CROWNだけに出てくる語）を洗い出し、
+  // 種類ごとに分けて一覧にする。上の一般比較（compareOnlyRows等）とは別に、
+  // ここ専用の正規化・自動分類を持つ（既存の照合ロジックには触れない）。
+
+  // 【照合用の正規化】ここでの一致判定だけに使う専用のキー作り。
+  // 「according to ...」と「according to」のように、語尾の穴埋め記号や
+  // 語尾変化のカッコ表記が違うだけで同じ語が「NHにもある」と判定できず、
+  // 「NEW CROWNのみ」に誤って残ってしまうのを防ぐための正規化。
+  function coNormalize(s) {
+    let t = String(s || '').toLowerCase().trim();
+    // 先頭・末尾の「...」「…」「~」「〜」を除去（複数連続もまとめて）
+    t = t.replace(/^(?:\.\.\.|…|~|〜)+/, '').replace(/(?:\.\.\.|…|~|〜)+$/, '').trim();
+    // 語尾の活用を示すカッコ（(s) (es) (d) (ed) (ing)）はカッコごと除去
+    t = t.replace(/\((s|es|d|ed|ing)\)/gi, '');
+    // それ以外のカッコは中身ごと空白に置換
+    t = t.replace(/\([^()]*\)/g, ' ');
+    // 句読点等は空白に置換（アポストロフィは残す）
+    t = t.replace(/[.,!?;:"\[\]]/g, ' ');
+    // 連続する空白を1つにまとめる
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
+  // 【自動分類】判定の優先順位は 文 → 固有名詞 → 要修正 → 熟語 → 単語
+  const CO_PROPER_MEANING_RE = /人名|地名|都市名|国名|州名|曲名|作品名|の名前/;
+  function isCrownOnlySentence(content) {
+    const s = String(content || '').trim();
+    if (!s) return false;
+    if (/["'“”‘’]/.test(s)) return true;
+    const words = s.split(/\s+/).filter(Boolean);
+    return words.length >= 2 && /^[A-Z]/.test(s) && /[.!?]\s*$/.test(s);
+  }
+  function isCrownOnlyProper(content, meaning) {
+    if (CO_PROPER_MEANING_RE.test(String(meaning || ''))) return true;
+    const words = String(content || '').trim().split(/\s+/).filter(Boolean);
+    return words.length > 0 && words.every(w => /^[A-Z]/.test(w));
+  }
+  function isCrownOnlyNeedsFix(content, meaning) {
+    const c = String(content || '').trim();
+    const m = String(meaning || '').trim();
+    if (/[,、]/.test(c)) return true;
+    if (JP_CHAR_RE.test(c)) return true;
+    if (m && !JP_CHAR_RE.test(m)) return true;
+    return false;
+  }
+  function classifyCrownOnly(content, meaning) {
+    if (isCrownOnlySentence(content)) return '文';
+    if (isCrownOnlyProper(content, meaning)) return '固有名詞';
+    if (isCrownOnlyNeedsFix(content, meaning)) return '要修正';
+    const words = String(content || '').trim().split(/\s+/).filter(Boolean);
+    return words.length >= 2 ? '熟語' : '単語';
+  }
+  // 自動分類に加え、人が直せる分類（活用形・除外）を含めた全カテゴリ
+  const CO_CATEGORIES = ['単語', '熟語', '活用形', '文', '固有名詞', '要修正'];
+  const CO_ALL_CATEGORIES = CO_CATEGORIES.concat('除外');
+
+  // 【品詞推定】日本語の意味の語尾・英語の語尾を併用する。閉じた語類（前置詞・接続詞・
+  // 代名詞・間投詞・助動詞）は語尾からは決められないので、語そのもので判定する。
+  const CO_POS_ORDER = ['動', '名', '形', '副', '前', '接', '代', '間', '助'];
+  const CO_CLOSED_POS = {
+    in:'前', on:'前', at:'前', to:'前', for:'前', with:'前', from:'前', of:'前', about:'前', into:'前', onto:'前',
+    under:'前', over:'前', between:'前', among:'前', through:'前', during:'前', before:'前', after:'前',
+    above:'前', below:'前', behind:'前', beside:'前', near:'前', by:'前', without:'前', against:'前', along:'前',
+    around:'前', across:'前', toward:'前', towards:'前', within:'前', until:'前', till:'前', up:'前', down:'前', off:'前',
+    and:'接', but:'接', or:'接', so:'接', because:'接', if:'接', when:'接', while:'接', although:'接', though:'接',
+    since:'接', unless:'接',
+    i:'代', you:'代', he:'代', she:'代', it:'代', we:'代', they:'代', me:'代', him:'代', her:'代', us:'代', them:'代',
+    my:'代', your:'代', his:'代', its:'代', our:'代', their:'代', mine:'代', yours:'代', hers:'代', ours:'代', theirs:'代',
+    this:'代', that:'代', these:'代', those:'代', who:'代', whom:'代', whose:'代', which:'代', what:'代',
+    myself:'代', yourself:'代', himself:'代', herself:'代', itself:'代', ourselves:'代', themselves:'代', yourselves:'代',
+    oh:'間', wow:'間', ouch:'間', hey:'間', ah:'間', oops:'間', hmm:'間', bravo:'間', hurray:'間', well:'間',
+    can:'助', could:'助', will:'助', would:'助', shall:'助', should:'助', may:'助', might:'助', must:'助'
+  };
+  function estimateCrownOnlyPos(word, meaning) {
+    const w = String(word || '').toLowerCase().trim();
+    if (CO_CLOSED_POS[w]) return CO_CLOSED_POS[w];
+    const cats = new Set();
+    const m = String(meaning || '').trim();
+    if (/する$/.test(m)) cats.add('動');
+    if (/(な|の)$/.test(m)) cats.add('形');
+    if (/ly$/.test(w)) cats.add('副');
+    if (/(tion|sion|ment)$/.test(w)) cats.add('名');
+    if (/(ous|ful|ive)$/.test(w)) cats.add('形');
+    if (!cats.size) cats.add('名');
+    return CO_POS_ORDER.filter(c => cats.has(c)).join('・');
+  }
+
+  // 【手動の仕分け（上書き）】キーは正規化後の文字列。Firestoreに保存し、
+  // 次回以降の自動分類より優先する。教科書データを更新して再抽出しても残る。
+  let crownOnlyOverrides = {};
+  // Firestoreのドキュメント名に使えない文字（"/"等）を避けるため、キー文字列から
+  // 決定的なハッシュ値を作ってドキュメントIDにする（元のキーはフィールドに保存）。
+  function crownOnlyDocId(key) {
+    const s = String(key || '');
+    let h1 = 0xdeadbeef ^ s.length, h2 = 0x41c6ce57 ^ s.length;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 'k' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+  async function loadCrownOnlyOverrides() {
+    if (!canCloud()) return;
+    try {
+      const snap = await db.collection(FB_CROWNONLY_COL).limit(5000).get();
+      const out = {};
+      snap.forEach(doc => {
+        const d = doc.data() || {};
+        if (d.key) out[d.key] = { category: d.category || '', pos: d.pos || '', meaning: d.meaning };
+      });
+      crownOnlyOverrides = out;
+    } catch(e) { console.warn('crownOnlyOverrides読み込み失敗:', e); }
+  }
+  function setCrownOnlyOverride(key, patch) {
+    crownOnlyOverrides[key] = { ...(crownOnlyOverrides[key] || {}), ...patch };
+    renderCompare();
+    if (!canCloud()) { showToast('オフラインのため保存できません（この端末だけの一時的な変更です）'); return; }
+    const cur = crownOnlyOverrides[key];
+    db.collection(FB_CROWNONLY_COL).doc(crownOnlyDocId(key)).set(stripUndefinedForFirestore({
+      key, category: cur.category, pos: cur.pos, meaning: cur.meaning,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }), { merge: true }).catch(e => showToast('保存に失敗しました：' + (e && e.message ? e.message : e)));
+  }
+  function handleCrownOnlyCategoryChange(sel) {
+    setCrownOnlyOverride(sel.closest('tr').dataset.key, { category: sel.value });
+  }
+  function handleCrownOnlyPosChange(inp) {
+    setCrownOnlyOverride(inp.closest('tr').dataset.key, { pos: inp.value.trim() });
+  }
+  function handleCrownOnlyMeaningChange(inp) {
+    setCrownOnlyOverride(inp.closest('tr').dataset.key, { meaning: inp.value });
+  }
+
+  // 【抽出】NC（中1〜中3）の単語・熟語のうち、正規化して比べてNH（中1〜中3）に無いものを集める。
+  // 上書き記録（crownOnlyOverrides）は、この抽出結果に対して分類・品詞・意味を上書きする形で適用する。
+  let compareCrownOnlyAll = [];
+  function computeCrownOnlyRows() {
+    const nhItems = getNHItems().filter(it => it.type === '単語' || it.type === '熟語');
+    const ncItems = getNCItems().filter(it => it.type === '単語' || it.type === '熟語');
+    const nhSet = new Set();
+    nhItems.forEach(it => { const k = coNormalize(it.content); if (k) nhSet.add(k); });
+    const map = new Map();
+    ncItems.forEach(it => {
+      const k = coNormalize(it.content);
+      if (!k || nhSet.has(k)) return;
+      const where = [it.grade || '', [it.unit, it.lesson].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+      if (!map.has(k)) {
+        map.set(k, { key: k, content: (it.content || '').trim(), translation: (it.translation || '').trim(), places: [] });
+      }
+      const row = map.get(k);
+      if (!row.translation && (it.translation || '').trim()) row.translation = (it.translation || '').trim();
+      if (where && !row.places.includes(where)) row.places.push(where);
+    });
+    const rows = [...map.values()].map(r => {
+      const autoCategory = classifyCrownOnly(r.content, r.translation);
+      const autoPos = autoCategory === '単語' ? estimateCrownOnlyPos(r.content, r.translation) : '';
+      const ov = crownOnlyOverrides[r.key] || {};
+      const category = ov.category || autoCategory;
+      const pos = category === '単語' ? ((ov.pos != null && ov.pos !== '') ? ov.pos : autoPos) : '';
+      const meaning = (ov.meaning != null) ? ov.meaning : r.translation;
+      return { ...r, autoCategory, autoPos, category, pos, meaning, overridden: !!(ov.category || ov.pos || (ov.meaning != null)) };
+    });
+    compareCrownOnlyAll = rows;
+    return rows;
+  }
+  // 表示・書き出しで共通して使う並び順・番号振り
+  function crownOnlySortAndNumber(list, category) {
+    if (category === '単語') {
+      list.sort((a, b) => {
+        const pa = CO_POS_ORDER.indexOf((a.pos || '').split('・')[0]);
+        const pb = CO_POS_ORDER.indexOf((b.pos || '').split('・')[0]);
+        const pai = pa < 0 ? 99 : pa, pbi = pb < 0 ? 99 : pb;
+        if (pai !== pbi) return pai - pbi;
+        return a.content.localeCompare(b.content);
+      });
+      let curPos = null, n = 0;
+      list.forEach(r => {
+        const p = (r.pos || '').split('・')[0] || '';
+        if (p !== curPos) { curPos = p; n = 0; }
+        n++;
+        r._no = n;
+      });
+    } else {
+      list.sort((a, b) => a.content.localeCompare(b.content));
+      list.forEach((r, i) => { r._no = i + 1; });
+    }
+    return list;
+  }
+
+  let coCategoryFilter = '単語';
+  const CO_PER_PAGE = 100;
+  let cmpPageCO = 0;
+  function setCrownOnlyCategory(c) { coCategoryFilter = c; cmpPageCO = 0; renderCompare(); }
+  function goComparePageCO(n) { cmpPageCO = n; renderCompare(); }
+
+  function renderCrownOnlyView(el) {
+    const all = computeCrownOnlyRows();
+    const searchQ = ((document.getElementById('compareSearch') || {}).value || '').toLowerCase().trim();
+    let filtered = all;
+    if (searchQ) {
+      filtered = filtered.filter(r => (r.content || '').toLowerCase().includes(searchQ) || (r.meaning || '').toLowerCase().includes(searchQ));
+    }
+    const counts = {};
+    CO_ALL_CATEGORIES.forEach(c => { counts[c] = 0; });
+    filtered.forEach(r => { counts[r.category] = (counts[r.category] || 0) + 1; });
+    if (!CO_ALL_CATEGORIES.includes(coCategoryFilter)) coCategoryFilter = '単語';
+    const activeCat = coCategoryFilter;
+    const shown = crownOnlySortAndNumber(filtered.filter(r => r.category === activeCat), activeCat);
+
+    const pillsHtml = CO_ALL_CATEGORIES.map(c => `
+      <div class="pill ${c === activeCat ? 'active' : ''}" onclick="setCrownOnlyCategory('${c}')">${esc(c)}（${counts[c] || 0}）</div>`).join('');
+
+    const pgc = pageSlice(shown, cmpPageCO, CO_PER_PAGE);
+    cmpPageCO = pgc.page;
+    const totalCount = filtered.length - (counts['除外'] || 0);
+
+    const rowsHtml = pgc.rows.map(r => `
+      <tr data-key="${esc(r.key)}">
+        <td style="text-align:right;color:var(--muted);font-size:12px">${r._no}</td>
+        <td style="font-weight:600">${esc(r.content)}</td>
+        ${activeCat === '単語'
+          ? `<td><input class="form-in" style="width:76px;font-size:12px;padding:3px 6px" value="${esc(r.pos)}" onchange="handleCrownOnlyPosChange(this)"></td>`
+          : ''}
+        <td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.meaning)}" onchange="handleCrownOnlyMeaningChange(this)"></td>
+        <td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.places.join(' / '))}</td>
+        <td>
+          <select class="book-select" style="font-size:11px;padding:3px 6px" onchange="handleCrownOnlyCategoryChange(this)">
+            ${CO_ALL_CATEGORIES.map(c => `<option value="${c}" ${c === r.category ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </td>
+      </tr>`).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title" style="color:#7c3aed">NEW CROWNのみ（${totalCount}件／除外${counts['除外'] || 0}件）</div>
+        <p style="font-size:11px;color:var(--muted);margin:2px 0 10px;line-height:1.7">
+          NEW HORIZONに載っていないNEW CROWNの語・熟語を自動で抽出し、種類ごとに分けています。
+          分類・品詞・意味はこの場で直せます。直した内容はクラウドに保存され、次回の抽出でも優先されます。
+        </p>
+        <div class="pills">${pillsHtml}</div>
+        <div style="display:flex;gap:8px;margin:6px 0 12px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" style="font-size:12px" onclick="exportCrownOnlyExcel()">📊 Excel書き出し（カテゴリ別シート）</button>
+          <button class="btn btn-secondary btn-sm" style="font-size:12px" onclick="openCrownOnlyPrintView()">🖨 印刷用ビュー（B4横・2段組／${esc(activeCat)}）</button>
+        </div>
+        ${shown.length ? `
+          ${pagerHtml(pgc, shown.length, 'goComparePageCO', CO_PER_PAGE)}
+          <div class="tbl-wrap"><table>
+            <thead><tr>
+              <th style="width:44px">番号</th><th>語</th>${activeCat === '単語' ? '<th style="width:90px">品詞</th>' : ''}
+              <th>意味</th><th>掲載箇所</th><th style="width:110px">分類</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table></div>
+          ${pagerHtml(pgc, shown.length, 'goComparePageCO', CO_PER_PAGE)}
+        ` : `<p style="font-size:13px;color:var(--muted);padding:8px">該当なし</p>`}
+      </div>`;
+  }
+
+  // ── 書き出し（Excel：カテゴリごとにシートを分ける） ──────────────────
+  function exportCrownOnlyExcel() {
+    if (typeof XLSX === 'undefined') { showToast('Excel書き出し機能の読み込みに失敗しました。時間をおいて再度お試しください'); return; }
+    const all = computeCrownOnlyRows();
+    const wb = XLSX.utils.book_new();
+    CO_CATEGORIES.forEach(cat => {
+      const list = crownOnlySortAndNumber(all.filter(r => r.category === cat), cat);
+      const aoa = [cat === '単語' ? ['番号', '語', '品詞', '意味', '掲載箇所'] : ['番号', '語', '意味', '掲載箇所']];
+      list.forEach(r => {
+        aoa.push(cat === '単語'
+          ? [r._no, r.content, r.pos, r.meaning, r.places.join(' / ')]
+          : [r._no, r.content, r.meaning, r.places.join(' / ')]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(wb, ws, cat);
+    });
+    XLSX.writeFile(wb, `NEW_CROWNのみ_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  // ── 印刷用ビュー（B4横・1ページ2段組、左右41行ずつ） ──────────────────
+  function openCrownOnlyPrintView() {
+    const all = computeCrownOnlyRows();
+    const cat = CO_ALL_CATEGORIES.includes(coCategoryFilter) ? coCategoryFilter : '単語';
+    const list = crownOnlySortAndNumber(all.filter(r => r.category === cat), cat);
+    if (!list.length) { showToast('印刷できる項目がありません'); return; }
+    const PER_COL = 41, PER_PAGE = PER_COL * 2;
+    const pages = [];
+    for (let i = 0; i < list.length; i += PER_PAGE) pages.push(list.slice(i, i + PER_PAGE));
+    const colTable = rows => `<table class="pcol"><thead><tr>
+        <th>番号</th><th>語</th>${cat === '単語' ? '<th>品詞</th>' : ''}<th>意味</th>
+      </tr></thead><tbody>${rows.map(r => `<tr>
+        <td>${r._no}</td><td>${esc(r.content)}</td>${cat === '単語' ? `<td>${esc(r.pos)}</td>` : ''}<td>${esc(r.meaning)}</td>
+      </tr>`).join('')}</tbody></table>`;
+    const pagesHtml = pages.map(p => `<section class="ppage"><div class="pcols">
+        ${colTable(p.slice(0, PER_COL))}${colTable(p.slice(PER_COL, PER_PAGE))}
+      </div></section>`).join('');
+    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+      <title>NEW CROWNのみ（${esc(cat)}）印刷用</title>
+      <style>
+        @page { size: B4 landscape; margin: 10mm; }
+        * { box-sizing:border-box; }
+        body { font-family:'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif; margin:0; color:#0f172a; }
+        h1 { font-size:12pt; margin:0 0 6px; }
+        .ppage { page-break-after: always; }
+        .ppage:last-child { page-break-after: auto; }
+        .pcols { display:flex; gap:8mm; }
+        table.pcol { flex:1; width:50%; border-collapse:collapse; font-size:9pt; table-layout:fixed; }
+        table.pcol th, table.pcol td { border:0.5pt solid #999; padding:2px 5px; text-align:left; overflow:hidden; }
+        table.pcol th:first-child, table.pcol td:first-child { width:22px; text-align:right; }
+        table.pcol th { background:#f1f5f9; }
+      </style></head>
+      <body>
+        <div style="padding:4mm 6mm 0"><h1>NEW CROWNのみ － ${esc(cat)}（${list.length}件）</h1></div>
+        ${pagesHtml}
+        <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 300); };<\/script>
+      </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { showToast('ポップアップがブロックされました。ブラウザの設定を確認してください'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
   }
 
   // ── 学年正規化 ────────────────────────────────────────────────────
