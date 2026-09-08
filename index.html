@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.31</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.32</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -11313,8 +11313,8 @@ function findTestByDateEx(hist, school, grade, date) {
     // width:100%いっぱいに広がるようにする。品詞列の有無で列数が変わるため、
     // 分の配分もそれぞれ用意する。
     const colsHtml = activeCat === '単語'
-      ? `<colgroup><col style="width:6%"><col style="width:14%"><col style="width:8%"><col style="width:40%"><col style="width:16%"><col style="width:16%"></colgroup>`
-      : `<colgroup><col style="width:6%"><col style="width:18%"><col style="width:44%"><col style="width:16%"><col style="width:16%"></colgroup>`;
+      ? `<colgroup><col style="width:6%"><col style="width:14%"><col style="width:8%"><col style="width:56%"><col style="width:16%"></colgroup>`
+      : `<colgroup><col style="width:6%"><col style="width:18%"><col style="width:60%"><col style="width:16%"></colgroup>`;
 
     const rowsHtml = pgc.rows.map(r => `
       <tr data-key="${esc(r.key)}">
@@ -11324,7 +11324,6 @@ function findTestByDateEx(hist, school, grade, date) {
           ? `<td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.pos)}" onchange="handleCrownOnlyPosChange(this)"></td>`
           : ''}
         <td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.meaning)}" onchange="handleCrownOnlyMeaningChange(this)"></td>
-        <td style="font-size:11px;color:var(--muted);overflow-wrap:break-word">${esc(r.places.join(' / '))}</td>
         <td>
           <select class="book-select" style="width:100%;font-size:11px;padding:3px 6px" onchange="handleCrownOnlyCategoryChange(this)">
             ${CO_ALL_CATEGORIES.map(c => `<option value="${c}" ${c === r.category ? 'selected' : ''}>${c}</option>`).join('')}
@@ -11352,7 +11351,7 @@ function findTestByDateEx(hist, school, grade, date) {
             ${colsHtml}
             <thead><tr>
               <th>番号</th><th>語</th>${activeCat === '単語' ? '<th>品詞</th>' : ''}
-              <th>意味</th><th>掲載箇所</th><th>分類</th>
+              <th>意味</th><th>分類</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table></div>
@@ -11368,11 +11367,11 @@ function findTestByDateEx(hist, school, grade, date) {
     const wb = XLSX.utils.book_new();
     CO_ALL_CATEGORIES.forEach(cat => {
       const list = crownOnlySortAndNumber(all.filter(r => r.category === cat), cat);
-      const aoa = [cat === '単語' ? ['番号', '語', '品詞', '意味', '掲載箇所'] : ['番号', '語', '意味', '掲載箇所']];
+      const aoa = [cat === '単語' ? ['番号', '語', '品詞', '意味'] : ['番号', '語', '意味']];
       list.forEach(r => {
         aoa.push(cat === '単語'
-          ? [r._no, r.content, r.pos, r.meaning, r.places.join(' / ')]
-          : [r._no, r.content, r.meaning, r.places.join(' / ')]);
+          ? [r._no, r.content, r.pos, r.meaning]
+          : [r._no, r.content, r.meaning]);
       });
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       XLSX.utils.book_append_sheet(wb, ws, cat);
