@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.33</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.34</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -358,11 +358,6 @@
         <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('tbFile').click()">📂 PDFファイルを選択する</button>
         <button type="button" class="btn btn-ghost btn-sm" onclick="clearTextbookPDF()" title="選択中のPDFを解除します">✕ 選択を解除</button>
       </div>
-      <div style="text-align:center;margin-top:6px">
-        <label style="font-size:11px;color:var(--muted)">上のボタンで開かない場合：
-          <input type="file" id="tbFile2" accept=".pdf" onchange="if(this.files[0])onPDFLoaded(this.files[0])" style="font-size:11px">
-        </label>
-      </div>
       <div id="pdfStatus" style="font-size:13px;color:var(--muted);margin-top:8px"></div>
     </div>
 
@@ -442,15 +437,22 @@
       <div class="card-title">
         <span>📋 Unit別データ編集</span>
         <span style="display:flex;gap:8px">
-          <button class="btn btn-secondary btn-sm" onclick="fixAppendixSectionNames()" title="巻末（資料編）のセクション名が「Lesson 1」などと誤記録されているものを、正しい名前に自動で直します">🏷 巻末の名前を自動で直す</button>
           <button class="btn btn-secondary btn-sm" onclick="exportBackupCSV()" title="重複削除などの操作を行う前に、今のデータをファイルに残しておけます（Unitの絞り込みに関係なく全件）">💾 バックアップCSV</button>
           <button class="btn btn-secondary btn-sm" onclick="exportAllBooksCSV()" title="登録されている全教科書（NEW HORIZON中1〜3、NEW CROWN中1〜3）のデータを1つのCSVにまとめて書き出します">📚 全教科書CSV</button>
           <button class="btn btn-secondary btn-sm" onclick="deduplicateData()" title="同じ内容の項目をまとめます（早いページの方を残します）">🔁 重複削除</button>
-          <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
-          <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
           <button class="btn btn-green btn-sm" onclick="openEdit(-1)">＋ 項目を追加</button>
         </span>
       </div>
+      <details style="margin-bottom:12px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);list-style:revert">
+          ▼ 改訂時・メンテナンス用の操作
+        </summary>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-secondary btn-sm" onclick="fixAppendixSectionNames()" title="巻末（資料編）のセクション名が「Lesson 1」などと誤記録されているものを、正しい名前に自動で直します">🏷 巻末の名前を自動で直す</button>
+          <button class="btn btn-secondary btn-sm" onclick="runAnomalyScan()" title="他学年・他教科書のデータが混ざっていないかを検査します">🧹 異物チェック</button>
+          <button class="btn btn-secondary btn-sm" onclick="runUnitFix()" title="目次のページ→Unit対応表で、Unit表記の誤りを一括補正します">📐 Unit表記を一括補正</button>
+        </div>
+      </details>
       <div class="unit-pills" id="unitPills"></div>
       <div id="unitTable"></div>
     </div>
@@ -9401,7 +9403,6 @@ function findTestByDateEx(hist, school, grade, date) {
   function clearTextbookPDF() {
     currentPDF = null;
     const f1 = document.getElementById('tbFile');  if (f1) f1.value = '';
-    const f2 = document.getElementById('tbFile2'); if (f2) f2.value = '';
     document.getElementById('tbTitle').textContent = 'PDFをアップロード';
     document.getElementById('tbSub').textContent   = 'ドラッグ＆ドロップ または ↓ボタンから選択';
     document.getElementById('setupCard').style.display = 'none';
