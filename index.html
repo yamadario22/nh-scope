@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.29</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.30</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -11340,9 +11340,11 @@ function findTestByDateEx(hist, school, grade, date) {
           分類・品詞・意味はこの場で直せます。直した内容はクラウドに保存され、次回の抽出でも優先されます。
         </p>
         <div class="pills">${pillsHtml}</div>
-        <div style="display:flex;gap:8px;margin:6px 0 12px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;margin:6px 0 12px;flex-wrap:wrap;align-items:center">
           <button class="btn btn-secondary btn-sm" style="font-size:12px" onclick="exportCrownOnlyExcel()">📊 Excel書き出し（カテゴリ別シート）</button>
           <button class="btn btn-secondary btn-sm" style="font-size:12px" onclick="openCrownOnlyPrintView()">🖨 印刷用ビュー（B4横・2段組／${esc(activeCat)}）</button>
+          <input type="file" id="coImportFile" accept=".csv" style="display:none" onchange="if(this.files[0])importCrownOnlyOverridesCSV(this.files[0])">
+          <button class="btn btn-secondary btn-sm" style="font-size:12px" onclick="document.getElementById('coImportFile').click()">📥 振り分けを取り込み</button>
         </div>
         ${shown.length ? `
           ${pagerHtml(pgc, shown.length, 'goComparePageCO', CO_PER_PAGE)}
@@ -11376,6 +11378,107 @@ function findTestByDateEx(hist, school, grade, date) {
       XLSX.utils.book_append_sheet(wb, ws, cat);
     });
     XLSX.writeFile(wb, `NEW_CROWNのみ_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  // ── 取込（上書き記録をCSVからまとめて登録） ─────────────────────────
+  // 画面で1件ずつ分類を直すのは非現実的な件数になるため、外部で作った
+  // CSV（キー,語,分類,品詞,意味）を読み、crownOnlyOverridesにまとめて書き込む。
+  // キーはコード側で再正規化せず、CSVのキー列をそのまま上書き記録のキーとして使う
+  // （coNormalizeは抽出結果とnhscope_crownonly_overridesを引き当てるための一致判定に
+  // 使われるので、ここで別の正規化をかけるとキーがずれて上書きが効かなくなる）。
+  function parseCrownOnlyImportCSV(text) {
+    const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
+    if (rows.length < 2) return { error: 'データ行がありません。' };
+    const header = rows[0].map(h => h.trim());
+    const col = name => header.indexOf(name);
+    const ci = { key: col('キー'), content: col('語'), category: col('分類'), pos: col('品詞'), meaning: col('意味') };
+    if (ci.key < 0 || ci.category < 0) {
+      return { error: 'CSVの形式が違います（「キー」「分類」列が見つかりません）。列は「キー,語,分類,品詞,意味」にしてください。' };
+    }
+    const validCats = new Set(CO_ALL_CATEGORIES);
+    const entries = [];
+    let skipped = 0;
+    rows.slice(1).forEach(r => {
+      const key = (r[ci.key] || '').trim();
+      if (!key) return;
+      const category = (r[ci.category] || '').trim();
+      if (!validCats.has(category)) { skipped++; return; }
+      entries.push({
+        key,
+        category,
+        pos: ci.pos >= 0 ? (r[ci.pos] || '').trim() : '',
+        meaning: ci.meaning >= 0 ? (r[ci.meaning] || '').trim() : ''
+      });
+    });
+    return { entries, skipped };
+  }
+
+  // 進捗表示は、書き込み中にrenderCompare()でカード全体が描き直されても消えないよう、
+  // トーストと同じくbody直下に固定表示するバーとして作る。
+  function coImportProgressBar() {
+    let bar = document.getElementById('coImportProgress');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'coImportProgress';
+      bar.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.2);background:#1e293b;color:#fff;display:none';
+      document.body.appendChild(bar);
+    }
+    return bar;
+  }
+
+  async function importCrownOnlyOverridesCSV(file) {
+    document.getElementById('coImportFile').value = '';
+    if (!canCloud()) { alert('クラウドに接続されていないため取り込めません。ログイン状態を確認してください。'); return; }
+    let text;
+    try { text = await file.text(); } catch { alert('ファイルを読み込めませんでした。'); return; }
+    const parsed = parseCrownOnlyImportCSV(text);
+    if (parsed.error) { alert(parsed.error); return; }
+    const { entries, skipped } = parsed;
+    if (!entries.length) {
+      alert(`取り込める行がありませんでした${skipped ? `（分類が不正な${skipped}件をスキップ）` : ''}。`);
+      return;
+    }
+    const existingCount = entries.filter(e => crownOnlyOverrides[e.key]).length;
+    const skippedNote = skipped ? `\n（分類が不正な${skipped}件はスキップします）` : '';
+    const ok = await showConfirm(
+      `${entries.length}件を登録します。既存の上書き${existingCount}件は置き換わります。${skippedNote}`,
+      '登録する');
+    if (!ok) return;
+    await runCrownOnlyOverridesImport(entries, skipped);
+  }
+
+  // Firestoreの1バッチは最大500件までのため、それより余裕をもたせたサイズで分割し、
+  // 1,641件のような量でも1回で止まらずに最後まで進む。
+  const CO_IMPORT_CHUNK = 400;
+  async function runCrownOnlyOverridesImport(entries, skippedCount) {
+    const bar = coImportProgressBar();
+    const total = entries.length;
+    let done = 0, failed = 0;
+    const draw = () => { bar.style.display = 'block'; bar.textContent = `振り分けを取り込み中… ${done}/${total}件`; };
+    draw();
+    for (let i = 0; i < entries.length; i += CO_IMPORT_CHUNK) {
+      const chunk = entries.slice(i, i + CO_IMPORT_CHUNK);
+      const batch = db.batch();
+      chunk.forEach(e => {
+        const ref = db.collection(FB_CROWNONLY_COL).doc(crownOnlyDocId(e.key));
+        batch.set(ref, stripUndefinedForFirestore({
+          key: e.key, category: e.category, pos: e.pos, meaning: e.meaning,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }), { merge: true });
+      });
+      try {
+        await batch.commit();
+        chunk.forEach(e => { crownOnlyOverrides[e.key] = { category: e.category, pos: e.pos, meaning: e.meaning }; });
+        done += chunk.length;
+      } catch (e) {
+        console.warn('crownOnlyOverrides一括取込エラー:', e);
+        failed += chunk.length;
+      }
+      draw();
+    }
+    bar.style.display = 'none';
+    renderCompare();
+    alert(`取り込みが完了しました。成功 ${done}件／失敗 ${failed}件${skippedCount ? `／分類が不正でスキップ ${skippedCount}件` : ''}`);
   }
 
   // ── 印刷用ビュー（B4横・1ページ2段組、左右41行ずつ） ──────────────────
