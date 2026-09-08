@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.32</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.33</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -406,7 +406,7 @@
     <!-- 毎回は使わない操作をたたんでおく。開けば中身はそのまま。 -->
     <details id="setupMore" style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);list-style:revert">
-      その他の操作（画像から解析・リスト表示のリセット）
+      その他の操作（画像から解析）
     </summary>
     <div style="margin-top:12px">
     <div class="card">
@@ -427,28 +427,6 @@
       </div>
     </div>
 
-    <!-- 【隠してある】教科書データはFirestoreで共有され、開けば自動で読み込まれるので出番がない。
-         画面に出しておくと「押すべきか」と迷わせるうえ、押し間違えると教科書データを上書きしてしまう。
-         機能そのものは残してあるので、必要になったら display:none を外せば戻せる。 -->
-    <div style="display:none">
-      <div class="divider"><span>または — 保存済みJSONを読み込む</span></div>
-      <div class="card">
-        <div class="card-title">💾 JSONを読み込む</div>
-        <div class="row">
-          <button class="btn btn-secondary" onclick="document.getElementById('jsonFile').click()">📂 ファイルを選択</button>
-          <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
-          <span id="jsonSt" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="border-color:#FDE68A;background:#FFFBEB">
-      <div class="card-title" style="margin-bottom:8px">↺ 教科書リストを初期化</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        教科書のデータは残したまま、リスト表示が壊れた場合にリセットできます。<br>
-        単語・熟語・文法のデータは消えません。</p>
-      <button class="btn btn-secondary btn-sm" onclick="resetBookList()">↺ リスト表示をリセット</button>
-    </div>
     </div>
     </details>
   </div>
@@ -624,18 +602,13 @@
   <div id="tab-compare" class="tab-content">
     <div class="card">
       <div class="card-title">📊 NEW HORIZON × NEW CROWN 比較</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">両教科書の解析データを読み込んでから使用してください。</p>
+      <p id="compareLoadNotice" style="font-size:12px;color:var(--muted);margin-bottom:10px">両教科書の解析データを読み込んでから使用してください。</p>
       <div class="pills" id="comparePills">
         <div class="pill active" onclick="setCompareMode('vocab',this)">① 単語</div>
         <div class="pill" onclick="setCompareMode('phrases',this)">② 熟語</div>
         <div class="pill" onclick="setCompareMode('all',this)">③ 単語＋熟語</div>
         <div class="pill" onclick="setCompareMode('grammar',this)">④ 文法履修表</div>
         <div class="pill" onclick="setCompareMode('crownOnly',this)">⑤ NEW CROWNのみ</div>
-      </div>
-      <div class="pills" id="compareClassPills" style="margin-top:6px">
-        <div class="pill active" onclick="setCompareClassMode('normal',this)">通常の語</div>
-        <div class="pill" onclick="setCompareClassMode('proper',this)">固有名詞（人名・地名など）</div>
-        <div class="pill" onclick="setCompareClassMode('sentence',this)">文・フレーズ</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <div class="s-wrap" style="flex:1;min-width:180px;margin-bottom:0">
@@ -1044,24 +1017,6 @@
       <button class="btn btn-danger btn-sm"    id="delBtn" onclick="deleteItem()">削除</button>
       <button class="btn btn-ghost btn-sm"              onclick="closeEdit()">キャンセル</button>
       <button class="btn btn-primary btn-sm"            onclick="saveEdit()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- JSON MODAL -->
-<div class="json-ov" id="jsonOv" style="display:none" onclick="if(event.target===this)closeJSON()">
-  <div class="json-panel">
-    <div class="json-head">
-      <div class="modal-title">📋 JSONデータ — コピーして .json ファイルとして保存</div>
-      <button class="modal-close" onclick="closeJSON()">✕</button>
-    </div>
-    <div class="json-body">
-      <p style="font-size:12px;color:var(--muted)">全選択→コピー、またはボタンでクリップボードにコピーできます。</p>
-      <textarea class="json-area" id="jsonArea" readonly onclick="this.select()"></textarea>
-    </div>
-    <div class="json-foot">
-      <button class="btn btn-secondary btn-sm" onclick="closeJSON()">閉じる</button>
-      <button class="btn btn-amber" id="cpBtn" onclick="copyJSON()">📋 コピー</button>
     </div>
   </div>
 </div>
@@ -2008,8 +1963,6 @@
   // どこからも呼ばれていない関数だったが、中身は「6冊すべてを手元で空にし、
   // 選択中の1冊だけを空の状態でクラウドに保存する」という危険なものだった。
   // 実行されれば、その1冊が全校舎から消えて戻せない。誤って配線されないよう消した。
-  // 画面のボタン（↺ リスト表示をリセット）が呼んでいるのは resetBookList() で、
-  // こちらは表示を描き直すだけの安全な処理。
 
   async function deleteBook() {
     if (library.length <= 1) { alert('最後の1冊は削除できません。'); return; }
@@ -3511,32 +3464,6 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
       </div>`;
   }
 
-  // ── データ入りHTML書き出し ──────────────────────────────────────
-  
-  
-  function closeJSON() { document.getElementById('jsonOv').style.display='none'; }
-  async function copyJSON() {
-    const txt = document.getElementById('jsonArea').value;
-    try { await navigator.clipboard.writeText(txt); }
-    catch { document.getElementById('jsonArea').select(); document.execCommand('copy'); }
-    document.getElementById('cpBtn').textContent = '✅ コピー済！';
-    setTimeout(()=>document.getElementById('cpBtn').textContent='📋 コピー', 2200);
-  }
-
-  function loadJSON(e) {
-    const file=e.target.files[0]; if (!file) return;
-    const r=new FileReader();
-    r.onload=ev=>{
-      try {
-        const d=JSON.parse(ev.target.result);
-        setItems(d.items||[]);
-        document.getElementById('jsonSt').textContent=`✅ ${getItems().length}件読込済`;
-        updateBadge(); renderPreview(); renderUnitView(); saveBackup();
-      } catch { document.getElementById('jsonSt').textContent='❌ 読込失敗'; }
-    };
-    r.readAsText(file);
-  }
-
   // ── DATA EDIT ──────────────────────────────────────────────────────
   function renderUnitView() {
     const items=getItems(), nd=!items.length;
@@ -4620,23 +4547,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 今月の利用状況を出す。上限の8割で色を変え、超えたら赤くする。
-  // 教科書リストの表示だけを作り直す。中のデータ（単語・熟語・文法）は触らない。
-  async function resetBookList() {
-    const ok = await showConfirm(
-      '教科書リストの表示を作り直します。\n\n'
-      + '・単語・熟語・文法のデータは消えません\n'
-      + '・リストが正しく出ないときの直し道具です', '作り直す');
-    if (!ok) return;
-    try {
-      renderBookSel();
-      renderPreview();
-      updateBadge();
-      alert('教科書リストを作り直しました。');
-    } catch (e) {
-      alert('作り直しに失敗しました：' + (e.message || e));
-    }
-  }
-
   function renderUsageBar() {
     const el = document.getElementById('usageBar');
     if (!el) return;
@@ -10429,7 +10339,6 @@ function findTestByDateEx(hist, school, grade, date) {
     if (isProperNounLikeCompare(content, translation)) return 'proper';
     return 'normal';
   }
-  const CMP_CLASS_LABEL = { normal: '通常の語', proper: '固有名詞（人名・地名など）', sentence: '文・フレーズ' };
 
   // ── 人が仕分けた「採用／保留／除外」の印（この端末だけに保存。設定とは別置き） ──
   const CMP_JUDGE_KEY = 'nhscope_compare_judgments';
@@ -10461,13 +10370,6 @@ function findTestByDateEx(hist, school, grade, date) {
     compareMode = mode;
     cmpPageNH = 0; cmpPageNC = 0; cmpPageCO = 0;
     document.querySelectorAll('#comparePills .pill').forEach(p => p.classList.remove('active'));
-    if (el) el.classList.add('active');
-    renderCompare();
-  }
-  function setCompareClassMode(mode, el) {
-    compareClassMode = mode;
-    cmpPageNH = 0; cmpPageNC = 0;
-    document.querySelectorAll('#compareClassPills .pill').forEach(p => p.classList.remove('active'));
     if (el) el.classList.add('active');
     renderCompare();
   }
@@ -10682,25 +10584,23 @@ function findTestByDateEx(hist, school, grade, date) {
     if (!el) return;
     const nhItems = getNHItems();
     const ncItems = getNCItems();
+    const noticeEl = document.getElementById('compareLoadNotice');
+    if (noticeEl) noticeEl.style.display = (nhItems.length && ncItems.length) ? 'none' : '';
     if (!nhItems.length && !ncItems.length) {
       compareLastRows = { nh: [], nc: [] };
       el.innerHTML = `<div class="empty"><div class="empty-ico">📚</div><div class="empty-txt">NEW HORIZON・NEW CROWN両方の教科書データを解析してください。</div></div>`;
       return;
     }
-    const classPillsEl = document.getElementById('compareClassPills');
     if (compareMode === 'grammar') {
-      if (classPillsEl) classPillsEl.style.display = 'none';
       compareLastRows = { nh: [], nc: [] };
       renderGrammarTable(el, nhItems, ncItems);
       return;
     }
     if (compareMode === 'crownOnly') {
-      if (classPillsEl) classPillsEl.style.display = 'none';
       compareLastRows = { nh: [], nc: [] };
       renderCrownOnlyView(el);
       return;
     }
-    if (classPillsEl) classPillsEl.style.display = '';
     const types = (compareMode === 'phrases') ? ['熟語']
                 : (compareMode === 'all')     ? ['単語', '熟語']
                 :                               ['単語'];
@@ -10789,16 +10689,6 @@ function findTestByDateEx(hist, school, grade, date) {
       ncOnly = ncOnly.filter(hit);
     }
     // 【分類（通常の語／固有名詞／文・フレーズ）で絞り込む】削除ではなく表示の絞り込み。
-    // ピルに件数を出すため、絞り込む前に3分類それぞれの件数を数えておく。
-    const classCounts = { normal: 0, proper: 0, sentence: 0 };
-    [...nhOnly, ...ncOnly].forEach(r => { classCounts[classifyCompareRow(r.content, r.translation)]++; });
-    try {
-      const map = { normal: '通常の語', proper: '固有名詞（人名・地名など）', sentence: '文・フレーズ' };
-      document.querySelectorAll('#compareClassPills .pill').forEach(p => {
-        const mode = Object.keys(map).find(k => p.textContent.trim().startsWith(map[k]));
-        if (mode) p.textContent = `${map[mode]}（${classCounts[mode]}）`;
-      });
-    } catch(e) {}
     nhOnly = nhOnly.filter(r => classifyCompareRow(r.content, r.translation) === compareClassMode);
     ncOnly = ncOnly.filter(r => classifyCompareRow(r.content, r.translation) === compareClassMode);
     // 審査進捗（分類・検索後、印での絞り込み前の件数を母数にする）
