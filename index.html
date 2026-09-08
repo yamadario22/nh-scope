@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.27</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.28</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -11120,10 +11120,17 @@ function findTestByDateEx(hist, school, grade, date) {
     if (m && !JP_CHAR_RE.test(m)) return true;
     return false;
   }
+  // 意味に「過去形／過去分詞／現在分詞／複数形」を含む語は、語形変化した形とみなして
+  // 活用形に振り分ける（drank＝drinkの過去形、broken＝breakの過去分詞、women＝womanの複数形 等）。
+  const CO_INFLECTION_MEANING_RE = /過去形|過去分詞|現在分詞|複数形/;
+  function isCrownOnlyInflection(meaning) {
+    return CO_INFLECTION_MEANING_RE.test(String(meaning || ''));
+  }
   function classifyCrownOnly(content, meaning) {
     if (isCrownOnlySentence(content)) return '文';
     if (isCrownOnlyProper(content, meaning)) return '固有名詞';
     if (isCrownOnlyNeedsFix(content, meaning)) return '要修正';
+    if (isCrownOnlyInflection(meaning)) return '活用形';
     const words = String(content || '').trim().split(/\s+/).filter(Boolean);
     return words.length >= 2 ? '熟語' : '単語';
   }
@@ -11294,17 +11301,28 @@ function findTestByDateEx(hist, school, grade, date) {
     cmpPageCO = pgc.page;
     const totalCount = filtered.length - (counts['除外'] || 0);
 
+    // 【列幅】<table>を auto レイアウトのままにすると、意味の<input width:100%>が
+    // セル自身の幅を決める側に回ってしまい、逆に1文字も入らないくらい潰れる
+    // （auto レイアウトでは「中身の幅」が先にセル幅を決め、%指定の子要素はその後で
+    // 決まった幅に対して解決されるため、循環して縮む）。
+    // table-layout:fixed と <colgroup> で列幅を先に固定し、その中で意味欄が
+    // width:100%いっぱいに広がるようにする。品詞列の有無で列数が変わるため、
+    // 分の配分もそれぞれ用意する。
+    const colsHtml = activeCat === '単語'
+      ? `<colgroup><col style="width:6%"><col style="width:14%"><col style="width:8%"><col style="width:40%"><col style="width:16%"><col style="width:16%"></colgroup>`
+      : `<colgroup><col style="width:6%"><col style="width:18%"><col style="width:44%"><col style="width:16%"><col style="width:16%"></colgroup>`;
+
     const rowsHtml = pgc.rows.map(r => `
       <tr data-key="${esc(r.key)}">
         <td style="text-align:right;color:var(--muted);font-size:12px">${r._no}</td>
-        <td style="font-weight:600">${esc(r.content)}</td>
+        <td style="font-weight:600;overflow-wrap:break-word">${esc(r.content)}</td>
         ${activeCat === '単語'
-          ? `<td><input class="form-in" style="width:76px;font-size:12px;padding:3px 6px" value="${esc(r.pos)}" onchange="handleCrownOnlyPosChange(this)"></td>`
+          ? `<td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.pos)}" onchange="handleCrownOnlyPosChange(this)"></td>`
           : ''}
         <td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.meaning)}" onchange="handleCrownOnlyMeaningChange(this)"></td>
-        <td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.places.join(' / '))}</td>
+        <td style="font-size:11px;color:var(--muted);overflow-wrap:break-word">${esc(r.places.join(' / '))}</td>
         <td>
-          <select class="book-select" style="font-size:11px;padding:3px 6px" onchange="handleCrownOnlyCategoryChange(this)">
+          <select class="book-select" style="width:100%;font-size:11px;padding:3px 6px" onchange="handleCrownOnlyCategoryChange(this)">
             ${CO_ALL_CATEGORIES.map(c => `<option value="${c}" ${c === r.category ? 'selected' : ''}>${c}</option>`).join('')}
           </select>
         </td>
@@ -11324,10 +11342,11 @@ function findTestByDateEx(hist, school, grade, date) {
         </div>
         ${shown.length ? `
           ${pagerHtml(pgc, shown.length, 'goComparePageCO', CO_PER_PAGE)}
-          <div class="tbl-wrap"><table>
+          <div class="tbl-wrap"><table style="table-layout:fixed;width:100%">
+            ${colsHtml}
             <thead><tr>
-              <th style="width:44px">番号</th><th>語</th>${activeCat === '単語' ? '<th style="width:90px">品詞</th>' : ''}
-              <th>意味</th><th>掲載箇所</th><th style="width:110px">分類</th>
+              <th>番号</th><th>語</th>${activeCat === '単語' ? '<th>品詞</th>' : ''}
+              <th>意味</th><th>掲載箇所</th><th>分類</th>
             </tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table></div>
