@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.30</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.31</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -11366,7 +11366,7 @@ function findTestByDateEx(hist, school, grade, date) {
     if (typeof XLSX === 'undefined') { showToast('Excel書き出し機能の読み込みに失敗しました。時間をおいて再度お試しください'); return; }
     const all = computeCrownOnlyRows();
     const wb = XLSX.utils.book_new();
-    CO_CATEGORIES.forEach(cat => {
+    CO_ALL_CATEGORIES.forEach(cat => {
       const list = crownOnlySortAndNumber(all.filter(r => r.category === cat), cat);
       const aoa = [cat === '単語' ? ['番号', '語', '品詞', '意味', '掲載箇所'] : ['番号', '語', '意味', '掲載箇所']];
       list.forEach(r => {
