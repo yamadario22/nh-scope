@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.35</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.36</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -8018,10 +8018,6 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     lastSyllabusResults = results;
     try { updateSyllabusRetryBar(); } catch(e) {}
     const el = document.getElementById('syllabusResult');
-    // 【描き直しても画面が飛ばないようにする】
-    // 491行を毎回まるごと描き直すため、ボタンを押すたびに見ていた位置を見失っていた。
-    // 「押しても何も起きない」ように見え、実際にはずっと下で開いていた。
-    const _keepY = window.scrollY;
     let hist = [];
     try { hist = histAll(); } catch {}
 
@@ -8486,7 +8482,66 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     });
 
-  
+    // 【検索欄は一度だけ描く】
+    // 表を絞り込むたびにここから描き直すと、学校名の入力欄が作り直されて
+    // カーソルが外れ、日本語の変換ができなくなる（テスト履歴の検索欄と同じ問題）。
+    // そのため、検索欄はここで一度だけ作り、以後の絞り込みは
+    // renderSyllabusTable() が表の部分だけを描き直す形にする。
+    const sylGradeOptions = ['中１','中２','中３'];
+    const sylTermList = [...new Set(Object.keys(syllabusRows).map(i => {
+      const row = syllabusRows[i];
+      if (!row || !row.date) return '';
+      return testTermOf({ testDate: row.date, school: row.school });
+    }).filter(Boolean))].sort((a,b) => {
+      const ia = TERM_ORDER.indexOf(a), ib = TERM_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    const sylSelStyle = 'padding:6px 8px;font-size:13px;border:0.5px solid var(--color-border-secondary,#cbd5e1);border-radius:6px';
+    const sylSearchBox = `
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin:6px 0">
+        <select id="sylGradeSel" style="${sylSelStyle}" onchange="setSylFilter('grade', this.value)">
+          <option value="">学年（すべて）</option>
+          ${sylGradeOptions.map(g=>`<option value="${g}" ${syllabusFilter.grade===g?'selected':''}>${g}</option>`).join('')}
+        </select>
+        <select id="sylTermSel" style="${sylSelStyle}" onchange="setSylFilter('term', this.value)">
+          <option value="">テストの時期（すべて）</option>
+          ${sylTermList.map(t=>`<option value="${esc(t)}" ${syllabusFilter.term===t?'selected':''}>${esc(t)}</option>`).join('')}
+        </select>
+        <div style="position:relative;min-width:180px">
+          <input id="sylSchoolInput" type="text" value="${esc(syllabusFilter.school)}" placeholder="中学校名（例：安）"
+                 oninput="updateSylSchoolSuggest(this.value)" onfocus="renderSylSchoolSuggest()"
+                 onblur="setTimeout(()=>{const b=document.getElementById('sylSchoolSuggest');if(b){b.innerHTML='';b.style.display='none';}},150)"
+                 autocomplete="off"
+                 style="${sylSelStyle};width:100%;box-sizing:border-box">
+          <div id="sylSchoolSuggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:20;
+               background:var(--background-primary,#fff);border:0.5px solid var(--color-border-secondary,#cbd5e1);
+               border-radius:6px;max-height:220px;overflow:auto;box-shadow:0 4px 12px rgba(0,0,0,0.08)"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="clearSylFilter()">条件をクリア</button>
+        <span id="sylFilterCount" style="font-size:12px;color:var(--muted);align-self:center"></span>
+      </div>`;
+
+    el.innerHTML = `
+      <div id="sylMissBox"></div>
+      <div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
+        <div id="sylButtonsRow" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+        ${sylSearchBox}
+        <div id="sylCountsRow" style="font-size:11px;color:var(--muted);line-height:1.9"></div>
+      </div>
+      <div id="syllabusTableBody"></div>`;
+    renderSyllabusTable(focusIdx);
+  }
+
+  // 表（怪しい順・絞り込み・チェック・反映）だけを描き直す。
+  // 検索欄（学年・時期・学校名）は renderSyllabusResult() が一度だけ作るので、ここでは触らない。
+  function renderSyllabusTable(focusIdx) {
+    const el = document.getElementById('syllabusResult');
+    if (!el) return;
+    // 【描き直しても画面が飛ばないようにする】
+    // 491行を毎回まるごと描き直すため、ボタンを押すたびに見ていた位置を見失っていた。
+    // 「押しても何も起きない」ように見え、実際にはずっと下で開いていた。
+    const _keepY = window.scrollY;
+
   // ── 怪しい行を上に集める ───────────────────────────────
     // 491行を目で追うのは無理。機械が拾えるものは機械に拾わせる。
     // 順番は凌央さんと決めたとおり：
@@ -8586,7 +8641,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (syllabusChecked[i] === undefined) syllabusChecked[i] = row.safe && !dupSecond.has(String(i));
     });
 
-    const shown = syllabusOnlyIssues ? order.filter(x => x.iss.prio <= 8) : order;
+    // 【学年・時期・学校名の絞り込み】
+    // 「確かめたい行だけ出す」と並べて適用する。行番号（x.i）はここでは変えない。
+    // データを絞るだけで、警告の集計（counts）は全件のまま変えない。
+    const shownIssuesOnly = syllabusOnlyIssues ? order.filter(x => x.iss.prio <= 8) : order;
+    const shown = filteredSyllabusOrder(shownIssuesOnly);
+    syllabusShownIdx = shown.map(x => x.i);
     // 【表示は区切る】491行ぶんの見た目を毎回作ると、押すたびに1秒以上待たされる。
     const pages = Math.max(1, Math.ceil(shown.length / SYL_PER_PAGE));
     if (syllabusPage >= pages) syllabusPage = pages - 1;
@@ -8614,21 +8674,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 2.5:'テストがない時期の日付', 3:'同じテストが複数',
                     4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている',
                     7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし', 10:'未回収' };
-    const issueBar = `
-      <div style="margin-bottom:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
-          <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
-                  onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
-          <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
-                  onclick="toggleSyllabusOnlyIssues()">${syllabusOnlyIssues?'✓ ':''}確かめたい行だけ出す</button>
-          <span style="font-size:11px;color:var(--muted);margin-left:6px">反映のチェック：</span>
-          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(true)">全部入れる</button>
-          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す</button>
-        </div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.9">
-          ${[1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　')}
-        </div>
-      </div>`;
+    // 絞り込み中（「確かめたい行だけ出す」または検索条件のいずれか）は、
+    // 「全部入れる／外す」が画面に出ている行だけに効くようにし、ボタンにもそれと分かる表記を出す。
+    const sylFilterActive = syllabusFilterActive();
+    const checkAllSuffix = sylFilterActive ? '（表示中）' : '';
+    const buttonsRowHtml = `
+        <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
+                onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
+        <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
+                onclick="toggleSyllabusOnlyIssues()">${syllabusOnlyIssues?'✓ ':''}確かめたい行だけ出す</button>
+        <span style="font-size:11px;color:var(--muted);margin-left:6px">反映のチェック：</span>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(true)">全部入れる${checkAllSuffix}</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す${checkAllSuffix}</button>`;
+    const countsRowHtml =
+      [1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　');
+    const sylButtonsRowEl = document.getElementById('sylButtonsRow');
+    if (sylButtonsRowEl) sylButtonsRowEl.innerHTML = buttonsRowHtml;
+    const sylCountsRowEl = document.getElementById('sylCountsRow');
+    if (sylCountsRowEl) sylCountsRowEl.innerHTML = countsRowHtml;
+    const sylFilterCountEl = document.getElementById('sylFilterCount');
+    if (sylFilterCountEl) sylFilterCountEl.textContent = `${shown.length}件`;
 
     // 【まだ分析されていないテストを、まとめて出す】
     // 「結びつかない60件」を1件ずつ見て回るのは無駄。
@@ -8693,15 +8758,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     const nDeleted = Object.keys(syllabusFix).filter(k => syllabusFix[k] && syllabusFix[k].deleted).length;
     // 写真が無い行の数。範囲を精査している間は、写真がないと正しいか判断できない。
-    const nNoPhoto = results.filter((res, i) => !(syllabusFix[i] && syllabusFix[i].deleted)
+    const nNoPhoto = (lastSyllabusResults || []).filter((res, i) => !(syllabusFix[i] && syllabusFix[i].deleted)
                                              && !(pendingSyllabus && pendingSyllabus[i])).length;
     const nCheck   = Object.keys(syllabusChecked).filter(i => syllabusChecked[i]
                        && syllabusRows[i] && syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
     const nTotal   = Object.keys(syllabusRows).filter(i => syllabusRows[i].matchIdx >= 0 && syllabusRows[i].unitText).length;
 
-    el.innerHTML = `
-      ${missBox}
-      ${issueBar}
+    const sylMissBoxEl = document.getElementById('sylMissBox');
+    if (sylMissBoxEl) sylMissBoxEl.innerHTML = missBox;
+
+    const tableBodyEl = document.getElementById('syllabusTableBody');
+    if (!tableBodyEl) return;
+    tableBodyEl.innerHTML = `
       <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="deleteUselessSyllabusRows()">
           範囲が使えない行を消す
@@ -8849,13 +8917,98 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   let syllabusPage = 0;             // 何ページ目を出しているか
   const SYL_PER_PAGE = 50;          // 一度に出す行数
 
+  // 【検索欄の絞り込み条件】学年・テストの時期・学校名（部分一致）
+  // テスト分析履歴の検索欄（histFilter）と同じ考え方。
+  let syllabusFilter = { grade:'', term:'', school:'' };
+  // いま画面に出している行番号（i）の一覧。「全部入れる（表示中）」で使う。
+  let syllabusShownIdx = [];
+
+  // 学年・時期・学校名の条件に合う行だけを残す。行番号は変えない。
+  function filteredSyllabusOrder(order) {
+    let out = order;
+    if (syllabusFilter.grade) {
+      out = out.filter(x => normalizeGrade((syllabusRows[x.i]||{}).grade||'') === syllabusFilter.grade);
+    }
+    if (syllabusFilter.term) {
+      out = out.filter(x => {
+        const row = syllabusRows[x.i] || {};
+        if (!row.date) return false;   // 日付が読めていない行は時期を判定できないため対象外にする
+        return testTermOf({ testDate: row.date, school: row.school }) === syllabusFilter.term;
+      });
+    }
+    if (syllabusFilter.school) {
+      out = out.filter(x => ((syllabusRows[x.i]||{}).school||'').includes(syllabusFilter.school));
+    }
+    return out;
+  }
+  // 「確かめたい行だけ出す」か、検索条件のいずれかが効いているか
+  function syllabusFilterActive() {
+    return syllabusOnlyIssues || !!(syllabusFilter.grade || syllabusFilter.term || syllabusFilter.school);
+  }
+
+  function setSylFilter(key, value) {
+    syllabusPage = 0;
+    syllabusFilter[key] = value;
+    renderSyllabusTable();
+  }
+
+  // 学校名の入力に応じて候補を出す。入力欄そのものは作り直さない
+  //（作り直すと1文字ごとにカーソルが外れ、日本語の変換もできなくなる。テスト履歴の検索欄と同じ対策）。
+  function updateSylSchoolSuggest(value) {
+    syllabusFilter.school = String(value || '').trim();
+    renderSylSchoolSuggest();
+    syllabusPage = 0;
+    renderSyllabusTable();
+  }
+
+  function renderSylSchoolSuggest() {
+    const box = document.getElementById('sylSchoolSuggest');
+    if (!box) return;
+    const v = syllabusFilter.school;
+    if (!v) { box.innerHTML = ''; box.style.display = 'none'; return; }
+    const schools = [...new Set(Object.keys(syllabusRows).map(i => syllabusRows[i] && syllabusRows[i].school).filter(Boolean))];
+    const hits = schools.filter(s => s.includes(v)).sort().slice(0, 10);
+    if (!hits.length || (hits.length === 1 && hits[0] === v)) {
+      box.innerHTML = ''; box.style.display = 'none'; return;
+    }
+    box.innerHTML = hits.map(s =>
+      `<div onmousedown="pickSylSchool(${JSON.stringify(s).replace(/"/g,'&quot;')})"
+         style="padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:0.5px solid var(--color-border-secondary,#e2e8f0)"
+         onmouseover="this.style.background='var(--background-secondary,#f1f5f9)'"
+         onmouseout="this.style.background=''">${esc(s)}</div>`).join('');
+    box.style.display = 'block';
+  }
+
+  function pickSylSchool(s) {
+    const input = document.getElementById('sylSchoolInput');
+    if (input) input.value = s;
+    syllabusFilter.school = s;
+    const box = document.getElementById('sylSchoolSuggest');
+    if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+    syllabusPage = 0;
+    renderSyllabusTable();
+  }
+
+  function clearSylFilter() {
+    syllabusPage = 0;
+    syllabusFilter = { grade:'', term:'', school:'' };
+    const input = document.getElementById('sylSchoolInput'); if (input) input.value = '';
+    const box = document.getElementById('sylSchoolSuggest'); if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+    const gs = document.getElementById('sylGradeSel'); if (gs) gs.value = '';
+    const ts = document.getElementById('sylTermSel');  if (ts) ts.value = '';
+    renderSyllabusTable();
+  }
+
   // 【チェックの入り切りは、画面ではなくここで覚える】
   // 画面のチェックだけで持つと、ページを分けたとたん
   // 「表示していない行のチェック」が消えて、まとめて反映から漏れる。
   let syllabusChecked = {};
   function setSylCheck(i, on) { syllabusChecked[i] = !!on; }
   function setSylCheckAll(on) {
-    Object.keys(syllabusRows).forEach(i => {
+    // 絞り込み中（「確かめたい行だけ出す」または検索条件）は、画面に出ている行だけに効かせる。
+    // 全体に効くと、絞り込んで作業しているときに関係ない行まで変えてしまう事故になる。
+    const targets = syllabusFilterActive() ? syllabusShownIdx : Object.keys(syllabusRows);
+    targets.forEach(i => {
       const row = syllabusRows[i];
       if (row && row.matchIdx >= 0 && row.unitText) syllabusChecked[i] = !!on;
     });
