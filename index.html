@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.45</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.46</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -520,6 +520,31 @@
 
     <div id="testResult"></div>
     <div style="margin:6px 0 0"><button class="btn btn-secondary btn-sm" onclick="shareTestReport()" style="font-size:12px">🖨 共有レポート</button></div>
+
+    <!-- v10.45で出題語の保存上限を60→120に上げたため、既存822件のうち
+         出題語がちょうど60件（＝旧上限で頭打ち）のものだけ選んで分析し直せるようにする。
+         PDFはアプリに保存していないため、フォルダごと全部読み込ませて対象だけ絞り込む。 -->
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">🔁 出題語が60件で頭打ちのテストだけ分析し直す</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        フォルダごとPDFを選んでください。読み込んだうち「履歴に同じファイル名があり、出題語がちょうど60件」のものだけを選んで分析し直します。それ以外はAIに送りません（費用がかかるため）。
+      </p>
+      <div class="upload-zone" id="reanalyzeZone">
+        <div class="uz-ico">🔁</div>
+        <div class="uz-title" id="reanalyzeTitle">分析し直すPDFを選択</div>
+        <div class="uz-sub" id="reanalyzeSub">複数PDF可 — フォルダごと選んでOK（対象外は自動で除外されます）</div>
+      </div>
+      <div id="reanalyzeFileList" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      <input type="file" id="reanalyzeFile" accept=".pdf" multiple style="display:none" onchange="onReanalyzeFilesSelected(this.files)">
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button type="button" class="btn btn-secondary" style="flex:1" onclick="document.getElementById('reanalyzeFile').click()">📂 PDFを選択（複数可）</button>
+        <button type="button" class="btn btn-primary" id="reanalyzeStartBtn" style="flex:1" disabled onclick="runReanalyzeOnly()">🔁 分析し直すものだけ分析する（0件）</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="clearReanalyzePDFs()" title="選択中のPDFを解除します">✕</button>
+        <button type="button" class="btn btn-danger btn-sm" id="reanalyzeStopBtn" style="display:none" onclick="stopReanalyze()">⏹ 停止</button>
+      </div>
+      <div id="reanalyzeBatchStatus" style="margin-top:10px"></div>
+      <div id="reanalyzeStatus"></div>
+    </div>
     </div><!-- /testSec-pdf -->
 
     <div id="testSec-syllabus" style="display:none">
@@ -3895,7 +3920,61 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
     return histSaveQueue;
   }
 
-  async function analyzeTest({imgs, name}) {
+  // 【分析し直し専用：同じファイル名の既存レコードを置き換える（追加しない）】
+  // saveTestHistoryEntryと同じ書き込みキュー（histSaveQueue）を使う。
+  // 分析し直しは複数件を同時に処理するため、キューを共有せずに
+  // それぞれがhistAll()→保存を行うと、後から終わったほうが先の保存を
+  // 消してしまう（同じ配列を読んでから書くため）。
+  function replaceTestHistoryEntry(name, entry, newRangeStr) {
+    histSaveQueue = histSaveQueue.then(async () => {
+      const hist = histAll();
+      const idx = hist.findIndex(x => x.name === name);
+      if (idx < 0) {
+        // 対象は「履歴に同じファイル名がある」ことを条件に選んでいるので、
+        // ここに来るのは想定外（分析中に履歴から消えた等）。安全側に倒し、追加はしない。
+        console.warn('分析し直し対象のレコードが見つかりませんでした:', name);
+        return;
+      }
+      const old = hist[idx];
+      // 新しく計算した範囲は、確定済みのときはそのまま採用せず別項目に残す。
+      entry.rangeReanalyzed = newRangeStr;
+      // 【人が確かめた範囲（範囲表・手入力）は上書きしない】
+      if (old.rangeEditedBy) {
+        entry.range          = old.range;
+        entry.rangeEditedBy  = old.rangeEditedBy;
+        entry.rangeOrig      = old.rangeOrig;
+        entry.rangePrev      = old.rangePrev;
+        entry.rangePages     = old.rangePages;
+        // prevGradeRange/prevGradeGrade/prevGradePagesは3つで1組の
+        // 「前学年ぶんの範囲」情報のため、rangePagesと一緒に丸ごと残す
+        // （一部だけ新しい値に入れ替わると表示が食い違う）。
+        entry.prevGradeRange = old.prevGradeRange;
+        entry.prevGradeGrade = old.prevGradeGrade;
+        entry.prevGradePages = old.prevGradePages;
+      }
+      // 【画面で指定した学年も上書きしない】
+      if (old.gradeSpecified) {
+        entry.grade          = old.grade;
+        entry.gradeSpecified = true;
+      }
+      // 既存レコードへマージする（配列には追加しない）。
+      // entryに無い項目（otherMaterials・syllabusTestNameなど）はoldのまま残る。
+      Object.assign(old, entry);
+      if (old.firestoreId) {
+        // 同じ文書を更新する（新しい文書は作らない）
+        await updateTestInFirestore(old, { ...entry });
+      } else {
+        // これまで一度もクラウドに保存されていなかった場合だけ、新規に文書を作る
+        // （既存の文書を増やすわけではないので「二重に増やす」ことにはならない）。
+        const fid = await saveTestEntryToFirestore({ ...old });
+        if (fid) old.firestoreId = fid;
+      }
+      histSave(hist);
+    }).catch(() => {});
+    return histSaveQueue;
+  }
+
+  async function analyzeTest({imgs, name}, opts) {
     const stEl=document.getElementById('testStatus'), rsEl=document.getElementById('testResult');
     rsEl.innerHTML='';
     localStorage.removeItem('nhscope_test_result');
@@ -4174,9 +4253,17 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           prevGradeGrade: prevGrade ? prevGrade.grade : '',
           year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
         };
-        const firestoreId = await saveTestEntryToFirestore(entry);
-        if (firestoreId) entry.firestoreId = firestoreId;
-        await saveTestHistoryEntry(entry);
+        if (opts && opts.reanalyze) {
+          // 【分析し直し：追加ではなく、同じファイル名の既存レコードを置き換える】
+          // 通常の保存はhist.unshiftで毎回レコードを追加する作りだが、
+          // 分析し直しでそれをやると同じテストが履歴にまた増えてしまう
+          // （実例：ファイル名が重複した履歴が182件ある）。
+          await replaceTestHistoryEntry(name, entry, rangeStr);
+        } else {
+          const firestoreId = await saveTestEntryToFirestore(entry);
+          if (firestoreId) entry.firestoreId = firestoreId;
+          await saveTestHistoryEntry(entry);
+        }
         // 分析中に表全体を描き直すと、画面が上下に動いて見づらい。
         // まとめて分析しているときは、最後にまとめて描き直す。
         if (!pendingTestGroups || pendingTestGroups.length <= 1) renderTestHistory();
@@ -9879,6 +9966,179 @@ function findTestByDateEx(hist, school, grade, date) {
     const startBtn = document.getElementById('testStartBtn');
     if (startBtn) startBtn.disabled = false;
     setSt(document.getElementById('testStatus'), 'err', '⏹ 分析を停止しました');
+  }
+
+  // ── 出題語60件で頭打ちのテストだけ分析し直す ─────────────────────────
+  // v10.45で保存上限を60→120に上げたが、既存822件は分析し直さない限り60件のまま。
+  // テストPDFはアプリに保存していないため、フォルダごと全部読み込ませて、
+  // 「履歴に同じファイル名があり、出題語がちょうど60件」のものだけをAIに送る。
+  // 通常の「分析開始」（pendingTestGroups・testStartBtn）とは完全に別の状態で進める。
+  let pendingReanalyzeGroups = null;
+  let pendingReanalyzeExcluded = 0;
+  let reanalyzeStopped = false;
+
+  // 対象条件：履歴に同じファイル名（h.name）のテストがあり、tested_vocabがちょうど60件。
+  // 条件に合わないものは戻り値なし（呼び出し側でAIに送らない）。
+  function findReanalyzeTarget(hist, name) {
+    const h = hist.find(x => x.name === name);
+    if (!h) return null;
+    if (!Array.isArray(h.tested_vocab) || h.tested_vocab.length !== 60) return null;
+    return h;
+  }
+
+  async function onReanalyzeFilesSelected(files) {
+    if (!files || !files.length) return;
+    const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
+    if (!fileArr.length) return;
+
+    const stEl = document.getElementById('reanalyzeStatus');
+    const btn  = document.getElementById('reanalyzeStartBtn');
+    const listEl = document.getElementById('reanalyzeFileList');
+    pendingReanalyzeGroups = null;
+    pendingReanalyzeExcluded = 0;
+    btn.disabled = true;
+    btn.textContent = '🔁 分析し直すものだけ分析する（0件）';
+    listEl.innerHTML = '';
+
+    let hist = [];
+    try { hist = histAll(); } catch { setSt(stEl, 'err', '❌ テスト履歴の読み込みに失敗しました。'); return; }
+
+    // 解答用紙だけのまとまりは問題文が無く判定できないため、通常の分析と同様に除く
+    const allGroups = groupTestFiles(fileArr);
+    const usable = allGroups.filter(g => g.files.some(f => /問題/.test(f.name)));
+    const targets = usable.filter(g => findReanalyzeTarget(hist, g.name));
+    const excluded = usable.length - targets.length;
+    pendingReanalyzeExcluded = excluded;
+
+    if (!targets.length) {
+      setSt(stEl, 'err',
+        `対象のテストがありませんでした（読み込んだ${usable.length}件のうち、履歴にあって出題語がちょうど60件のものが0件でした）。`);
+      return;
+    }
+
+    setSt(stEl, 'load', `対象${targets.length}件（対象外${excluded}件を除く）を読み込み中...`);
+    try {
+      const MAX_PER_TEST = 30;   // テスト1件あたりの最大ページ数（通常の分析と同じ）
+      const loaded = [];
+      for (let gi = 0; gi < targets.length; gi++) {
+        const g = targets[gi];
+        const imgs = [];
+        for (const f of g.files) {
+          if (imgs.length >= MAX_PER_TEST) break;
+          const buf = await f.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+          const remain = MAX_PER_TEST - imgs.length;
+          for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
+            imgs.push(await toBase64(await pdf.getPage(i), testScale()));
+          }
+        }
+        loaded.push({ imgs, name: g.name, key: g.key, fileCount: g.files.length });
+        setSt(stEl, 'load', `${gi+1}/${targets.length}件読み込み済み...`);
+      }
+      pendingReanalyzeGroups = loaded;
+      listEl.innerHTML = loaded.map(g => `<div>${esc(g.key)}</div>`).join('');
+      btn.textContent = `🔁 分析し直すものだけ分析する（${loaded.length}件）`;
+      btn.disabled = false;
+      setSt(stEl, 'ok',
+        `✅ 対象${loaded.length}件を読み込みました（対象外${excluded}件は送りません） — ボタンを押すと分析し直します`);
+    } catch(e) {
+      setSt(stEl, 'err', '❌ PDF読み込みエラー: ' + e.message);
+    }
+  }
+
+  async function runReanalyzeOnly() {
+    if (!pendingReanalyzeGroups || !pendingReanalyzeGroups.length) return;
+    // 通常の「分析開始」が同時に走っていると、履歴の書き込みキューは共有しているので
+    // データが壊れることはないが、費用の二重発生や進捗表示の混線を避けるため止める。
+    // testStartBtnはPDF未選択の間も disabled のままなので、そこでは判断できない。
+    // 実行中だけ表示される停止ボタン（testStopBtn）で判断する。
+    const otherStopBtn = document.getElementById('testStopBtn');
+    if (otherStopBtn && otherStopBtn.style.display !== 'none') {
+      alert('「分析開始」が実行中です。終わってから分析し直してください。');
+      return;
+    }
+
+    const n = pendingReanalyzeGroups.length;
+    const excluded = pendingReanalyzeExcluded;
+    // テスト分析1件あたり約¥13（実測ベース。guessCallYenと同じ前提）
+    const cost = Math.round(n * 13);
+    const ok = await showConfirm(
+      `${n}件を分析し直します。\n\n` +
+      `・費用はおよそ ¥${cost} かかります（テスト分析1件あたり約¥13）\n` +
+      `・対象外の${excluded}件は送りません\n` +
+      `・範囲表・手入力で確定済みの範囲は上書きしません（新しく計算した範囲は別項目に残します）\n` +
+      `・画面で指定した学年も変わりません`,
+      `${n}件を分析し直す`);
+    if (!ok) return;
+
+    reanalyzeStopped = false;
+    testAnalysisStopped = false;   // analyzeTest内部の停止チェックと共有している
+    const startBtn = document.getElementById('reanalyzeStartBtn');
+    startBtn.disabled = true;
+    const stopBtn = document.getElementById('reanalyzeStopBtn');
+    if (stopBtn) stopBtn.style.display = 'inline-flex';
+    const bStEl = document.getElementById('reanalyzeBatchStatus');
+    const t0 = Date.now();
+    const TESTS_AT_ONCE = 2;   // 通常の分析と同じ同時実行数
+    let finished = 0, okCount = 0;
+    const failed = [];
+
+    for (let base = 0; base < pendingReanalyzeGroups.length; base += TESTS_AT_ONCE) {
+      if (reanalyzeStopped) break;
+      const batch = pendingReanalyzeGroups.slice(base, base + TESTS_AT_ONCE);
+      const rets = await Promise.all(batch.map(async g => {
+        try { return await analyzeTest(g, { reanalyze: true }); }
+        catch(e) { return { ok:false, name:g.name, reason: friendlyError(e) }; }
+      }));
+      rets.forEach((r, i) => {
+        const nm = (r && r.name) || batch[i].key || batch[i].name || '';
+        if (r && r.ok) okCount++;
+        else if (!(r && r.stopped)) failed.push({ name: nm, reason: (r && r.reason) || '原因不明' });
+      });
+      finished += batch.length;
+      const per = (Date.now() - t0) / finished;
+      const left = Math.round(per * (pendingReanalyzeGroups.length - finished) / 60000);
+      setSt(bStEl, 'load',
+        `【${finished}/${n}件】完了（成功${okCount}件${failed.length?` ／ 失敗${failed.length}件`:''}） — 残り約${left}分`);
+      refreshHistCount();
+    }
+
+    if (stopBtn) stopBtn.style.display = 'none';
+    startBtn.disabled = false;
+    renderTestHistory();
+    const min = Math.round((Date.now() - t0) / 60000);
+    if (reanalyzeStopped) {
+      setSt(bStEl, 'err', `⏹ 停止しました（${okCount}件は分析し直し済み）`);
+    } else if (failed.length) {
+      setSt(bStEl, 'err', `⚠️ ${okCount}件を分析し直しました／${failed.length}件は失敗しました（${min}分）`);
+    } else {
+      setSt(bStEl, 'ok', `✅ ${okCount}件を分析し直しました（${min}分）`);
+    }
+    renderFailedTests(failed);
+
+    pendingReanalyzeGroups = null;
+    pendingReanalyzeExcluded = 0;
+    const f = document.getElementById('reanalyzeFile'); if (f) f.value = '';
+    startBtn.textContent = '🔁 分析し直すものだけ分析する（0件）';
+    startBtn.disabled = true;
+  }
+
+  function stopReanalyze() {
+    reanalyzeStopped = true;
+    testAnalysisStopped = true;   // analyzeTest内で走っている処理も止める
+    const btn = document.getElementById('reanalyzeStopBtn');
+    if (btn) btn.style.display = 'none';
+    setSt(document.getElementById('reanalyzeStatus'), 'err', '⏹ 分析し直しを停止しました');
+  }
+
+  function clearReanalyzePDFs() {
+    pendingReanalyzeGroups = null;
+    pendingReanalyzeExcluded = 0;
+    const f = document.getElementById('reanalyzeFile'); if (f) f.value = '';
+    const btn = document.getElementById('reanalyzeStartBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '🔁 分析し直すものだけ分析する（0件）'; }
+    const list = document.getElementById('reanalyzeFileList'); if (list) list.innerHTML = '';
+    const stEl = document.getElementById('reanalyzeStatus'); if (stEl) stEl.innerHTML = '';
   }
 
   // ── バッチ分析（複数校一括） ──────────────────────────────────────
