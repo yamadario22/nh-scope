@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.41</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.42</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6693,6 +6693,24 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 間隔を空けずに送り続けるとAPIのレート制限に当たりやすくなるため、ここで調整できるようにする。
   const SYLLABUS_REQUEST_DELAY = 1000;
 
+  // 【AIが読み取れなかったときに返す文字列を、空欄として扱う】
+  // r の各項目はSTRING型のスキーマなので、値が読み取れないときも
+  // JSONのnullではなく文字列の "null" がそのまま返ることがある
+  // （実例：299件中18件で単元・範囲などに "null" がそのまま入っていた）。
+  // 学年・学校名・日付・単元・範囲など、どの項目でも同じ扱いにする。
+  // r 自体は書き換えず、使うときにこの関数越しに読む。
+  const SYLLABUS_NULLISH_RE = /^(null|undefined|なし|不明|記載なし)$/i;
+  function syllabusCleanStr(v) {
+    const s = String(v ?? '').trim();
+    return SYLLABUS_NULLISH_RE.test(s) ? '' : s;
+  }
+  // ページ番号（本来INTEGER型だが、同じ理由で文字列の "null" が来ることがある）用。
+  function syllabusCleanNum(v) {
+    if (typeof v === 'number') return v || 0;
+    const s = syllabusCleanStr(v);
+    return s ? (parseInt(s, 10) || 0) : 0;
+  }
+
   // 1件の写真を送って範囲表の内容を読み取る。
   // 【手書きが読めなかったときだけ、探し直す】
   // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
@@ -7013,8 +7031,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 範囲表に書かれていた単元名を、アプリの表記にそろえる。
   // 実在しない単元名が入ってきたら使わない（推測で埋められた場合の保険）。
   function normalizeWrittenUnitRange(raw, grade) {
-    const t = String(raw || '').trim();
-    if (!t || /^(null|undefined|なし|記載なし)$/i.test(t)) return '';
+    const t = syllabusCleanStr(raw);
+    if (!t) return '';
     // 「Unit 0,1」「Unit 0・1」のような区切りもある。〜と同じ扱いにする。
     // 実例（甲山中）：「Unit0,1」を1つと読んで「Unit 0」だけになっていた。
     const parts = t.split(/\s*[〜~－—\-,、・]\s*/).filter(Boolean)
@@ -7073,9 +7091,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 「AIが読まなかった」のか「変換で捨てられた」のか区別できなかった。
   // 変換ロジックはそのまま、表示だけを補う。
   function syllabusRawFallbackText(fromPage, toPage, rawUnit) {
-    const raw = String(rawUnit || '').trim();
-    const validRaw = raw && !/^(null|undefined|なし|記載なし)$/i.test(raw);
-    const pageText = (fromPage || toPage) ? `p.${fromPage || '?'}〜${toPage || '?'}` : '';
+    const raw = syllabusCleanStr(rawUnit);
+    const validRaw = !!raw;
+    const fp = syllabusCleanStr(fromPage), tp = syllabusCleanStr(toPage);
+    const pageText = (fp || tp) ? `p.${fp || '?'}〜${tp || '?'}` : '';
     if (validRaw && pageText) return `${pageText}／${raw}`;
     return validRaw ? raw : pageText;
   }
@@ -7333,31 +7352,40 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults, run[0]);
   }
 
-  // 【前後の写真から、学校名が空の行だけを機械的に埋める】
-  // 条件は厳格に絞る：撮った順で「直前の行」と「直後の行」の両方に学校名があり、
-  // かつその2つが同じ学校名であるときだけ埋める。
-  // 　・前後が違う学校 → 埋めない（境目にいる可能性があり、機械では判断できない）
-  // 　・片側しか学校名がない → 埋めない
+  // 【前後の写真から、ある項目が空の行だけを機械的に埋める】
+  // 条件は厳格に絞る：撮った順で「直前の行」と「直後の行」の両方にその項目があり、
+  // かつその2つが同じ値であるときだけ埋める。
+  // 　・前後が違う値 → 埋めない（境目にいる可能性があり、機械では判断できない）
+  // 　・片側しか値がない → 埋めない
   // 　・前後が空欄続き（例：空欄が2枚以上連続）→ その内側の行は「直前」または「直後」も
   // 　　空欄になるため、条件を満たさず埋めない（これも境目の可能性があるため）
+  // 学校名・学年で同じ考え方を使うので、項目名（field）で切り替えられるようにしてある。
   // rows を省略すると、いま表に出している syllabusRows を使う。
-  // テストからは、素の {i: {school}} 形のオブジェクトを渡して呼べるようにするため引数化している。
-  function syllabusAutoFillCandidates(rows) {
+  // テストからは、素の {i: {[field]:値}} 形のオブジェクトを渡して呼べるようにするため引数化している。
+  function syllabusAutoFillFieldCandidates(rows, field) {
     rows = rows || syllabusRows;
     const idxs = Object.keys(rows).map(Number).sort((a, b) => a - b);
     const out = [];
     idxs.forEach((idx, pos) => {
       const row = rows[idx];
-      if (!row || row.readError || row.school) return;
+      if (!row || row.readError || row[field]) return;
       const prevIdx = idxs[pos - 1], nextIdx = idxs[pos + 1];
       if (prevIdx === undefined || nextIdx === undefined) return;
       const prevRow = rows[prevIdx], nextRow = rows[nextIdx];
       if (!prevRow || !nextRow) return;
-      if (prevRow.school && nextRow.school && prevRow.school === nextRow.school) {
-        out.push({ i: idx, school: prevRow.school });
+      if (prevRow[field] && nextRow[field] && prevRow[field] === nextRow[field]) {
+        out.push({ i: idx, value: prevRow[field] });
       }
     });
     return out;
+  }
+
+  function syllabusAutoFillCandidates(rows) {
+    return syllabusAutoFillFieldCandidates(rows, 'school').map(c => ({ i: c.i, school: c.value }));
+  }
+
+  function syllabusAutoFillGradeCandidates(rows) {
+    return syllabusAutoFillFieldCandidates(rows, 'grade').map(c => ({ i: c.i, grade: c.value }));
   }
 
   async function syllabusAutoFillNearbySchool() {
@@ -7369,6 +7397,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // schoolFromNearby だけは区別のために付け、表示だけ分ける（学校名を直したら消える）。
     cands.forEach(c => {
       syllabusFix[c.i] = Object.assign({}, syllabusFix[c.i], { school: c.school, schoolFromNearby: true });
+    });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
+  }
+
+  async function syllabusAutoFillNearbyGrade() {
+    const cands = syllabusAutoFillGradeCandidates();
+    if (!cands.length) return;
+    if (!confirm(`${cands.length}件に学年を入れます。前後が同じ学年の行だけが対象です\n`
+               + `あとから1件ずつ直せます`)) return;
+    cands.forEach(c => {
+      syllabusFix[c.i] = Object.assign({}, syllabusFix[c.i], { grade: c.grade, gradeFromNearby: true });
     });
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
@@ -7604,7 +7644,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!ok) return;
 
     // 「学校名・学年を直す」で決定した = 人が確かめた、という扱いにする
-    syllabusFix[i] = Object.assign({}, syllabusFix[i], { school, grade, date, from, to, schoolFromNearby: false });
+    syllabusFix[i] = Object.assign({}, syllabusFix[i],
+      { school, grade, date, from, to, schoolFromNearby: false, gradeFromNearby: false });
     delete syllabusEditOpen[i];
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
@@ -7716,15 +7757,16 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const res = (lastSyllabusResults || [])[i] || {};
       const r   = res.r || {};
       const fx  = syllabusFix[i] || {};
+      const textbookFrom = syllabusCleanNum(r.textbook_from), textbookTo = syllabusCleanNum(r.textbook_to);
       return {
         i,
-        school: fx.school || String(r.school || '').trim(),
-        grade:  fx.grade  || normalizeGrade(r.grade || ''),
-        date:   fx.date   || String(r.test_date || '').trim(),
-        testName: String(r.test_name || '').replace(/^(null|undefined)$/i, ''),
-        range: String(r.unit_range || '').replace(/^(null|undefined)$/i, ''),
-        pages: (r.textbook_from || r.textbook_to) ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}` : '',
-        raw: [r.grade_raw, r.date_raw].filter(x => x && !/^(null|undefined)$/i.test(x)).join(' ')
+        school: fx.school || syllabusCleanStr(r.school),
+        grade:  fx.grade  || normalizeGrade(syllabusCleanStr(r.grade)),
+        date:   fx.date   || syllabusCleanStr(r.test_date),
+        testName: syllabusCleanStr(r.test_name),
+        range: syllabusCleanStr(r.unit_range),
+        pages: (textbookFrom || textbookTo) ? `教科書 p.${textbookFrom||'?'}〜${textbookTo||'?'}` : '',
+        raw: [syllabusCleanStr(r.grade_raw), syllabusCleanStr(r.date_raw)].filter(Boolean).join(' ')
       };
     });
     const picked = await openPickRows(
@@ -7799,13 +7841,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   function pickItemOf(i) {
     const row = syllabusRows[i] || {};
     const r   = row.r || {};
+    const textbookFrom = syllabusCleanNum(r.textbook_from), textbookTo = syllabusCleanNum(r.textbook_to);
     return {
       i,
       school: row.school, grade: row.grade, date: row.date,
-      testName: String(r.test_name || '').replace(/^(null|undefined)$/i, ''),
+      testName: syllabusCleanStr(r.test_name),
       range: row.unitText,
-      pages: (r.textbook_from || r.textbook_to) ? `教科書 p.${r.textbook_from||'?'}〜${r.textbook_to||'?'}` : '',
-      raw: [r.grade_raw, r.date_raw].filter(x => x && !/^(null|undefined)$/i.test(x)).join(' ')
+      pages: (textbookFrom || textbookTo) ? `教科書 p.${textbookFrom||'?'}〜${textbookTo||'?'}` : '',
+      raw: [syllabusCleanStr(r.grade_raw), syllabusCleanStr(r.date_raw)].filter(Boolean).join(' ')
     };
   }
 
@@ -8115,14 +8158,21 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
   // 学校名・学年を直した／埋めた行に出す注記。
   // 「前後の写真から機械的に埋めた」ものは、手で確かめたものと見分けが付くように分けて出す。
+  // 学校名・学年はそれぞれ別に埋められる（別のボタンのため）ので、項目ごとに判定する。
   function syllabusFixBadgeHtml(fx) {
     fx = fx || {};
-    if (!fx.school && !fx.grade) return '';
-    if (fx.schoolFromNearby && fx.school) {
-      return '<br><span style="color:#0369A1;font-size:10px">📷 前後の写真から入れた学校名です</span>'
-           + (fx.grade ? '<br><span style="color:#059669;font-size:10px">✏️ 学年は手で直したものです</span>' : '');
+    const lines = [];
+    if (fx.school) {
+      lines.push(fx.schoolFromNearby
+        ? '<br><span style="color:#0369A1;font-size:10px">📷 前後の写真から入れた学校名です</span>'
+        : '<br><span style="color:#059669;font-size:10px">✏️ 学校名は手で直したものです</span>');
     }
-    return '<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>';
+    if (fx.grade) {
+      lines.push(fx.gradeFromNearby
+        ? '<br><span style="color:#0369A1;font-size:10px">📷 前後の写真から入れた学年です</span>'
+        : '<br><span style="color:#059669;font-size:10px">✏️ 学年は手で直したものです</span>');
+    }
+    return lines.join('');
   }
 
   // 1行ぶんの見た目を作る。中身は syllabusRows[i] に入っているものだけを使う。
@@ -8139,12 +8189,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const { school, grade, date, r, unitText, unitTextRaw, prevGrade, prevUnitText, prevUnitTextRaw,
             fromPage, startNote, warns, safe, testName, matchName, matchRange } = row;
     const fx = syllabusFix[i] || {};
+    // 画面に出すときだけ "null" などの文字列を空欄扱いにする（r 自体は書き換えない）
+    const dateRaw = syllabusCleanStr(r.date_raw);
+    const gradeRaw = syllabusCleanStr(r.grade_raw);
+    const otherMaterials = syllabusCleanStr(r.other_materials);
+    const textbookToDisp = syllabusCleanNum(r.textbook_to) || '';
+    const prevFromDisp = syllabusCleanNum(r.prev_grade_from) || '';
+    const prevToDisp = syllabusCleanNum(r.prev_grade_to) || '';
     return `<tr data-row="${i}">
         <td style="font-size:11px">
           <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
-          ${(r.date_raw || r.grade_raw)
-            ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
+          ${(dateRaw || gradeRaw)
+            ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(gradeRaw)} ${esc(dateRaw)}</span>` : ''}
           ${syllabusFixBadgeHtml(fx)}
           ${fx.date ? `<br><span style="color:#059669;font-size:10px">✏️ 日付は手で直したものです</span>` : ''}
           ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
@@ -8172,7 +8229,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
-            ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
+            ? `教科書 p.${fromPage||'?'}〜${textbookToDisp||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
             : (unitTextRaw
                 // 【変換に失敗しても、読み取れていること自体は分かるようにする】
                 // ページ番号も単元名も無い、という表示にすると「AIが何も読まなかった」
@@ -8182,11 +8239,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                      <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`)}
           ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
           ${prevUnitText
-            ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>`
+            ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${prevFromDisp||'?'}〜${prevToDisp||'?'} ／ ${esc(prevUnitText)}</span>`
             : (prevUnitTextRaw
                 ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：${esc(prevUnitTextRaw)}（単元名に変換できませんでした）</span>`
                 : '')}
-          ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
+          ${otherMaterials ? `<br><span style="color:var(--muted);font-size:10px">${esc(otherMaterials)}</span>` : ''}
           ${warns.length ? `
             <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
               ${warns.map(w => `<div style="font-size:11px;color:#DC2626">⚠️ ${esc(w.text)}${
@@ -8253,13 +8310,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (syllabusFix[i] && syllabusFix[i].deleted) return;
       if (res.error) { syllabusRows[i] = { readError: String(res.error), file: res.file }; return; }
       const r = res.r || {};
-      let grade = normalizeGrade(r.grade || '');
+      let grade = normalizeGrade(syllabusCleanStr(r.grade));
       if (syllabusFix[i] && syllabusFix[i].grade) grade = syllabusFix[i].grade;
       // 学校名に学年の数字が残っていることがあるので取り除く
       //（例：「上郷中1」→「上郷中」「中1上郷」→「上郷」）
       // 読み取れなかった場合は空にする（"null" という文字が入ることがある）
-      let school = String(r.school ?? '').trim();
-      if (/^(null|undefined|なし|不明|記載なし)$/i.test(school)) school = '';
+      let school = syllabusCleanStr(r.school);
       // 【手書きが1〜2文字しかないときの照合】
       // 範囲表の手書きは「岩」「北」のように1文字だけのことがある。
       // これまでに分析したテストの学校名と突き合わせて、1つに絞れるときだけ当てる。
@@ -8288,11 +8344,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         // 「岡崎市立葵中学校」→「葵中」。書き方をそろえないと同じ学校が別扱いになる
         school = canonSchool(school);
       }
-      const testName = /^(null|undefined)$/i.test(String(r.test_name ?? '').trim()) ? '' : String(r.test_name ?? '').trim();
+      const testName = syllabusCleanStr(r.test_name);
       // 手で直した内容があれば、それを優先する（手直しは syllabusFix に残る）
       const fx = syllabusFix[i] || {};
       if (fx.school) school = fx.school;
-      let date = fx.date || String(r.test_date || '').trim();
+      let date = fx.date || syllabusCleanStr(r.test_date);
       // 【曜日で日付を検算する】
       // 写真に「19日(木)」としか書かれていないと、AIが月を推測して外す。
       // 曜日はカレンダーで決まるので、合わない月は計算で正せる。
@@ -8347,7 +8403,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 同じ学校・学年で前のテストが束の中にあるなら、学年最初のはずがないので打ち消す。
       const bookTop = (PAGE_UNIT_TABLES[`default_c${gradeNumOf(grade)}`] || [[0]])[0][0];
       const prevList = (_manualEnds[`${school}|${grade}`] || []).filter(x => date && x.date < date);
-      let fromRaw = r.textbook_from || 0;
+      let fromRaw = syllabusCleanNum(r.textbook_from);
       let fromFaked = false;
       // 【学年最初のテスト以外で「教科書の1ページ目から」はありえない】
       // 束の中に前のテストが無くても、9月以降のテストなら学年最初ではない。
@@ -8924,9 +8980,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const checkAllSuffix = sylFilterActive ? '（表示中）' : '';
     const bulkRereadCount = syllabusBulkRereadTargets().length;
     const autoFillNearbyCount = syllabusAutoFillCandidates().length;
+    const autoFillNearbyGradeCount = syllabusAutoFillGradeCandidates().length;
     const buttonsRowHtml = `
         <button class="btn btn-secondary btn-sm" style="font-size:11px" ${autoFillNearbyCount ? '' : 'disabled'}
                 onclick="syllabusAutoFillNearbySchool()">前後の写真から学校名を埋める（${autoFillNearbyCount}件）</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" ${autoFillNearbyGradeCount ? '' : 'disabled'}
+                onclick="syllabusAutoFillNearbyGrade()">前後の写真から学年を埋める（${autoFillNearbyGradeCount}件）</button>
         <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
                 onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
         <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
@@ -9076,8 +9135,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const others = group.filter(j => String(j) !== String(i)).map(j => {
           const o = syllabusRows[j] || {};
           const or = (o.r || {});
-          const pg = (or.textbook_from || or.textbook_to)
-            ? `教科書 p.${or.textbook_from || '?'}〜${or.textbook_to || '?'}` : 'ページの記載なし';
+          const orFrom = syllabusCleanNum(or.textbook_from), orTo = syllabusCleanNum(or.textbook_to);
+          const pg = (orFrom || orTo)
+            ? `教科書 p.${orFrom || '?'}〜${orTo || '?'}` : 'ページの記載なし';
           return `<div style="margin-top:3px;padding:4px 6px;background:#fff;border:1px solid #FDE68A;border-radius:4px">
                     <span style="color:var(--muted)">もう一方（${group.indexOf(j) + 1}件目）：</span>
                     <b>${esc(o.unitText || '範囲なし')}</b>
@@ -9099,8 +9159,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           + 'その場合は消さずに、それぞれ正しい学校名に直してください。</span>'
           + `<div style="margin-top:3px;padding:4px 6px;background:#fff;border:1px solid #FDE68A;border-radius:4px">
                <span style="color:var(--muted)">この行：</span><b>${esc(me.unitText || '範囲なし')}</b>
-               <span style="color:var(--muted)">／ ${esc((me.r && (me.r.textbook_from || me.r.textbook_to))
-                   ? `教科書 p.${me.r.textbook_from || '?'}〜${me.r.textbook_to || '?'}` : 'ページの記載なし')}</span>
+               <span style="color:var(--muted)">／ ${esc((() => {
+                   const meFrom = syllabusCleanNum(me.r && me.r.textbook_from), meTo = syllabusCleanNum(me.r && me.r.textbook_to);
+                   return (meFrom || meTo) ? `教科書 p.${meFrom || '?'}〜${meTo || '?'}` : 'ページの記載なし';
+                 })())}</span>
              </div>`
           + others
           + `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">
@@ -12631,8 +12693,9 @@ function findTestByDateEx(hist, school, grade, date) {
     const idxs = Object.keys(syllabusRows);
     if (!idxs.length) { alert('範囲表の読み取り結果がありません。'); return; }
     const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    // "null" などの読み取れなかった文字列は、CSVでも画面と同じく空欄にする（r 自体は書き換えない）
     const pagesText = (from, to) => {
-      from = from || ''; to = to || '';
+      from = syllabusCleanNum(from) || ''; to = syllabusCleanNum(to) || '';
       if (from === '' && to === '') return '';
       if (from !== '' && to !== '') return `p.${from}〜p.${to}`;
       return from !== '' ? `p.${from}` : `p.${to}`;
@@ -12651,14 +12714,14 @@ function findTestByDateEx(hist, school, grade, date) {
         row.grade || '',
         row.date || '',
         term,
-        r.date_raw || '',
+        syllabusCleanStr(r.date_raw),
         pagesText(r.textbook_from, r.textbook_to),
-        r.unit_range || '',
+        syllabusCleanStr(r.unit_range),
         row.unitText || '',
         pagesText(r.prev_grade_from, r.prev_grade_to),
-        r.prev_grade_unit_range || '',
+        syllabusCleanStr(r.prev_grade_unit_range),
         row.prevUnitText || '',
-        r.other_materials || '',
+        syllabusCleanStr(r.other_materials),
         (row.warns || []).map(w => w.text).join('／'),
         row.matchName || '',
         syllabusChecked[i] ? 'はい' : ''
