@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.38</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.39</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7032,6 +7032,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return { from, to, hasStart };
   }
 
+  // 【単元名に変換できなかったとき、読み取った生の値をそのまま見せる】
+  // ページ番号や単元名の記載自体はAIが正しく読んでいるのに、変換（ページ→単元名の
+  // 対応表や normalizeWrittenUnitRange）が失敗すると、いままでは画面に何も出ず、
+  // 「AIが読まなかった」のか「変換で捨てられた」のか区別できなかった。
+  // 変換ロジックはそのまま、表示だけを補う。
+  function syllabusRawFallbackText(fromPage, toPage, rawUnit) {
+    const raw = String(rawUnit || '').trim();
+    const validRaw = raw && !/^(null|undefined|なし|記載なし)$/i.test(raw);
+    const pageText = (fromPage || toPage) ? `p.${fromPage || '?'}〜${toPage || '?'}` : '';
+    if (validRaw && pageText) return `${pageText}／${raw}`;
+    return validRaw ? raw : pageText;
+  }
+
   // 学校名や学年が読み取れなかった行を、手で直す
   // 学校名・学年が読めなかった行に出すパネル。
   // 写真そのものを見ないと判断できないので、写真を一緒に出す。
@@ -8033,7 +8046,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                         onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
               </td></tr>`;
     }
-    const { school, grade, date, r, unitText, prevGrade, prevUnitText,
+    const { school, grade, date, r, unitText, unitTextRaw, prevGrade, prevUnitText, prevUnitTextRaw,
             fromPage, startNote, warns, safe, testName, matchName, matchRange } = row;
     const fx = syllabusFix[i] || {};
     return `<tr data-row="${i}">
@@ -8071,10 +8084,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
             ? `教科書 p.${fromPage||'?'}〜${r.textbook_to||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
-            : `<span style="color:var(--muted)">英語の範囲が写っていません<br>
-                 <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`}
+            : (unitTextRaw
+                // 【変換に失敗しても、読み取れていること自体は分かるようにする】
+                // ページ番号も単元名も無い、という表示にすると「AIが何も読まなかった」
+                // ように見えてしまう。実際は読めているが変換できなかっただけなので区別する。
+                ? `<span style="color:var(--muted)">${esc(unitTextRaw)}（単元名に変換できませんでした）</span>`
+                : `<span style="color:var(--muted)">英語の範囲が写っていません<br>
+                     <span style="font-size:10px">（表を分けて撮った写真の片方など。この行は反映できません）</span></span>`)}
           ${startNote ? `<br><span style="color:#B45309;font-size:10px">${esc(startNote)}</span>` : ''}
-          ${prevUnitText ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>` : ''}
+          ${prevUnitText
+            ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：p.${r.prev_grade_from}〜${r.prev_grade_to} ／ ${esc(prevUnitText)}</span>`
+            : (prevUnitTextRaw
+                ? `<br><span style="color:var(--muted)">${esc(prevGrade)}：${esc(prevUnitTextRaw)}（単元名に変換できませんでした）</span>`
+                : '')}
           ${r.other_materials ? `<br><span style="color:var(--muted);font-size:10px">${esc(r.other_materials)}</span>` : ''}
           ${warns.length ? `
             <div style="margin-top:6px;padding:6px 8px;border:1px solid #FCA5A5;border-radius:5px;background:#FEF2F2">
@@ -8457,6 +8479,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         unitText  = fx.from === fx.to ? fx.to : `${fx.from} 〜 ${fx.to}`;
         startNote = '範囲は手で直したものです';
       }
+      // 【変換に失敗しても、読み取れていること自体は画面に残す】
+      // ページ番号や単元名はAIが正しく読んでいるのに、単元名への変換（対応表・
+      // normalizeWrittenUnitRange）が失敗すると unitText が空になり、
+      // 「AIが読まなかった」のか「変換で捨てられた」のか区別できなくなる。
+      const unitTextRaw = !unitText
+        ? syllabusRawFallbackText(r.textbook_from, r.textbook_to, r.unit_range)
+        : '';
       const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
       // 【前学年も、範囲表に単元名が書いてあればそちらを使う】
       // 当該学年と同じ考え方：紙に書かれた単元名のほうが、ページからの変換より確か。
@@ -8467,6 +8496,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       const prevUnitText = prevW
         ? (prevW.hasStart && prevW.from !== prevW.to ? `${prevW.from} 〜 ${prevW.to}` : prevW.to)
         : prevPageText;
+      // 前学年ぶんも同様：prev_grade_from/to や prev_grade_unit_range に値があるのに
+      // prevUnitText が空になる場合は、生の値をそのまま見せる。
+      const prevUnitTextRaw = (prevGrade && !prevUnitText)
+        ? syllabusRawFallbackText(r.prev_grade_from, r.prev_grade_to, r.prev_grade_unit_range)
+        : '';
       // ── 明らかにおかしいところに警告を出す ────────────────────────
       // 直すのはアプリではなく凌央さん。推測で書き換えると、外したときに黙って
       // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
@@ -8583,7 +8617,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
       if (fx.from && fx.to) safe = !!(match && unitText);   // 手で直した範囲は信用する
 
-      syllabusRows[i] = { school, grade, date, r, unitText, prevGrade, prevUnitText,
+      syllabusRows[i] = { school, grade, date, r, unitText, unitTextRaw, prevGrade, prevUnitText, prevUnitTextRaw,
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
                           // 【番号だけでは足りない】テスト履歴は新しい分析が先頭に入るので、
                           // 「上から何番目」はすぐズレる。IDとファイル名も持たせて、
