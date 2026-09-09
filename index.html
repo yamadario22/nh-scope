@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.39</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.40</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -5028,7 +5028,40 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // 分析し直すとAPI料金がかかるため、学年だけ直して範囲を計算し直せるようにする。
   // ページ番号から、その位置の単元名・セクション名を求める。
   // 範囲表はページで書かれているため、ページで入力できるようにするために使う。
-  function pageToSectionName(grade, page) {
+  // 出題されないセクション（Grammar for Communication など）のページに当たったとき、
+  // 親のUnit名に戻すのではなく、同じUnit内でそのページに最も近い「範囲に出せるセクション」を探す。
+  //   side === 'end'   : そのページ以前で最も近いもの（範囲の終わり側）
+  //   side === 'start' : そのページ以降で最も近いもの（範囲の始まり側）
+  // 同じUnitの外までは探さない。NOT_IN_RANGE_SECTIONS に載っている名前は、
+  // rangePos() に位置が登録されておらずUnit先頭あつかいになってしまうため、絶対に返さない。
+  function nearestRangeableSection(bookId, page, side) {
+    const table = PAGE_UNIT_TABLES[bookId];
+    if (!table || !page) return null;
+    let idx = -1;
+    for (let k = 0; k < table.length; k++) { if (page >= table[k][0]) idx = k; else break; }
+    if (idx < 0 || !table[idx][1]) return null;
+    // 同じUnit（またはLet's Readなど）に属する項目のかたまりを、対応表の並びから求める
+    const root = table[idx][2] || table[idx][1];
+    let gStart = idx, gEnd = idx;
+    while (gStart > 0 && (table[gStart-1][2] || table[gStart-1][1]) === root) gStart--;
+    while (gEnd < table.length - 1 && (table[gEnd+1][2] || table[gEnd+1][1]) === root) gEnd++;
+    const isRangeable = e => {
+      const a = parseAuxName(e[1]);
+      return !(a && NOT_IN_RANGE_SECTIONS.includes(a.base));
+    };
+    if (side === 'start') {
+      for (let k = idx; k <= gEnd; k++) {
+        if (table[k][0] >= page && isRangeable(table[k])) return table[k][1];
+      }
+    } else {
+      for (let k = idx; k >= gStart; k--) {
+        if (table[k][0] <= page && isRangeable(table[k])) return table[k][1];
+      }
+    }
+    return null;
+  }
+
+  function pageToSectionName(grade, page, side) {
     const gradeN = gradeNumOf(grade);
     if (!gradeN || !(page > 0)) return '';
     const bookId = `default_c${gradeN}`;
@@ -5041,6 +5074,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 出題されないセクション（Grammar for Communication など）は範囲の端に出さない
     const aux = parseAuxName(unit);
     if (aux && NOT_IN_RANGE_SECTIONS.includes(aux.base)) {
+      const nearest = nearestRangeableSection(bookId, page, side);
+      if (nearest) return nearest;
       const ru = rangeUnitFromPage(bookId, page);
       return ru || unit;
     }
@@ -5066,8 +5101,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!m) return null;
     const from = parseInt(m[1]);
     const to   = m[2] ? parseInt(m[2]) : from;
-    const a = pageToSectionName(grade, from);
-    const b = pageToSectionName(grade, to);
+    const a = pageToSectionName(grade, from, 'start');
+    const b = pageToSectionName(grade, to, 'end');
     if (!a && !b) return null;
     if (!a || !b || a === b) return a || b;
     return `${a} 〜 ${b}`;
@@ -8625,10 +8660,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                           matchId: match ? (match.h.firestoreId || '') : '',
                           matchDate: match ? (match.h.date || '') : '',
                           safe, fixedByHand: !!(fx.school || fx.grade),
+                          fixedSchoolByHand: !!fx.school,
                           testName, noMatchWhy,
                           uncollected: !!syllabusUncollected[`${school}|${grade}|${date}`],
                           matchName:  match ? (match.h.name  || '') : '',
-                          matchRange: match ? (match.h.range || '') : '' };
+                          matchRange: match ? (match.h.range || '') : '',
+                          file: res.file || '' };
       // 【見た目はここでは作らない】
       // 491行ぶんのHTMLを毎回作ると、ボタン1つ押すたびに1秒以上かかっていた。
       // ここでは中身だけ決めておき、画面に出す数十行だけをあとで組み立てる。
@@ -8841,7 +8878,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(true)">全部入れる${checkAllSuffix}</button>
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す${checkAllSuffix}</button>
         <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:6px" ${syllabusRereadBusy?'disabled':''}
-                onclick="bulkRereadShownSyllabus()">${syllabusRereadBusy ? '🔄 読み直しています…' : `🔄 表示中の${bulkRereadCount}件をまとめて読み直す`}</button>`;
+                onclick="bulkRereadShownSyllabus()">${syllabusRereadBusy ? '🔄 読み直しています…' : `🔄 表示中の${bulkRereadCount}件をまとめて読み直す`}</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:6px" onclick="exportSyllabusCSV()">⬇ 範囲表CSV</button>`;
     const countsRowHtml =
       [1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　');
     const sylButtonsRowEl = document.getElementById('sylButtonsRow');
@@ -12526,6 +12564,55 @@ function findTestByDateEx(hist, school, grade, date) {
     const a = document.createElement('a');
     a.href = url;
     a.download = `テスト履歴_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    alert(`${rows.length}件を書き出しました。`);
+  }
+
+  // ── 範囲表の読み取り結果を、絞り込みに関係なく全件CSVで書き出す ──
+  function exportSyllabusCSV() {
+    const idxs = Object.keys(syllabusRows);
+    if (!idxs.length) { alert('範囲表の読み取り結果がありません。'); return; }
+    const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const pagesText = (from, to) => {
+      from = from || ''; to = to || '';
+      if (from === '' && to === '') return '';
+      if (from !== '' && to !== '') return `p.${from}〜p.${to}`;
+      return from !== '' ? `p.${from}` : `p.${to}`;
+    };
+    const header = ['写真ファイル名','学校名','学校名を手で直したか','学年','日付','テストの時期',
+      '写真の記載','当該学年ページ','当該学年の単元','当該学年の範囲',
+      '前学年ページ','前学年の単元','前学年の範囲','副教材','警告','結びついたテスト','反映のチェック'];
+    const rows = idxs.map(i => {
+      const row = syllabusRows[i] || {};
+      const r = row.r || {};
+      const term = row.date ? testTermOf({ testDate: row.date, school: row.school }) : '';
+      return [
+        row.file || '',
+        row.school || '',
+        row.fixedSchoolByHand ? 'はい' : '',
+        row.grade || '',
+        row.date || '',
+        term,
+        r.date_raw || '',
+        pagesText(r.textbook_from, r.textbook_to),
+        r.unit_range || '',
+        row.unitText || '',
+        pagesText(r.prev_grade_from, r.prev_grade_to),
+        r.prev_grade_unit_range || '',
+        row.prevUnitText || '',
+        r.other_materials || '',
+        (row.warns || []).map(w => w.text).join('／'),
+        row.matchName || '',
+        syllabusChecked[i] ? 'はい' : ''
+      ].map(q).join(',');
+    });
+    const csv = [header.map(q).join(','), ...rows].join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `範囲表_${new Date().toISOString().slice(0,10)}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     alert(`${rows.length}件を書き出しました。`);
