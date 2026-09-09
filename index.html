@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.36</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.37</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6844,6 +6844,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       prev_grade_from: { type: 'INTEGER' },
       prev_grade_to:   { type: 'INTEGER' },
       unit_range:  { type: 'STRING' },
+      prev_grade_unit_range: { type: 'STRING' },
       other_materials: { type: 'STRING' },
       date_raw:    { type: 'STRING' },
       grade_raw:   { type: 'STRING' },
@@ -6913,7 +6914,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　　4月〜12月 → 2025年（例：十一月十四日 → 2025-11-14）
 　　　1月〜3月　→ 2026年（例：二月九日 → 2026-02-09）
 　　　【重要】学年末テストは1〜3月なので、必ず2026年になる。2025年にしないこと
-・textbook_from / textbook_to：英語の【教科書】のページ範囲（数字だけ）
+・textbook_from / textbook_to：英語の【今の学年の教科書】のページ範囲（数字だけ）
 　　例：「教科書 P.6〜P.23」→ from=6, to=23
 　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
 　　【始まりが書かれていない場合】※これを守らないと範囲が大きく狂う
@@ -6923,12 +6924,38 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　　教科書の最初のページ（6など）を勝手に入れてはいけない。
 　　　「範囲表のどこかに開始ページの数字が書かれている」ときだけ from に数字を入れる。
 　　　迷ったら from=0 にすること。0 のほうが安全で、アプリ側が正しく補える。
-・unit_range：範囲表に【単元名がそのまま書かれている場合】、その部分を書き写す
+　　【今の学年と前学年、2行に分かれていることが多い】
+　　　中3の範囲表なら「3年」「NEW HORIZON 3」の行が今の学年、
+　　　中2の範囲表なら「2年」「NEW HORIZON 2」の行が今の学年。
+　　　前学年の行（後述の prev_grade_from / prev_grade_to）と取り違えないこと
+・unit_range：範囲表に【単元名がそのまま書かれている場合】、その部分を書き写す（今の学年ぶんのみ）
 　　例：「（メインはUnit4 Part3〜Unit6 Read and Think）」→「Unit 4 Part 3 〜 Unit 6 Read and Think」
 　　例：「（Unit4 Read and Think 1まで）」→「Unit 4 Read and Think 1」
 　　例：「Unit5〜6で学んだこと」→ 学習の助言なので書かない（範囲そのものではない）
 　　書かれていなければ空欄にする。ページから推測して書いてはいけない
-・prev_grade_from / prev_grade_to：前学年の教科書のページ範囲（「教科書（1年）P.106〜121」のような記載がある場合のみ）
+・prev_grade_from / prev_grade_to：【前の学年の教科書】のページ範囲（数字だけ）
+　　中3の範囲表なら「2年」「NEW HORIZON 2」の行、
+　　中2の範囲表なら「1年」「NEW HORIZON 1」の行が前学年にあたる。
+　　実物でよくある書き方の例：
+　　　「New Horizon 2 P122〜126」「New Horizon 3 P6〜18」（2行のうち前者が前学年）
+　　　「2年生の教科書 P.114〜126」「3年生の教科書 〜P.16」（2行のうち前者が前学年）
+　　【必ず両方の行が実際に書かれているときだけ埋める】
+　　　・「◯年の教科書」「NEW HORIZON ◯」のように学年が明記された行に、
+　　　　ページ番号（またはunit_rangeで拾う単元名）が実際に書かれている場合だけ書く
+　　　・そのような行が無ければ、前学年ぶんは from=0, to=0 のまま空欄にする。ページから推測しないこと
+　　　・今の学年の行しか無いのに、そのページを2つに割って前学年に回してはいけない
+　　　・範囲表に学年そのものが書かれておらず、どちらが前学年か決められない場合も空欄にする
+　　【範囲ではなく方針を書いた文とは区別する】次のような文はページも単元名も書かれておらず、
+　　　出題方針を述べているだけなので、前学年の範囲として絶対に拾わない：
+　　　　「1、2年生までの既習事項を実力問題として出題します」
+　　　　「1・2年生で学習した内容から『復習問題』あり」
+　　　　「2年生の内容も出題します」「前学年の復習を含みます」
+　　【副教材の学年表記と混同しない】「Joyful Work 2」「ワーク2年」のように、
+　　　副教材の名前に学年の数字が付くことがある。これは教科書ではないので、
+　　　prev_grade には入れず、other_materials に書く
+・prev_grade_unit_range：前学年の範囲表に【単元名がそのまま書かれている場合】、その部分を書き写す
+　　例：「2年の教科書 Unit 7〜」→「Unit 7」　／　「NEW HORIZON2 Unit3〜Unit5」→「Unit 3 〜 Unit 5」
+　　unit_range と同じ扱い。書かれていなければ空欄にする。ページから推測して書いてはいけない
 ・other_materials：教科書以外の教材の範囲（「めきめきEnglish P.60〜91」「ワークノート P.16〜41」など）をそのまま書く
 ・date_raw：日付が写真にどう書かれていたか、そのまま書く（例：「十一月十四日（金）」）
 ・grade_raw：学年が写真にどう書かれていたか、そのまま書く（例：「1年生」「記載なし」）
@@ -6936,11 +6963,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
 【注意】
 ・英語の欄だけを読む。国語・数学・理科・社会・技術・家庭・音楽・美術・保体の範囲は無視する
-・【教科書は必ず NEW HORIZON】。「教科書」「◯年生の教科書」と書かれた行のページだけを
-　　textbook_from / textbook_to にする。次はすべて副教材なので、教科書と混同しない：
+・【教科書は必ず NEW HORIZON】。「教科書」「◯年生の教科書」「NEW HORIZON ◯」と書かれた行のページ
+　　だけを textbook_from/textbook_to または prev_grade_from/prev_grade_to にする
+　　（どちらに入れるかは grade で決めた今の学年を基準に判断する。上の説明を参照）。
+　　次はすべて副教材なので、教科書と混同しない：
 　　　Get! English ／ めきめきEnglish ／ めきめき英単語 ／ 対話ドリル ／ ワークノート
 　　　単元テスト ／ 実力問題 ／ 基礎・基本ワーク ／ 授業プリント ／ 配られたプリント
-　　これらのページは other_materials にだけ書く。textbook には絶対に入れない
+　　　Joyful Work ／ ワーク（学年の数字が付いていても副教材）
+　　これらのページは other_materials にだけ書く。textbook にも prev_grade にも絶対に入れない
 　　例：「教科書〜p.77（メインはUnit4 Part3〜Unit6 Read and Think）／めきめきEnglish〜P88」
 　　　　→ textbook_to=77（88ではない）
 ・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`;
@@ -7815,8 +7845,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     r.textbook_to   = r.prev_grade_to   || 0;
     r.prev_grade_from = a || 0;
     r.prev_grade_to   = b || 0;
-    // 単元名はページと合わなくなるので捨てる（ページから出し直す）
-    r.unit_range = '';
+    // 単元名も一緒に入れ替える（ページの入れ替えに合わせないと、
+    // 単元名だけ元の学年のまま残ってしまう）
+    const ur = r.unit_range, pur = r.prev_grade_unit_range;
+    r.unit_range = pur || '';
+    r.prev_grade_unit_range = ur || '';
     r.note = `${r.note || ''}${r.note ? ' ／ ' : ''}当年ぶんと前学年ぶんのページを手で入れ替えました`;
     saveSyllabusState();   // 【保存する】入れ替えた結果もリロードで消えないように
     renderSyllabusResult(lastSyllabusResults, i);
@@ -8345,9 +8378,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         startNote = '範囲は手で直したものです';
       }
       const prevGrade = gradeNumOf(grade) > 1 ? normalizeGrade('中'+(gradeNumOf(grade)-1)) : '';
-      const prevUnitText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
+      // 【前学年も、範囲表に単元名が書いてあればそちらを使う】
+      // 当該学年と同じ考え方：紙に書かれた単元名のほうが、ページからの変換より確か。
+      const prevW = prevGrade ? normalizeWrittenUnitRange(r.prev_grade_unit_range, prevGrade) : null;
+      const prevPageText = (prevGrade && (r.prev_grade_from || r.prev_grade_to))
         ? (pagesToRangeText(prevGrade, `${r.prev_grade_from||r.prev_grade_to}〜${r.prev_grade_to||r.prev_grade_from}`) || '')
         : '';
+      const prevUnitText = prevW
+        ? (prevW.hasStart && prevW.from !== prevW.to ? `${prevW.from} 〜 ${prevW.to}` : prevW.to)
+        : prevPageText;
       // ── 明らかにおかしいところに警告を出す ────────────────────────
       // 直すのはアプリではなく凌央さん。推測で書き換えると、外したときに黙って
       // 間違った値が入る。気づけるようにするところまでをアプリの仕事にする。
