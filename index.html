@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.44</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.45</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4152,7 +4152,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           teacher: extractTeacherName(name),
           question_types: r.question_types||[],
           // 範囲の再判定用に材料を保存（対応表を直したとき、Geminiを呼ばずに範囲だけ作り直せる）
-          tested_vocab: (r.tested_vocab||[]).slice(0,60),
+          // tested_vocabの上限は抽出側（sanitizeAiText、120語）に合わせる。
+          // 以前は60語で切っており、抽出済みの後半語を保存時に半分捨てていた
+          // （822件中457件が60語ちょうどで頭打ち、範囲の終わりが手前に寄る原因になっていた）。
+          tested_vocab: (r.tested_vocab||[]).slice(0,120),
           key_items:    (r.key_items||[]).slice(0,60),
           notes: r.cross_grade_notes||'',
           date: new Date().toLocaleDateString('ja-JP'),
