@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.37</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.38</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7835,6 +7835,79 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
   }
 
+  // 【検索欄で絞り込んだ行を、まとめて読み直す】
+  // 指示文（SYLLABUS_PROMPT）を直したあと、1件ずつ「この1枚を読み直す」を
+  // 押して回るのは現実的ではない。学年・学校名などで絞り込んだうえで、
+  // まとめて読み直せるようにする。
+  async function bulkRereadShownSyllabus() {
+    if (syllabusRereadBusy) return;   // 二重に押されても始めない
+    const targets = syllabusBulkRereadTargets();
+    if (!targets.length) {
+      alert('読み直せる行がありません（写真が手元にある行だけが対象です）。');
+      return;
+    }
+    // 【費用のかかる操作なので、押す前に必ず確認する】
+    const filterActive = syllabusFilterActive();
+    const cost = Math.round(targets.length * 1.5);
+    let msg = `${targets.length}枚をAIに読み取らせ直します。\n\n`
+      + `・費用はおよそ ¥${cost} かかります（1枚あたり約¥1.5）\n`
+      + '・手で直した学校名・学年・日付・範囲は残ります\n'
+      + '・読み取り結果（ページ・単元名・前学年ぶん・副教材）が入れ替わります';
+    if (!filterActive) {
+      msg += `\n\n⚠️ 絞り込みをしていません。${targets.length}件すべてが対象です。`
+          + '件数が多いため、費用と時間がかかります。先に検索欄で絞り込むことをおすすめします。';
+    }
+    const ok = await showConfirm(msg, `${targets.length}枚を読み直す`);
+    if (!ok) return;
+
+    // 【処理中は、このボタンと個別の「この1枚を読み直す」を押せなくする】
+    // 二重に押されると、そのぶん費用が余計にかかる。
+    syllabusRereadBusy = true;
+    syllabusBulkAbort  = false;
+    renderSyllabusResult(lastSyllabusResults);
+    const stEl = document.getElementById('syllabusStatus');
+
+    let done = 0, failed = 0, aborted = false;
+    for (let k = 0; k < targets.length; k++) {
+      if (syllabusBulkAbort) { aborted = true; break; }
+      const i = targets[k];
+      const img = pendingSyllabus && pendingSyllabus[i];
+      if (!img || !img.b64) continue;   // 処理中に写真が無くなった行は飛ばす
+      setSt(stEl, 'load',
+        `${k + 1}/${targets.length}枚目を読み直しています…`
+        + `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 8px;margin-left:8px"
+                   onclick="abortBulkRerereadSyllabus()">中止</button>`);
+      try {
+        const r = await callGeminiJSON(
+          [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
+          '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
+          SYLLABUS_SCHEMA, 20000, getFastModeOpts());
+        lastSyllabusResults[i] = { file: img.name, r };
+        // 手で入れた学校名・学年・日付・範囲（syllabusFix）は消さない
+        done++;
+      } catch (e) {
+        // 【1枚失敗しても全体を止めない】まとめて読み直しているのに1件でエラー終了すると、
+        // 残り全部の費用も時間も無駄になる。失敗した枚数は最後にまとめて知らせる。
+        failed++;
+      }
+      // 【1枚ごとに保存する】これが無いと、中止したときや途中で閉じたときに、
+      // お金を払って読み直した結果がそのぶん消えてしまう。
+      saveSyllabusState();
+    }
+
+    syllabusRereadBusy = false;
+    syllabusBulkAbort  = false;
+    renderSyllabusResult(lastSyllabusResults);
+    setSt(stEl, failed ? 'err' : 'ok',
+      `${done}枚を読み直しました（失敗${failed}枚）` + (aborted ? '／途中で中止しました' : ''));
+  }
+
+  // 「表示中の◯件をまとめて読み直す」の途中で押す「中止」。
+  // いま処理中の1枚は最後まで終わらせてから止まる（そこまでの保存を確実にするため）。
+  function abortBulkRerereadSyllabus() {
+    syllabusBulkAbort = true;
+  }
+
   // 当年ぶんと前学年ぶんのページが入れ替わっていたときに、手で戻す
   function swapSyllabusGradePages(i) {
     const res = lastSyllabusResults[i];
@@ -7975,11 +8048,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
           ${(() => {
             const hasRange = !!(r.textbook_from || r.textbook_to || unitText);
-            const photo = (pendingSyllabus && pendingSyllabus[i])
+            const hasPhoto = !!(pendingSyllabus && pendingSyllabus[i]);
+            const photo = hasPhoto
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                          onclick="openSyllabusPhoto(${i})">📷 範囲表を見る</button>` : '';
+            // 【警告の有無にかかわらず、写真が手元にある行はすべて読み直せるようにする】
+            // 以前は警告が出ている行だけに出していたため、指示文（SYLLABUS_PROMPT）を
+            // 直しても、正常に読めた行には反映する手段が無かった。
+            const reread = hasPhoto
+              ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
+                         ${syllabusRereadBusy ? 'disabled' : ''}
+                         onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>` : '';
             if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
-            return `<br>${photo}${hasRange
+            return `<br>${photo}${reread}${hasRange
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                        onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
               + `<button class="btn btn-secondary btn-sm"
@@ -8002,14 +8083,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                     ? ` <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 6px;margin-left:4px"
                                onclick="openOctSchools()">🍁 この学校を登録する</button>`
                     : ''}</div>`).join('')}
+              ${(warns.some(w => w.swap) || (warns.some(w => w.needFix) && !syllabusEditOpen[i])) ? `
               <div style="margin-top:5px">
-                <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
-                        onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>
                 ${warns.some(w => w.swap) ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-right:4px"
                         onclick="swapSyllabusGradePages(${i})">前学年ぶんと入れ替える</button>` : ''}
                 ${warns.some(w => w.needFix) && !syllabusEditOpen[i] ? `<button class="btn btn-primary btn-sm" style="font-size:10px;padding:2px 7px"
                         onclick="openSyllabusEdit(${i})">学校名を直す</button>` : ''}
-              </div>
+              </div>` : ''}
             </div>` : ''}
         </td>
         <td style="font-size:11px">
@@ -8717,6 +8797,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 「全部入れる／外す」が画面に出ている行だけに効くようにし、ボタンにもそれと分かる表記を出す。
     const sylFilterActive = syllabusFilterActive();
     const checkAllSuffix = sylFilterActive ? '（表示中）' : '';
+    const bulkRereadCount = syllabusBulkRereadTargets().length;
     const buttonsRowHtml = `
         <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
                 onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
@@ -8724,7 +8805,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 onclick="toggleSyllabusOnlyIssues()">${syllabusOnlyIssues?'✓ ':''}確かめたい行だけ出す</button>
         <span style="font-size:11px;color:var(--muted);margin-left:6px">反映のチェック：</span>
         <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(true)">全部入れる${checkAllSuffix}</button>
-        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す${checkAllSuffix}</button>`;
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="setSylCheckAll(false)">全部外す${checkAllSuffix}</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:6px" ${syllabusRereadBusy?'disabled':''}
+                onclick="bulkRereadShownSyllabus()">${syllabusRereadBusy ? '🔄 読み直しています…' : `🔄 表示中の${bulkRereadCount}件をまとめて読み直す`}</button>`;
     const countsRowHtml =
       [1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　');
     const sylButtonsRowEl = document.getElementById('sylButtonsRow');
@@ -8985,6 +9068,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return syllabusOnlyIssues || !!(syllabusFilter.grade || syllabusFilter.term || syllabusFilter.school);
   }
 
+  // 【まとめて読み直す対象】いま画面に出ている行（絞り込み後の全ページぶん。
+  // setSylCheckAll と同じ考え方）のうち、写真が手元にある行だけ。
+  // 写真が無い行は読み直しようがないので対象に含めない。
+  function syllabusBulkRereadTargets() {
+    const base = syllabusFilterActive() ? syllabusShownIdx : Object.keys(syllabusRows);
+    return base.filter(i => pendingSyllabus && pendingSyllabus[i] && pendingSyllabus[i].b64);
+  }
+
   function setSylFilter(key, value) {
     syllabusPage = 0;
     syllabusFilter[key] = value;
@@ -9037,6 +9128,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const ts = document.getElementById('sylTermSel');  if (ts) ts.value = '';
     renderSyllabusTable();
   }
+
+  // 【読み直し中は二重に押せないようにする】
+  // 「表示中の◯件をまとめて読み直す」の実行中に、このボタンや
+  // 個別の「この1枚を読み直す」を押されると、そのぶん費用が余計にかかる。
+  let syllabusRereadBusy = false;
+  // 「中止」が押されたか。次の1枚に進む前に確認し、そこで処理をやめる。
+  let syllabusBulkAbort = false;
 
   // 【チェックの入り切りは、画面ではなくここで覚える】
   // 画面のチェックだけで持つと、ページを分けたとたん
