@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.34</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.35</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4637,6 +4637,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 title="10月に2学期中間テストを行う学校を登録します。登録していない学校に10月の日付が入っていたら、月の読み違いとして警告を出します">🍁 10月にテストがある学校</button>
               <button class="btn btn-ghost btn-sm" onclick="rejudgeTestRanges()"
                 title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
+              <button class="btn btn-ghost btn-sm" onclick="exportTestHistoryCSV()"
+                title="絞り込みに関係なく、保存済みテストの分析履歴を全件CSVで書き出します（範囲判定の答え合わせ用）">⬇ 履歴CSV</button>
               <button class="btn btn-ghost btn-sm" onclick="resyncTestsToCloud()"
                 title="手元にはあるのにクラウドに無い（または消えてしまった）テストをまとめて送り直します（Geminiは使わないので料金はかかりません）">☁️ クラウドに送り直す</button>
               <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
@@ -12148,6 +12150,61 @@ function findTestByDateEx(hist, school, grade, date) {
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     alert(`${counts.join(' / ')} / 合計 ${rows.length}件を書き出しました。`);
+  }
+
+  // ── CSV出力（テスト分析履歴用）───────────────────────────────
+  // 保存済みテストの範囲判定がどれくらい当たっているかを外部で集計するための書き出し。
+  // 絞り込み条件に関係なく全件を出す。判定・抽出・分類のロジックや履歴データ自体には一切手を加えない。
+  function exportTestHistoryCSV() {
+    let hist = [];
+    try { hist = histAll(); } catch { alert('テスト履歴の読み込みに失敗しました。'); return; }
+    if (!hist.length) { alert('テスト分析履歴がありません。'); return; }
+    const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const joinField = (arr, prop, limit) => {
+      let list = Array.isArray(arr) ? arr : [];
+      if (prop) list = list.map(x => x && x[prop]).filter(Boolean);
+      if (limit) list = list.slice(0, limit);
+      return list.join('・');
+    };
+    const rangePagesText = rp => {
+      if (!rp) return '';
+      const from = rp.from != null ? rp.from : '';
+      const to = rp.to != null ? rp.to : '';
+      if (from === '' && to === '') return '';
+      if (from !== '' && to !== '') return `p.${from}〜p.${to}`;
+      return from !== '' ? `p.${from}` : `p.${to}`;
+    };
+    const header = ['PDFファイル名','学校','学年','学年を画面で指定したか','テスト日','年度',
+      '現在の範囲','範囲の確定元','機械が最初に判定した範囲','ひとつ前の範囲','範囲表のページ',
+      '前学年ぶんの範囲','出題文法','出題熟語','出題語','重要項目'];
+    const rows = hist.map(h => [
+      h.name,
+      h.school,
+      h.grade,
+      h.gradeSpecified ? 'TRUE' : 'FALSE',
+      h.testDate || h.date,
+      h.year,
+      h.range,
+      h.rangeEditedBy,
+      h.rangeOrig,
+      h.rangePrev,
+      rangePagesText(h.rangePages),
+      h.prevGradeRange,
+      joinField(h.question_types, 'grammar'),
+      joinField(h.question_types, 'phrases'),
+      joinField(h.tested_vocab, null, 30),
+      joinField(h.key_items, null, 30)
+    ].map(q).join(','));
+    const csv = [header.map(q).join(','), ...rows].join('\r\n');
+    // ExcelでUTF-8を正しく開かせるためBOMを付ける
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `テスト履歴_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    alert(`${rows.length}件を書き出しました。`);
   }
 
   // ── CSV取込（exportCSVと同じ列構成のファイルを読み込む。バックアップ復元用） ──
