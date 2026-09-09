@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.43</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.44</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -12637,6 +12637,14 @@ function findTestByDateEx(hist, school, grade, date) {
   // ── CSV出力（テスト分析履歴用）───────────────────────────────
   // 保存済みテストの範囲判定がどれくらい当たっているかを外部で集計するための書き出し。
   // 絞り込み条件に関係なく全件を出す。判定・抽出・分類のロジックや履歴データ自体には一切手を加えない。
+  //
+  // 【範囲の終わりが手前で止まる原因調査のための追加列について】
+  // refineRangeFromLibrary() は判定の途中経過（diag：語彙・文法の候補、決め手、
+  // 一致しなかった出題語など）を計算しているが、その場限りの値として返すだけで、
+  // テスト履歴（h）には保存していない。ここで改めて計算し直すと、当時の判定条件
+  // （前回テストの範囲など、他の行の状態に依存する）と食い違う可能性があり、
+  // 「実際にどう決まったか」の調査を誤らせるおそれがあるため、計算し直さない。
+  // 該当データがhにまだ無い列は、値が用意されるまで空欄で出す。
   function exportTestHistoryCSV() {
     let hist = [];
     try { hist = histAll(); } catch { alert('テスト履歴の読み込みに失敗しました。'); return; }
@@ -12656,9 +12664,15 @@ function findTestByDateEx(hist, school, grade, date) {
       if (from !== '' && to !== '') return `p.${from}〜p.${to}`;
       return from !== '' ? `p.${from}` : `p.${to}`;
     };
+    // 判定の根拠となる情報は、hに既に保存されているものだけをそのまま出す
+    // （無い場合は空欄。ここで新たに計算はしない）。
+    const orBlank = v => v == null ? '' : v;
     const header = ['PDFファイル名','学校','学年','学年を画面で指定したか','テスト日','年度',
       '現在の範囲','範囲の確定元','機械が最初に判定した範囲','ひとつ前の範囲','範囲表のページ',
-      '前学年ぶんの範囲','出題文法','出題熟語','出題語','重要項目'];
+      '前学年ぶんの範囲','出題文法','出題熟語','出題語','重要項目',
+      '語彙から求めた範囲の候補（絞り込み前）','文法から求めた範囲の候補（絞り込み前）',
+      '終わりを決めた根拠','教科書データと一致した出題語数','教科書データで見つからなかった出題語数',
+      '出題語の教科書掲載箇所'];
     const rows = hist.map(h => [
       h.name,
       h.school,
@@ -12674,8 +12688,14 @@ function findTestByDateEx(hist, school, grade, date) {
       h.prevGradeRange,
       joinField(h.question_types, 'grammar'),
       joinField(h.question_types, 'phrases'),
-      joinField(h.tested_vocab, null, 30),
-      joinField(h.key_items, null, 30)
+      joinField(h.tested_vocab, null),
+      joinField(h.key_items, null),
+      orBlank(h.rangeWordCandidates),
+      orBlank(h.rangeGramCandidates),
+      orBlank(h.rangeDecidedBy),
+      orBlank(h.rangeVocabMatchedCount),
+      orBlank(h.rangeVocabUnmatchedCount),
+      orBlank(h.rangeWordLocations)
     ].map(q).join(','));
     const csv = [header.map(q).join(','), ...rows].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
