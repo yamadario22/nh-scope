@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.42</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.43</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -6215,22 +6215,23 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     r.to_unit     = endHit.unit;
     r.to_lesson   = endHit.lesson || '';
 
-    // 【中1の最初のテストは、必ず Unit 0 から始まる】
-    // 凌央さんの確認：中1が受ける最初の定期テストは、どの学校でも例外なく
-    // 教科書の最初（Unit 0）からが範囲になる。入学して最初のテストなので、
-    // それより手前が存在しない。
+    // 【その学年最初のテストは、必ず Unit 0 から始まる】
+    // 凌央さんの確認：各学年が受ける最初の定期テストは、どの学校でも例外なく
+    // 教科書の最初（Unit 0）からが範囲になる（当該学年ぶんの範囲の話。
+    // 中2・中3の前学年ぶんの範囲＝prevGradeRange とは無関係で、そちらには触れない）。
     //
     // 対応表に be動詞・一般動詞（Unit 1）を入れたことで Unit 1 の手がかりが一気に増え、
     // 「最も前にある手がかり」で始まりを決める仕組みが Unit 1 に引っぱられて、
-    // 本当は Unit 0 からのテストが「Unit 1 Part 1 から」と狭くなっていた（実例：5件）。
+    // 本当は Unit 0 からのテストが「Unit 1 Part 1 から」と狭くなっていた（実例：5件、中1）。
+    // 同じ理由で中2・中3でも「Unit 1 Part 1 から」に狭まる例が10校で見つかったため、
+    // 学年の限定を外し、中1〜中3すべてに適用する。
     //
-    // 条件を絞って当てる：中1で、4〜6月で、その学校の前のテストが記録にない場合だけ。
+    // 条件を絞って当てる：4〜6月で、その学校の前のテストが記録にない場合だけ。
     // （6月末の期末テストなどは前回＝5月の中間があるので、この規則は当たらない）
-    const isFirstEverTest = gradeNum === 1
-      && testMonth >= 4 && testMonth <= 6
+    const isFirstEverTest = testMonth >= 4 && testMonth <= 6
       && !(prevEndPos != null && prevEndPos >= 0);
     if (isFirstEverTest && rangePos(r.from_unit, gradeNum) > 0) {
-      diag.forcedStartUnit0 = `中1の最初のテストのため、始まりを Unit 0 にしました（判定では ${r.from_unit}${r.from_lesson ? ' ' + r.from_lesson : ''} でした）`;
+      diag.forcedStartUnit0 = `中${gradeNum}の最初のテストのため、始まりを Unit 0 にしました（判定では ${r.from_unit}${r.from_lesson ? ' ' + r.from_lesson : ''} でした）`;
       r.from_unit   = 'Unit 0';
       r.from_lesson = '';
     }
