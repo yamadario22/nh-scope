@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.40</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.41</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -7327,9 +7327,51 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!confirm(`撮った順で続いている ${run.length} 枚に、「${name}」を入れます。\n`
                + `（学校名が読み取れている写真の手前まで）\n`
                + `学年と日付は写真ごとに違うので、そのままにします。よろしいですか。`)) return;
-    run.forEach(j => { syllabusFix[j] = Object.assign({}, syllabusFix[j], { school: name }); });
+    // 人がこの候補を選んで押した操作なので、「前後から自動で埋めた」扱いにはしない
+    run.forEach(j => { syllabusFix[j] = Object.assign({}, syllabusFix[j], { school: name, schoolFromNearby: false }); });
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults, run[0]);
+  }
+
+  // 【前後の写真から、学校名が空の行だけを機械的に埋める】
+  // 条件は厳格に絞る：撮った順で「直前の行」と「直後の行」の両方に学校名があり、
+  // かつその2つが同じ学校名であるときだけ埋める。
+  // 　・前後が違う学校 → 埋めない（境目にいる可能性があり、機械では判断できない）
+  // 　・片側しか学校名がない → 埋めない
+  // 　・前後が空欄続き（例：空欄が2枚以上連続）→ その内側の行は「直前」または「直後」も
+  // 　　空欄になるため、条件を満たさず埋めない（これも境目の可能性があるため）
+  // rows を省略すると、いま表に出している syllabusRows を使う。
+  // テストからは、素の {i: {school}} 形のオブジェクトを渡して呼べるようにするため引数化している。
+  function syllabusAutoFillCandidates(rows) {
+    rows = rows || syllabusRows;
+    const idxs = Object.keys(rows).map(Number).sort((a, b) => a - b);
+    const out = [];
+    idxs.forEach((idx, pos) => {
+      const row = rows[idx];
+      if (!row || row.readError || row.school) return;
+      const prevIdx = idxs[pos - 1], nextIdx = idxs[pos + 1];
+      if (prevIdx === undefined || nextIdx === undefined) return;
+      const prevRow = rows[prevIdx], nextRow = rows[nextIdx];
+      if (!prevRow || !nextRow) return;
+      if (prevRow.school && nextRow.school && prevRow.school === nextRow.school) {
+        out.push({ i: idx, school: prevRow.school });
+      }
+    });
+    return out;
+  }
+
+  async function syllabusAutoFillNearbySchool() {
+    const cands = syllabusAutoFillCandidates();
+    if (!cands.length) return;
+    if (!confirm(`${cands.length}件に学校名を入れます。前後が同じ学校の行だけが対象です\n`
+               + `あとから1件ずつ直せます`)) return;
+    // 手で直したもの（syllabusFix）と同じ扱いにして、読み直しても消えないようにする。
+    // schoolFromNearby だけは区別のために付け、表示だけ分ける（学校名を直したら消える）。
+    cands.forEach(c => {
+      syllabusFix[c.i] = Object.assign({}, syllabusFix[c.i], { school: c.school, schoolFromNearby: true });
+    });
+    saveSyllabusState();
+    renderSyllabusResult(lastSyllabusResults);
   }
 
   function syllabusPickSchool(i, name) {
@@ -7561,7 +7603,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }, warn);
     if (!ok) return;
 
-    syllabusFix[i] = Object.assign({}, syllabusFix[i], { school, grade, date, from, to });
+    // 「学校名・学年を直す」で決定した = 人が確かめた、という扱いにする
+    syllabusFix[i] = Object.assign({}, syllabusFix[i], { school, grade, date, from, to, schoolFromNearby: false });
     delete syllabusEditOpen[i];
     saveSyllabusState();
     renderSyllabusResult(lastSyllabusResults);
@@ -8070,6 +8113,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return '';
   }
 
+  // 学校名・学年を直した／埋めた行に出す注記。
+  // 「前後の写真から機械的に埋めた」ものは、手で確かめたものと見分けが付くように分けて出す。
+  function syllabusFixBadgeHtml(fx) {
+    fx = fx || {};
+    if (!fx.school && !fx.grade) return '';
+    if (fx.schoolFromNearby && fx.school) {
+      return '<br><span style="color:#0369A1;font-size:10px">📷 前後の写真から入れた学校名です</span>'
+           + (fx.grade ? '<br><span style="color:#059669;font-size:10px">✏️ 学年は手で直したものです</span>' : '');
+    }
+    return '<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>';
+  }
+
   // 1行ぶんの見た目を作る。中身は syllabusRows[i] に入っているものだけを使う。
   function syllabusRowHtml(i) {
     const row = syllabusRows[i];
@@ -8090,8 +8145,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(r.date_raw || r.grade_raw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(r.grade_raw||'')} ${esc(r.date_raw||'')}</span>` : ''}
-          ${(fx.school || fx.grade)
-            ? `<br><span style="color:#059669;font-size:10px">✏️ 学校名・学年は手で直したものです</span>` : ''}
+          ${syllabusFixBadgeHtml(fx)}
           ${fx.date ? `<br><span style="color:#059669;font-size:10px">✏️ 日付は手で直したものです</span>` : ''}
           ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
           ${(() => {
@@ -8869,7 +8923,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const sylFilterActive = syllabusFilterActive();
     const checkAllSuffix = sylFilterActive ? '（表示中）' : '';
     const bulkRereadCount = syllabusBulkRereadTargets().length;
+    const autoFillNearbyCount = syllabusAutoFillCandidates().length;
     const buttonsRowHtml = `
+        <button class="btn btn-secondary btn-sm" style="font-size:11px" ${autoFillNearbyCount ? '' : 'disabled'}
+                onclick="syllabusAutoFillNearbySchool()">前後の写真から学校名を埋める（${autoFillNearbyCount}件）</button>
         <button class="btn ${syllabusSortIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
                 onclick="toggleSyllabusSort()">${syllabusSortIssues?'✓ ':''}怪しい順に並べる</button>
         <button class="btn ${syllabusOnlyIssues?'btn-primary':'btn-secondary'} btn-sm" style="font-size:11px"
