@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.49</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.50</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -4821,8 +4821,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                              ? `<div style="color:#B45309;font-size:10px;margin-top:2px">⚠️ ${ws.map(w=>esc(w)).join('／')}</div>`
                              : '';
                          })()
-                       + (h.rangePrev && h.rangePrev !== h.range
-                          ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(h.rangePrev)}
+                       + (revertTargetOf(h)
+                          ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(revertTargetOf(h))}
                                <button class="btn btn-ghost btn-sm" onclick="revertTestRange(${realIdx})"
                                        style="padding:0 4px;font-size:10px" title="書き換える前の範囲に戻します">元に戻す</button>
                              </div>` : '')
@@ -9643,16 +9643,28 @@ function findTestByDateEx(hist, school, grade, date) {
   // 【書き換える前の範囲に戻す】
   // 「元に戻せます」と画面に出しておきながら、戻す手段がなかった。
   // 変更前の範囲（rangePrev）は保存してあるので、それを書き戻す。
+  // 【戻す先を決める】（v10.50）
+  // ふつうは「ひとつ前の範囲（rangePrev）」に戻す。
+  // ただし範囲表を同じ内容で2回反映すると、ひとつ前＝今の範囲になり、戻す先が消えていた。
+  // そのときは、機械が最初に出した範囲（rangeOrig）に戻す。
+  function revertTargetOf(h) {
+    if (!h) return '';
+    if (h.rangePrev && h.rangePrev !== h.range) return h.rangePrev;
+    if (h.rangeOrig && h.rangeOrig !== h.range) return h.rangeOrig;
+    return '';
+  }
+
   async function revertTestRange(idx) {
     let hist = [];
     try { hist = histAll(); } catch {}
     const h = hist[idx];
-    if (!h || !h.rangePrev) { alert('戻せる範囲が記録されていません。'); return; }
+    const target = revertTargetOf(h);
+    if (!target) { alert('戻せる範囲が記録されていません。'); return; }
     const ok = await showConfirm(
-      `${h.name}\n\nいまの範囲：${h.range}\n戻す範囲　：${h.rangePrev}\n\nこの内容で戻しますか。`, '戻す');
+      `${h.name}\n\nいまの範囲：${h.range}\n戻す範囲　：${target}\n\nこの内容で戻しますか。`, '戻す');
     if (!ok) return;
     const now = h.range;
-    h.range = h.rangePrev;
+    h.range = target;
     h.rangePrev = now;                 // もう一度押せば行き来できる
     h.rangeEditedBy = '';              // 機械の判定に戻すので、印は外す
     try { histSave(hist); } catch {}
@@ -9704,6 +9716,7 @@ function findTestByDateEx(hist, school, grade, date) {
     h.syllabusTestName = r.test_name || '';
     const patch = {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '範囲表', rangePages: h.rangePages,
+      rangeOrig: h.rangeOrig,   // 機械が最初に出した範囲もクラウドに残す（v10.50）
       prevGradeRange: h.prevGradeRange, prevGradeGrade: h.prevGradeGrade,
       prevGradePages: h.prevGradePages, otherMaterials: h.otherMaterials };
     // まとめて反映のときは、保存と共有をあとで1回にまとめる（速さのため）
