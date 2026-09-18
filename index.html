@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.48</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.49</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -9741,7 +9741,28 @@ function findTestByDateEx(hist, school, grade, date) {
       return;
     }
 
-    const ok = await showConfirm(`${keys.length}件の範囲を、範囲表の内容に書き換えます。よろしいですか。\n（書き換える前の範囲は残るので、元に戻せます）`, '反映する');
+    // 【すでに同じ内容で反映済みの行は飛ばす】（v10.49）
+    // もう一度書き込むと「ひとつ前の範囲」が範囲表の値で上書きされ、
+    // 「元に戻す」を押しても機械の判定に戻らなくなっていた。
+    // 前学年ぶんの範囲まで同じときだけ飛ばす（中身が違うものは今までどおり書き込む）。
+    let histNow = [];
+    try { histNow = histAll(); } catch {}
+    const already = keys.filter(i => {
+      const row = syllabusRows[i];
+      const h = findSyllabusTarget(histNow, row);
+      return !!h && h.rangeEditedBy === '範囲表'
+        && (h.range || '') === (row.unitText || '')
+        && (h.prevGradeRange || '') === (row.prevUnitText || '');
+    });
+    const alreadySet = new Set(already);
+    const todo = keys.filter(i => !alreadySet.has(i));
+    if (!todo.length) {
+      alert(`チェックが入っている ${keys.length}件は、すべて同じ内容で反映済みです。書き換えるものはありません。`);
+      return;
+    }
+
+    const ok = await showConfirm(`${todo.length}件の範囲を、範囲表の内容に書き換えます。よろしいですか。\n（書き換える前の範囲は残るので、元に戻せます）`
+      + (already.length ? `\n\n※ ほかの ${already.length}件は、すでに同じ内容で反映済みなので飛ばします。` : ''), '反映する');
     if (!ok) return;
 
     // 保存と共有は最後に1回だけにする。1件ずつだと履歴全体を100回書き直すことになり、
@@ -9752,7 +9773,7 @@ function findTestByDateEx(hist, school, grade, date) {
     try { hist = histAll(); } catch {}
     const defer = { hist, patches: [] };
     let n = 0, ng = 0;
-    for (const i of keys) {
+    for (const i of todo) {
       try { if (await applySyllabus(i, true, defer)) n++; else ng++; }
       catch (e) { ng++; console.warn('反映に失敗:', i, e); }
     }
@@ -9772,6 +9793,7 @@ function findTestByDateEx(hist, school, grade, date) {
     renderTestHistory();
 
     let msg = `${n}件の範囲を更新しました。`;
+    if (already.length) msg += `\n（すでに反映済みの ${already.length}件は、書き換えずに飛ばしました）`;
     if (ng)     msg += `\n${ng}件は書き込めませんでした（対象のテストが見つからないか、削除された可能性があります）。`;
     if (saveNg) msg += '\n⚠️ 手元への保存に失敗しました。ブラウザの空き容量を確認してください。';
     if (sendNg) msg += `\n⚠️ ${sendNg}件は他の校舎への共有に失敗しました（手元には保存されています）。`;
