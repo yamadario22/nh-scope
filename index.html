@@ -266,7 +266,7 @@
 
 <!-- HEADER -->
 <header class="header">
-  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.47</span></div>
+  <div class="logo">NH<span>Scope</span> <span style="font-size:11px;font-weight:400;opacity:0.6">v10.48</span></div>
   <div style="display:flex;align-items:center;gap:12px">
     <div id="syncBadge" onclick="manualSync()" title="クリックで今すぐ同期"
          style="font-size:11px;color:rgba(255,255,255,.35);cursor:pointer">⏳ 同期中...</div>
@@ -10205,7 +10205,10 @@ function findTestByDateEx(hist, school, grade, date) {
   // 同じ学校・同じ学年で、同じ年度内の「前回のテスト」の終わりを返す。
   // 2学期制：前期中間（5〜6月）→ 前期期末（9月）→ 後期中間（11月）→ 学年末（1〜2月）
   // 次のテストは前回の続きから始まるのが基本なので、範囲の始まりを絞る手がかりになる。
-  function findPrevTestEnd({ school, grade, testDate }) {
+  // rangeOf：各テストの「範囲」として何を使うかを差し替えたいときだけ渡す（省略時は従来どおり）。
+  //   履歴CSVの「今のロジックで計算し直した範囲」で、正解（範囲表・手入力）を
+  //   前回テストの手がかりに使わず、機械の判定だけでつなげるために使う。
+  function findPrevTestEnd({ school, grade, testDate }, rangeOf) {
     if (!school || !grade || !testDate) return null;
     const sy = schoolYearOf(testDate);
     let hist = [];
@@ -10223,10 +10226,16 @@ function findTestByDateEx(hist, school, grade, date) {
       if (schoolYearOf(d) !== sy) return;                     // 別の年度は対象外
       if ((h.school||'') !== school) return;
       if (normalizeGrade(h.grade||'') !== normalizeGrade(grade)) return;
-      if (!h.range || h.range === '範囲不明') return;
-      // 再判定中は、その場で計算し直した値（rangeTemp）を優先する。
-      // そうしないと、古いテストを直しても次のテストが古い値を見てしまう。
-      const useRange = h.rangeTemp || h.range;
+      let useRange;
+      if (rangeOf) {
+        useRange = rangeOf(h);
+        if (!useRange || useRange === '範囲不明') return;
+      } else {
+        if (!h.range || h.range === '範囲不明') return;
+        // 再判定中は、その場で計算し直した値（rangeTemp）を優先する。
+        // そうしないと、古いテストを直しても次のテストが古い値を見てしまう。
+        useRange = h.rangeTemp || h.range;
+      }
       if (!best || d > best.date) best = { date: d, range: useRange, name: h.name || '' };
     });
     return best;
@@ -12908,6 +12917,64 @@ function findTestByDateEx(hist, school, grade, date) {
   // （前回テストの範囲など、他の行の状態に依存する）と食い違う可能性があり、
   // 「実際にどう決まったか」の調査を誤らせるおそれがあるため、計算し直さない。
   // 該当データがhにまだ無い列は、値が用意されるまで空欄で出す。
+  // 【今のロジックで範囲を計算し直す（CSV用・何も保存しない）】
+  // 答え合わせ専用。履歴（h）には一切書き込まない（rangeTemp も使わない）。
+  //   ・出発点：範囲表・手入力で直したテストは、直す前の機械の範囲（rangeOrig → rangePrev）。
+  //     正解をそのまま出発点にするとカンニングになり、当たり具合を正しく測れない。
+  //   ・前回テストの手がかり：正解ではなく、ここで計算した機械の範囲だけでつなぐ。
+  //   ・古いテストから順に計算する（「範囲を再判定」と同じ順番・同じ条件）。
+  function calcRangesWithCurrentLogic(hist) {
+    const out = new Map();
+    const edited = h => h.rangeEditedBy === '範囲表' || h.rangeEditedBy === '手入力';
+    const baseRange = h => edited(h)
+      ? (h.rangeOrig != null ? h.rangeOrig : (h.rangePrev || ''))
+      : (h.range || '');
+    if (!getNHItems().length) {
+      hist.forEach(h => out.set(h, { range: '', memo: '教科書データが読み込まれていないため計算できません' }));
+      return out;
+    }
+    const order = hist.map(h => ({ h, d: h.testDate || extractTestDate(h.name || '') || '' }))
+      .sort((a, b) => (a.d || '9999').localeCompare(b.d || '9999'));
+    const rangeOf = hh => out.has(hh) && out.get(hh).range ? out.get(hh).range : baseRange(hh);
+    order.forEach(({ h }) => {
+      try {
+        const y = parseInt(h.year || (h.date||'').split('/')[0] || '0');
+        if (y && y < 2025) { out.set(h, { range: '', memo: '2025年度より前（対象外）' }); return; }
+        const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
+        if (!hasMaterial) { out.set(h, { range: '', memo: '判定の材料が保存されていない' }); return; }
+        const r = {
+          grade: h.grade || '',
+          question_types: h.question_types || [],
+          tested_vocab: h.tested_vocab || [],
+          key_items: h.key_items || [],
+          ...parseRangeText(baseRange(h))
+        };
+        let gradeNote = '';
+        if (!r.grade) {
+          const gi = inferGradeFromGrammar(r);
+          if (gi) { r.grade = gi.grade; gradeNote = `学年を文法から${gi.grade}と推測`; }
+        }
+        const tDate = h.testDate || extractTestDate(h.name || '');
+        const prev = findPrevTestEnd({ school: h.school || extractSchoolName(h.name||''), grade: r.grade, testDate: tDate }, rangeOf);
+        const pPos = prev ? rangePos(String(prev.range).split(/\s*[〜～~]\s*/).pop(), gradeNumOf(r.grade)) : null;
+        const d = refineRangeFromLibrary(r, { prevEndPos: (pPos != null && pPos >= 0) ? pPos : null, testDate: tDate }) || {};
+        const memo = [
+          gradeNote,
+          d.reason,
+          d.decidedBy,
+          d.startTerm ? `始まりの手がかり：${d.startTerm}` : '',
+          d.endTerm ? `終わりの手がかり：${d.endTerm}` : '',
+          prev ? `前回（${prev.date}）の終わり：${String(prev.range).split(/\s*[〜～~]\s*/).pop()}` : '前回のテストなし',
+          d.forcedStartUnit0, d.endDemoted, d.endPulledUp, d.prevIgnored, d.endBeforePrev
+        ].filter(Boolean).join(' ／ ');
+        out.set(h, { range: buildRangeText(r), memo });
+      } catch (e) {
+        out.set(h, { range: '', memo: '計算中にエラー：' + (e && e.message || e) });
+      }
+    });
+    return out;
+  }
+
   function exportTestHistoryCSV() {
     let hist = [];
     try { hist = histAll(); } catch { alert('テスト履歴の読み込みに失敗しました。'); return; }
@@ -12930,12 +12997,17 @@ function findTestByDateEx(hist, school, grade, date) {
     // 判定の根拠となる情報は、hに既に保存されているものだけをそのまま出す
     // （無い場合は空欄。ここで新たに計算はしない）。
     const orBlank = v => v == null ? '' : v;
+    // 末尾の2列だけは例外として、書き出すときに計算する（v10.48）。
+    // 範囲表・手入力で正解を付けたテストは「範囲を再判定」の対象外なので、
+    // 今のロジックがどれだけ当たるかを測る手段がなかったため。
+    const nowCalc = calcRangesWithCurrentLogic(hist);
     const header = ['PDFファイル名','学校','学年','学年を画面で指定したか','テスト日','年度',
       '現在の範囲','範囲の確定元','機械が最初に判定した範囲','分析し直して計算した範囲','ひとつ前の範囲','範囲表のページ',
       '前学年ぶんの範囲','出題文法','出題熟語','出題語','重要項目',
       '語彙から求めた範囲の候補（絞り込み前）','文法から求めた範囲の候補（絞り込み前）',
       '終わりを決めた根拠','教科書データと一致した出題語数','教科書データで見つからなかった出題語数',
-      '出題語の教科書掲載箇所'];
+      '出題語の教科書掲載箇所',
+      '今のロジックで計算し直した範囲（参考・保存しない）','今のロジックの判定メモ'];
     const rows = hist.map(h => [
       h.name,
       h.school,
@@ -12959,7 +13031,9 @@ function findTestByDateEx(hist, school, grade, date) {
       orBlank(h.rangeDecidedBy),
       orBlank(h.rangeVocabMatchedCount),
       orBlank(h.rangeVocabUnmatchedCount),
-      orBlank(h.rangeWordLocations)
+      orBlank(h.rangeWordLocations),
+      (nowCalc.get(h) || {}).range || '',
+      (nowCalc.get(h) || {}).memo || ''
     ].map(q).join(','));
     const csv = [header.map(q).join(','), ...rows].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
