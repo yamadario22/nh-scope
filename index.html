@@ -11036,68 +11036,128 @@ function findTestByDateEx(hist, school, grade, date) {
     better:'good', best:'good', worse:'bad', worst:'bad', more:'many', most:'many',
     less:'little', least:'little', farther:'far', farthest:'far', further:'far', furthest:'far'
   };
-  // 規則変化（複数形-s/-es、過去形-ed、-ing）の候補を機械的に作る。
-  // 正解と決めつけず候補を出すだけなので、それらしい形を複数出しても害はない
-  // （最終的に「もう一方の本に本当に存在するか」でしか一致しない）。
-  function regularStemCandidates(word) {
-    const w = String(word || '').toLowerCase();
-    const cands = new Set();
-    if (/[^aeiou]ies$/.test(w)) cands.add(w.replace(/ies$/, 'y'));                 // babies→baby
-    if (/(s|x|z|ch|sh|o)es$/.test(w)) cands.add(w.replace(/es$/, ''));             // watches→watch
-    if (/[^s]s$/.test(w) && w.length > 2) cands.add(w.replace(/s$/, ''));          // looks→look
-    if (/ed$/.test(w)) {
-      cands.add(w.replace(/ed$/, ''));                                            // reminded→remind
-      cands.add(w.replace(/d$/, ''));                                             // observed→observe
-      const m = w.match(/^(.*)([b-df-hj-np-tv-z])\2ed$/);
-      if (m) cands.add(m[1] + m[2]);                                              // stopped→stop
-    }
-    if (/ing$/.test(w)) {
-      const stem = w.replace(/ing$/, '');
-      cands.add(stem);                                                            // looking→look
-      cands.add(stem + 'e');                                                      // changing→change
-      const m = stem.match(/^(.*)([b-df-hj-np-tv-z])\2$/);
-      if (m) cands.add(m[1] + m[2]);                                              // running→run
-    }
-    cands.delete(w);
-    cands.delete('');
-    return [...cands];
-  }
-  // 1語の語形変化候補（不規則表 → 規則変化の順）
+  // 【一致の強さを2段階に分ける】
+  // 以前は、語形変化・冠詞・修飾語を外した「それらしい一致」をすべて同じ語とみなし、
+  // 「〜のみ」の一覧から黙って消していた。そのため、
+  //   excited と exciting、new と news、even と evening（語尾の外しすぎ）
+  //   get up と up、look at と at、each other と other（熟語の最後の1語だけで一致）
+  // のような別の語まで消え、「片方にしかない語」が見落とされていた。
+  // そこで、確かな一致（hide）だけを一覧から外し、怪しい一致（note）は一覧に残して
+  // 「相手の教科書に ○○ あり」と添える。最後の判断は採用／保留／除外のボタンで人が行う。
+  //   hide：記号のゆれ（raw）、確かな不規則変化、複数形・三単現の -s、熟語の書き方のちがい
+  //   note：-ed / -ing、意味の違う語にもなる不規則形、冠詞を除く、修飾語・前置詞を除く
+
+  // 不規則形だが、それ自体が別の語としてよく出るもの（left＝左、rose＝バラ、a bit、best など）
+  const IRREGULAR_AMBIGUOUS = new Set([
+    'left', 'rose', 'bit', 'saw', 'felt', 'found', 'lost', 'shot', 'lit', 'won', 'fell',
+    'fed', 'led', 'meant', 'drunk', 'broken', 'hidden', 'grown', 'spent', 'lives', 'leaves',
+    'better', 'best', 'worse', 'worst', 'more', 'most', 'less', 'least',
+    'farther', 'farthest', 'further', 'furthest'
+  ]);
+  // -s で終わるが複数形・三単現ではない語（news を new、glasses を glass と同じにしない）
+  const NOT_PLURAL_S = new Set([
+    'news', 'always', 'perhaps', 'clothes', 'series', 'species', 'means', 'physics', 'mathematics',
+    'economics', 'politics', 'glasses', 'scissors', 'jeans', 'pants', 'shorts', 'thanks',
+    'this', 'his', 'its', 'us', 'yes', 'as', 'bus', 'gas', 'plus', 'christmas', 'tennis', 'lens',
+    'bonus', 'campus', 'virus', 'status', 'focus', 'minus', 'chaos', 'canvas', 'goods', 'lots',
+    'various', 'famous', 'nervous', 'delicious', 'dangerous', 'serious', 'curious', 'previous',
+    'overseas', 'afterwards', 'towards', 'upstairs', 'downstairs', 'sometimes', 'besides'
+  ]);
+  // -ing / -ed で終わるが活用形ではない語（evening を even と結びつけない）
+  const NOT_INFLECTED_INGED = new Set([
+    'evening', 'morning', 'during', 'nothing', 'something', 'anything', 'everything', 'thing',
+    'king', 'ring', 'sing', 'bring', 'spring', 'string', 'wing', 'swing', 'ceiling', 'pudding',
+    'wedding', 'ping', 'bed', 'red', 'need', 'seed', 'feed', 'speed', 'weed', 'hundred',
+    'shed', 'wed', 'bread', 'head', 'dead', 'lead', 'read', 'spread', 'thread', 'ahead', 'instead'
+  ]);
+
+  // 1語の語形変化候補を、一致の強さつきで返す
+  //   不規則表（別の語にもなるものは note）→ 複数形・三単現（hide）→ -ed / -ing（note）
   function lemmaCandidates(rawWord) {
     const w = compareKey(rawWord);
     if (!w) return [];
-    const out = new Set();
-    if (IRREGULAR_BASE[w]) out.add(IRREGULAR_BASE[w]);
-    regularStemCandidates(w).forEach(c => out.add(c));
-    out.delete(w);
-    return [...out];
+    const out = new Map();                       // key → strength（hide を優先）
+    // 機械的に語尾を外した語幹は、2文字以下だと偶然一致しやすい（used → us など）ので作らない。
+    // 不規則表（went → go）と -oes / -xes などの複数形（goes → go）は確かなので短くてもよい。
+    const add = (k, strength, minLen = 3) => {
+      if (!k || k === w || k.length < minLen) return;
+      if (out.get(k) !== 'hide') out.set(k, strength);
+    };
+    if (IRREGULAR_BASE[w]) add(IRREGULAR_BASE[w], IRREGULAR_AMBIGUOUS.has(w) ? 'note' : 'hide', 1);
+    if (!NOT_PLURAL_S.has(w)) {
+      if (/[^aeiou]ies$/.test(w)) add(w.replace(/ies$/, 'y'), 'hide');           // babies→baby
+      if (/(x|z|ch|sh|o)es$/.test(w)) add(w.replace(/es$/, ''), 'hide', 2);      // watches→watch、goes→go
+      if (/ses$/.test(w)) add(w.replace(/es$/, ''), 'hide');                     // buses→bus（uses→us は作らない）
+      if (/[^s]s$/.test(w)) add(w.replace(/s$/, ''), 'hide');                    // looks→look
+    }
+    if (!NOT_INFLECTED_INGED.has(w)) {
+      if (/ed$/.test(w)) {
+        add(w.replace(/ed$/, ''), 'note');                                       // reminded→remind
+        add(w.replace(/d$/, ''), 'note');                                        // observed→observe
+        const m = w.match(/^(.*)([b-df-hj-np-tv-z])\2ed$/);
+        if (m) add(m[1] + m[2], 'note');                                         // stopped→stop
+      }
+      if (/ing$/.test(w)) {
+        const stem = w.replace(/ing$/, '');
+        add(stem, 'note');                                                       // looking→look
+        add(stem + 'e', 'note');                                                 // changing→change
+        const m = stem.match(/^(.*)([b-df-hj-np-tv-z])\2$/);
+        if (m) add(m[1] + m[2], 'note');                                         // running→run
+      }
+    }
+    return [...out].map(([key, strength]) => ({ key, strength }));
   }
+
+  // 【熟語の書き方のちがいをそろえる】
+  //   do my best = do one's best、be good at = good at、looked forward to = look forward to
+  // 熟語全体が一致したときだけ使うので、同じ熟語とみなしてよい（hide）。
+  const PHRASE_POSSESSIVE = new Set(['my', 'your', 'his', 'her', 'our', 'their', "one's", "someone's"]);
+  const PHRASE_REFLEXIVE  = new Set(['myself', 'yourself', 'himself', 'herself', 'itself',
+                                     'ourselves', 'yourselves', 'themselves', 'oneself']);
+  const PHRASE_BE = new Set(['be', 'am', 'is', 'are', 'was', 'were', 'been']);
+  function phraseVariantKeys(raw) {
+    const words = String(raw || '').normalize('NFKC').toLowerCase()
+      .replace(/[’‘]/g, "'").split(/\s+/).filter(Boolean)
+      .map(w => PHRASE_POSSESSIVE.has(w) ? "one's" : PHRASE_REFLEXIVE.has(w) ? 'oneself' : w);
+    if (words.length < 2) return [];
+    const variants = [words];
+    // 頭の be 動詞を外す（外したあとも2語以上残るときだけ）
+    if (PHRASE_BE.has(words[0]) && words.length >= 3) variants.push(words.slice(1));
+    // 先頭の動詞の活用をそろえる（looked forward to → look forward to）
+    variants.slice().forEach(v => {
+      lemmaCandidates(v[0]).forEach(c => variants.push([c.key, ...v.slice(1)]));
+    });
+    const keys = new Set(variants.map(v => compareKey(v.join(' '))).filter(Boolean));
+    return [...keys];
+  }
+
   const ARTICLE_RE = /^(a|an|the)\s+/i;
   // 【照合専用の候補キー】通常のcompareKeys()には混ぜず、こちらだけで使う。
-  // rule: 'raw'（今まで通りの照合＝無条件に除外）／
-  //       'lemma'（語形変化）／'article'（冠詞落とし）／'weak-lastword'（修飾語＋名詞の弱い一致）
-  // 後ろの3つで一致した項目は、必ず確認用の一覧に理由付きで残す。
+  // rule：'raw'（記号・カッコのゆれ）／'lemma'（語形変化）／'phrase'（熟語の書き方）／
+  //       'article'（冠詞を除く）／'weak-lastword'（修飾語・前置詞を除く）
+  // strength：'hide'（同じ語として一覧から外す）／'note'（一覧に残して添え書きする）
   function compareMatchCandidates(content) {
     const raw = String(content || '').trim();
     const out = [];
-    compareKeys(raw).forEach(k => out.push({ key: k, rule: 'raw' }));
+    compareKeys(raw).forEach(k => out.push({ key: k, rule: 'raw', strength: 'hide' }));
     const words = raw.split(/\s+/).filter(Boolean);
     if (words.length === 1) {
-      lemmaCandidates(raw).forEach(k => { if (k) out.push({ key: k, rule: 'lemma' }); });
+      lemmaCandidates(raw).forEach(c => out.push({ key: c.key, rule: 'lemma', strength: c.strength }));
     }
+    phraseVariantKeys(raw).forEach(k => out.push({ key: k, rule: 'phrase', strength: 'hide' }));
     if (ARTICLE_RE.test(raw)) {
-      compareKeys(raw.replace(ARTICLE_RE, '')).forEach(k => { if (k) out.push({ key: k, rule: 'article' }); });
+      compareKeys(raw.replace(ARTICLE_RE, '')).forEach(k => { if (k) out.push({ key: k, rule: 'article', strength: 'note' }); });
     }
     const afterArticle = raw.replace(ARTICLE_RE, '');
     const aWords = afterArticle.split(/\s+/).filter(Boolean);
     if (aWords.length === 2) {
       const last = compareKey(aWords[1]);
-      if (last) out.push({ key: last, rule: 'weak-lastword' });   // 例：boiled egg → egg、dog cafe → cafe
+      if (last) out.push({ key: last, rule: 'weak-lastword', strength: 'note' });   // 例：boiled egg → egg
     }
     return out;
   }
   const CMP_MATCH_RULE_LABEL = {
-    lemma: '語形変化', article: '冠詞を除く', 'weak-lastword': '修飾語を除く（弱い一致）'
+    lemma: '語形変化', phrase: '熟語の書き方のちがい', article: '冠詞を除く', 'weak-lastword': '最後の1語だけ一致'
   };
 
   // 【文・フレーズ／固有名詞かどうかの判定】
@@ -11412,13 +11472,17 @@ function findTestByDateEx(hist, school, grade, date) {
     // 【重要】相手側のキーは種類をまたいで集める。
     // 「get up」がNHでは単語、NCでは熟語に入っていることがあり、
     // 種類ごとに比べると同じ語が「NHのみ」と「NCのみ」の両方に出てしまう。
-    // weak-lastword（修飾語を除く弱い一致）は索引には使わない。索引側まで弱くすると
+    // weak-lastword（最後の1語だけの一致）は索引には使わない。索引側まで弱くすると
     // 誤って一致とみなす組み合わせが増えすぎるため、常に相手側の「素の形」で受ける。
+    // 同じキーに確かな一致（hide）と怪しい一致（note）の両方があれば、確かなほうを残す。
     const otherIndex = new Map();
     otherItems.forEach(i => {
       compareMatchCandidates(i.content).forEach(c => {
         if (c.rule === 'weak-lastword') return;
-        if (!otherIndex.has(c.key)) otherIndex.set(c.key, (i.content || '').trim());
+        const cur = otherIndex.get(c.key);
+        if (!cur || (cur.strength === 'note' && c.strength === 'hide')) {
+          otherIndex.set(c.key, { content: (i.content || '').trim(), rule: c.rule, strength: c.strength });
+        }
       });
     });
 
@@ -11429,17 +11493,24 @@ function findTestByDateEx(hist, school, grade, date) {
       if (!types.includes(dType)) return;
       const mine = compareMatchCandidates(i.content);
       if (!mine.length) return;        // 中身が空の項目は捨てる
-      let hit = null;
-      for (const c of mine) { if (otherIndex.has(c.key)) { hit = c; break; } }
-      if (hit) {
+      // 両側とも確かな形どうしで一致したときだけ「同じ語」。片側でも怪しければ添え書きに回す
+      let hide = null;
+      const notes = [];
+      for (const c of mine) {
+        const o = otherIndex.get(c.key);
+        if (!o) continue;
+        const rule = c.rule !== 'raw' ? c.rule : o.rule;
+        if (c.strength === 'hide' && o.strength === 'hide') { hide = { rule, with: o.content }; break; }
+        if (!notes.some(n => n.with === o.content)) notes.push({ rule, with: o.content });
+      }
+      if (hide) {
         // 'raw'（従来通りの記号・カッコゆれの吸収）による一致は今まで通り無条件で除外。
         // それ以外のルールで一致した分だけ、確認できるよう控えておく。
-        if (hit.rule !== 'raw') {
+        if (hide.rule !== 'raw') {
           excluded.push({
             content: (i.content || '').trim(),
-            matchedWith: otherIndex.get(hit.key),
-            rule: hit.rule,
-            weak: hit.rule === 'weak-lastword'
+            matchedWith: hide.with,
+            rule: hide.rule
           });
         }
         return;
@@ -11455,12 +11526,14 @@ function findTestByDateEx(hist, school, grade, date) {
           type: dType,
           grade: i.grade || '',
           unit: [i.unit, i.lesson].filter(Boolean).join(' '),
-          places: []
+          places: [],
+          notes: []
         });
       }
       const row = map.get(k);
       if (!row.translation && (i.translation || '').trim()) row.translation = (i.translation || '').trim();
       if (where && !row.places.includes(where)) row.places.push(where);
+      notes.forEach(n => { if (!row.notes.some(x => x.with === n.with)) row.notes.push(n); });
     });
     if (side) compareExclusionLog[side] = excluded;
     const rows = [...map.values()];
@@ -11524,7 +11597,8 @@ function findTestByDateEx(hist, school, grade, date) {
       ? `<div class="tbl-wrap"><table>
           <thead><tr><th>内容</th><th>訳</th>${showType ? '<th>種類</th>' : ''}<th>${unitLabel}</th><th>判定</th></tr></thead>
           <tbody>${rows.map((r, i) => `<tr>
-            <td style="font-weight:600">${esc(r.content)}</td>
+            <td style="font-weight:600">${esc(r.content)}${(r.notes || []).length
+              ? `<div style="font-size:10px;font-weight:400;color:#B45309;margin-top:2px;min-width:11em">${esc(compareNoteText(r.notes, side))}</div>` : ''}</td>
             <td style="font-size:12px;color:var(--muted)">${esc(r.translation)}</td>
             ${showType ? `<td style="font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.type)}</td>` : ''}
             <td style="font-size:11px;color:var(--muted)">${esc(r.places.join(' / '))}</td>
@@ -11549,7 +11623,7 @@ function findTestByDateEx(hist, school, grade, date) {
           <tbody>${rows.map(r => `<tr>
             <td style="font-size:12px">${esc(r.content)}</td>
             <td style="font-size:12px;color:var(--muted)">${esc(r.matchedWith)}</td>
-            <td style="font-size:11px;${r.weak ? 'color:#B45309;font-weight:700' : 'color:var(--muted)'}">${esc(CMP_MATCH_RULE_LABEL[r.rule] || r.rule)}</td>
+            <td style="font-size:11px;color:var(--muted)">${esc(CMP_MATCH_RULE_LABEL[r.rule] || r.rule)}</td>
           </tr>`).join('')}</tbody>
         </table></div>
       </details>`;
@@ -11620,12 +11694,18 @@ function findTestByDateEx(hist, school, grade, date) {
   function goComparePageNH(n) { cmpPageNH = n; saveComparePage(); renderCompare(); }
   function goComparePageNC(n) { cmpPageNC = n; saveComparePage(); renderCompare(); }
 
+  // 怪しい一致の添え書き（例：NEW CROWNに「exciting」あり（語形変化））
+  function compareNoteText(notes, side) {
+    const other = side === 'nh' ? 'NEW CROWN' : 'NEW HORIZON';
+    return (notes || []).map(n => `${other}に「${n.with}」あり（${CMP_MATCH_RULE_LABEL[n.rule] || n.rule}）`).join('／');
+  }
+
   // ── 比較結果の書き出し ────────────────────────────────────────────
   function compareRowsToTSV(side) {
     const rows = (compareLastRows || {})[side] || [];
-    const head = ['内容', '訳', '種類', '掲載箇所', '判定'].join('\t');
+    const head = ['内容', '訳', '種類', '掲載箇所', '判定', '参考'].join('\t');
     return [head, ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / '),
-      CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || ''].join('\t'))].join('\n');
+      CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || '', compareNoteText(r.notes, side)].join('\t'))].join('\n');
   }
   async function copyCompareList(side) {
     const txt = compareRowsToTSV(side);
@@ -11636,9 +11716,9 @@ function findTestByDateEx(hist, school, grade, date) {
     const rows = (compareLastRows || {})[side] || [];
     if (!rows.length) return;
     const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const csv = ['内容,訳,種類,掲載箇所,判定',
+    const csv = ['内容,訳,種類,掲載箇所,判定,参考',
       ...rows.map(r => [r.content, r.translation, r.type, r.places.join(' / '),
-        CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || ''].map(q).join(','))].join('\r\n');
+        CMP_JUDGE_LABEL[getCompareJudgment(side, r.content)] || '', compareNoteText(r.notes, side)].map(q).join(','))].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
