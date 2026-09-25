@@ -438,6 +438,8 @@
         <span>📋 Unit別データ編集</span>
         <span style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" onclick="exportBackupCSV()" title="重複削除などの操作を行う前に、今のデータをファイルに残しておけます（Unitの絞り込みに関係なく全件）">💾 バックアップCSV</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('csvImport').click()" title="バックアップCSV（または全教科書CSV）から、この教科書のデータを戻します。今のデータは置き換わります">📥 CSVから戻す</button>
+          <input type="file" id="csvImport" accept=".csv" style="display:none" onchange="if(this.files[0])importCSV(this.files[0])">
           <button class="btn btn-secondary btn-sm" onclick="exportAllBooksCSV()" title="登録されている全教科書（NEW HORIZON中1〜3、NEW CROWN中1〜3）のデータを1つのCSVにまとめて書き出します">📚 全教科書CSV</button>
           <button class="btn btn-secondary btn-sm" onclick="deduplicateData()" title="同じ内容の項目をまとめます（早いページの方を残します）">🔁 重複削除</button>
           <button class="btn btn-green btn-sm" onclick="openEdit(-1)">＋ 項目を追加</button>
@@ -2359,6 +2361,14 @@
     try {
       // 設定（APIキー・モデル）を読み込み
       const cfgDoc = await db.collection(FB_CONFIG_COL).doc('settings').get();
+      // 全校舎で共有する学校の一覧（2学期制・10月にテストがある学校）
+      try {
+        const s0 = cfgDoc.exists ? (cfgDoc.data() || {}) : {};
+        adoptSharedSchoolList(s0.semester2Schools, 'semester2Schools', 'nhscope_semester2_shared',
+                              getSemester2Schools(), saveSemester2SchoolsLocal);
+        adoptSharedSchoolList(s0.octSchools, 'octSchools', 'nhscope_oct_shared',
+                              getOctSchools(), saveOctSchoolsLocal);
+      } catch (e) { console.warn('学校の一覧の同期に失敗:', e); }
       if (cfgDoc.exists) {
         const s = cfgDoc.data();
         if (s.geminiApiKey) { localStorage.setItem(KEY_STORE, s.geminiApiKey); }
@@ -2508,7 +2518,10 @@
       // 毎回取り直すコストは小さいため、キャッシュせず必ず読み込み直す。
       setSyncBadge('syncing', '（NEW CROWNのみの仕分け）');
       await loadCrownOnlyOverrides();
-      try { if (compareMode === 'crownOnly') renderCompare(); } catch(e) {}
+      // 教科書比較の「採用／保留／除外」も全校舎で共有する
+      await syncCompareJudgments();
+      try { if (document.getElementById('tab-compare').classList.contains('active')) renderCompare(); } catch(e) {}
+      try { renderTestHistory(); } catch(e) {}   // 学期制の共有でテストの時期の表示が変わることがある
 
       setSyncBadge('ok');
       setTimeout(() => setSyncBadge('ok'), 3000);
@@ -2654,7 +2667,7 @@
       await new Promise(r => setTimeout(r, 0));
     }
 
-    try { histSave(hist); } catch { try { showToast('⚠️ firestoreIdの手元への保存に失敗しました', 'error'); } catch {} }
+    try { histSave(histAll()); } catch { try { showToast('⚠️ firestoreIdの手元への保存に失敗しました', 'error'); } catch {} }
     setBtn('☁️ クラウドに送り直す', false);
     renderTestHistory();
     alert(`${sent}件をクラウドに送り直しました。` + (failed ? `\n${failed}件は失敗しました（もう一度お試しください）。` : ''));
@@ -3187,7 +3200,7 @@
     return {};
   }
 
-  async function extractBatch(images, pageNums) {
+  async function extractBatch(images, pageNums, bookId = activeId) {
     const parts = images.map(b64 => ({ inlineData: { mimeType: 'image/jpeg', data: b64 } }));
     const pageLabel = !pageNums || !pageNums.length
       ? '見開き等の画像（各ページ隅の印字番号を読み取ること）'
@@ -3195,7 +3208,7 @@
       ? `${pageNums[0]}ページ目`
       : `${pageNums[0]}〜${pageNums[pageNums.length-1]}ページ目`}の画像`;
 
-    const isNC = isNCBook(activeId);
+    const isNC = isNCBook(bookId);
     const bookName   = isNC ? 'NEW CROWN' : 'NEW HORIZON';
     const unitFormat = isNC ? '「Lesson 1」〜「Lesson 9」' : '「Unit 1」〜「Unit 10」';
     const lessonEx   = isNC
@@ -3319,6 +3332,12 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
       if (!confirmed) return;
     }
     shouldStop = false;
+    // 【解析を始めた教科書を覚えておく】
+    // 解析中に教科書の選択を切り替えると、途中から別の教科書にデータが入っていた。
+    // 画面の選択（activeId）ではなく、始めたときの教科書に入れ続ける。
+    const targetId = activeId;
+    const targetBook = bookById(targetId);
+    if (!targetBook) return;
     const startP=+document.getElementById('startP').value, endP=+document.getElementById('endP').value;
     const total=endP-startP+1, startMs=Date.now();
     let processed=0, lastError='', errorPages=[], errorMessages=[];
@@ -3352,7 +3371,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         if (!bi.length) break;
         bn.forEach(pg=>setThumb(pg,'processing'));
         bps.push(
-          extractBatch(bi, bn)
+          extractBatch(bi, bn, targetId)
             .then(items => { bn.forEach(pg=>setThumb(pg,'done')); return { items, cnt:bn.length }; })
             .catch((e)  => {
               if (e.message.startsWith('__QUOTA__')) {
@@ -3375,18 +3394,18 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
       const results = await Promise.all(bps);
       let roundErrors = 0;
       for (const { items, cnt } of results) {
-        getItems().push(...items);
+        (targetBook.items = targetBook.items || []).push(...items);
         processed += cnt;
         if (!items.length) roundErrors++;
       }
       // 目次の対応表でUnit表記を自動補正（Geminiの誤記をその場で修正）
-      fixUnitsByPageTable(activeId);
+      fixUnitsByPageTable(targetId);
 
       // ④ UI更新・残り時間
       const elapsed=Date.now()-startMs, rate=processed/elapsed, remMs=(total-processed)/rate;
       const remMin=Math.ceil(remMs/60000);
       document.getElementById('pPage').textContent  = processed;
-      document.getElementById('pItems').textContent = getItems().length;
+      document.getElementById('pItems').textContent = (targetBook.items || []).length;
       document.getElementById('pBar').style.width   = (processed/total*100)+'%';
       document.getElementById('pTime').textContent  =
         processed>=total  ? '解析完了！' :
@@ -3395,7 +3414,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 
       updateBadge();
       renderPreview();
-      saveBackup();
+      saveBackup(targetId);
 
       // ⑤ レート制限防止：次ラウンドまで待機
       if (rs + BATCH * PAR <= endP && !shouldStop) {
@@ -3436,7 +3455,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
           </div>
         </div>`;
       document.getElementById('tbPreview').innerHTML = errHtml + (document.getElementById('tbPreview').innerHTML || '');
-    } else if (!getItems().length) {
+    } else if (!(targetBook.items || []).length) {
       document.getElementById('tbPreview').innerHTML = `
         <div class="card">
           <div style="color:var(--red);font-weight:600;margin-bottom:8px">❌ 項目が0件でした</div>
@@ -3472,7 +3491,6 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         <div class="card-title">
           <span>📋 データプレビュー（先頭30件）</span>
           <div class="row" style="gap:6px;flex-wrap:wrap">
-            <input type="file" id="csvImport" accept=".csv" style="display:none" onchange="if(this.files[0])importCSV(this.files[0])">
             <button class="btn btn-secondary btn-sm" onclick="deduplicateData()">🔁 重複削除</button>
           </div>
         </div>
@@ -3972,7 +3990,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
         const fid = await saveTestEntryToFirestore({ ...old });
         if (fid) old.firestoreId = fid;
       }
-      histSave(hist);
+      histSave(histAll());
     }).catch(() => {});
     return histSaveQueue;
   }
@@ -4373,8 +4391,13 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     try { return new Set(JSON.parse(localStorage.getItem(SEMESTER2_KEY) || '[]')); }
     catch { return new Set(); }
   }
-  function saveSemester2Schools(set) {
+  function saveSemester2SchoolsLocal(set) {
     try { localStorage.setItem(SEMESTER2_KEY, JSON.stringify([...set])); } catch {}
+  }
+  // 手元に保存し、全校舎とも共有する（校舎ごとにテストの時期の表示が変わらないように）
+  function saveSemester2Schools(set) {
+    saveSemester2SchoolsLocal(set);
+    cloudSetSetting('semester2Schools', [...set]);
   }
   function isSemester2(school) {
     return getSemester2Schools().has(String(school || '').trim());
@@ -4394,8 +4417,46 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       return new Set(Array.isArray(a) ? a : OCT_DEFAULT);
     } catch { return new Set(OCT_DEFAULT); }
   }
-  function saveOctSchools(set) {
+  function saveOctSchoolsLocal(set) {
     try { localStorage.setItem(OCT_KEY, JSON.stringify([...set])); } catch {}
+  }
+  function saveOctSchools(set) {
+    saveOctSchoolsLocal(set);
+    cloudSetSetting('octSchools', [...set]);
+  }
+
+  // ── 全校舎で共有する設定 ──────────────────────────────────────
+  // 【なぜ要るか】「2学期制の学校」「10月にテストがある学校」「採用／保留／除外」は
+  // 端末ごとに保存していたため、校舎によってテストの時期の表示や警告、比較の仕分けが違っていた。
+  // クラウドの共有設定（nhscope_config）に置き、どの端末でも同じものを使う。
+  function cloudSetSetting(field, value) {
+    if (!canCloud()) return;
+    try {
+      db.collection(FB_CONFIG_COL).doc('settings').set({ [field]: value }, { merge: true })
+        .catch(e => {
+          console.warn('設定の共有に失敗:', field, e);
+          try { showToast('⚠️ 設定を他の校舎と共有できませんでした（この端末には保存済み）', 'error'); } catch {}
+        });
+    } catch (e) { console.warn('設定の共有に失敗:', field, e); }
+  }
+  // 同期したときに、クラウドの一覧を手元に取り込む。
+  // 【手元の設定を消さない】共有を始める前は端末ごとに設定していたので、
+  // 最初の1回だけ、手元にあってクラウドに無い学校を足し合わせてからクラウドに戻す。
+  // 2回目以降はクラウドの一覧をそのまま使う（ほかの校舎で外した学校も正しく外れる）。
+  function adoptSharedSchoolList(cloudArr, field, flagKey, localSet, saveLocal) {
+    let flagged = false;
+    try { flagged = !!localStorage.getItem(flagKey); } catch {}
+    if (Array.isArray(cloudArr)) {
+      const merged = new Set(cloudArr);
+      if (!flagged) {
+        localSet.forEach(x => merged.add(x));
+        if (merged.size !== new Set(cloudArr).size) cloudSetSetting(field, [...merged]);
+      }
+      saveLocal(merged);
+    } else {
+      cloudSetSetting(field, [...localSet]);   // クラウドにまだ無い → この端末の設定を最初の一覧にする
+    }
+    try { localStorage.setItem(flagKey, '1'); } catch {}
   }
   // 「北部中」と「豊橋北部中」のような書き方の違いで取り違えないよう、両方向で見る
   function hasOctTest(school) {
@@ -4747,7 +4808,19 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 表だけを描き直す。検索欄は作り直さない（作り直すとカーソルが外れ、日本語入力が壊れる）
+  // 【履歴の行のボタンは「上から何番目か」ではなく、テストそのものを指す】
+  // 番号で指していたため、まとめて分析している最中（新しいテストが先頭に追加される）に
+  // 押すと番号がずれ、隣のテストを消したり書き換えたりしていた。
+  // 描いたときの行（テストの記録そのもの）を控えておき、押されたときに今の位置を探し直す。
+  let _histRowRefs = [];
+  function histRowRef(h) { _histRowRefs.push(h); return _histRowRefs.length - 1; }
+  function histIndexOfRef(ref, hist) {
+    const o = _histRowRefs[ref];
+    return o ? hist.indexOf(o) : -1;
+  }
+
   function renderHistTable() {
+    _histRowRefs = [];
     try { updateTestSecCounts(); } catch(e) {}
     const el = document.getElementById('testHistTable');
     if (!el) return;
@@ -4764,6 +4837,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             <thead><tr><th>PDFファイル名</th><th>学年</th><th>該当範囲</th><th>問題形式</th><th>日付</th><th></th></tr></thead>
             <tbody>${!hist.length ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">条件に合うテストがありません</td></tr>` : ''}${hist.map((h,idx)=>{
               const realIdx = allHist.indexOf(h);
+              const ref = histRowRef(h);   // ボタンは番号ではなく、このテストそのものを指す
               const qtSummary = (h.question_types||[]).slice(0,3).map(q=>esc(q.type||'')).join('・');
               const qtDetail = (h.question_types||[]).length
                 ? `<div id="qt-d-${realIdx}" style="display:none;margin-top:6px;font-size:11px;border-top:1px solid #eee;padding-top:4px">
@@ -4802,7 +4876,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               } catch {}
               return `<tr>
                 <td style="font-size:11px">${esc(h.name||'')}${h.schoolCount?`<br><span style="color:var(--muted)">${h.schoolCount}校</span>`:''}</td>
-                <td style="font-size:12px">${esc(h.grade||'')}${gradeFlag}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${realIdx})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
+                <td style="font-size:12px">${esc(h.grade||'')}${gradeFlag}<br><button class="btn btn-ghost btn-sm" onclick="fixTestGrade(${ref})" style="padding:0 4px;font-size:10px" title="学年を直して範囲を計算し直します（料金はかかりません）">直す</button></td>
                 <td style="font-size:12px">${(()=>{
                   const cur = rangeBothNotations(h.grade, h.range, h.rangePages);
                   const prev = h.prevGradeRange ? rangeBothNotations(h.prevGradeGrade, h.prevGradeRange, h.prevGradePages) : null;
@@ -4826,18 +4900,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                          })()
                        + (revertTargetOf(h)
                           ? `<div style="color:var(--muted);font-size:10px">変更前：${esc(revertTargetOf(h))}
-                               <button class="btn btn-ghost btn-sm" onclick="revertTestRange(${realIdx})"
+                               <button class="btn btn-ghost btn-sm" onclick="revertTestRange(${ref})"
                                        style="padding:0 4px;font-size:10px" title="書き換える前の範囲に戻します">元に戻す</button>
                              </div>` : '')
-                       + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${realIdx})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
+                       + `<button class="btn btn-ghost btn-sm" onclick="fixTestRange(${ref})" style="padding:0 4px;font-size:10px;margin-top:2px" title="範囲を手で直します（前学年ぶんも入れられます）">範囲を直す</button>`
                        + (h.rangeEditedBy
                           ? `<span style="font-size:10px;color:#059669;margin-left:4px" title="人が確かめた範囲です。「範囲を再判定」では上書きされません">${esc(h.rangeEditedBy)}</span>`
                           : '');
                 })()}</td>
                 <td style="font-size:11px">${qtSummary}${qtDetail}</td>
                 <td style="font-size:11px;color:var(--muted)">${esc(h.date||'')}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick="showRangeDiag(${realIdx})" style="padding:2px 6px;font-size:11px" title="この範囲がどう決まったかを見る">🔍</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${realIdx})" style="padding:2px 8px;font-size:11px">✕</button></td>
+                <td><button class="btn btn-ghost btn-sm" onclick="showRangeDiag(${ref})" style="padding:2px 6px;font-size:11px" title="この範囲がどう決まったかを見る">🔍</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteTestHistoryItem(${ref})" style="padding:2px 8px;font-size:11px">✕</button></td>
               </tr>`;
             }).join('')}
             </tbody>
@@ -5011,7 +5085,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       sanitizeAiText(h);
       if (JSON.stringify(h.question_types || []).length < sizeBefore) cleaned++;
       // 2025年度より前のテストは今の教科書と別版のため範囲判定の対象外
-      const y = parseInt(h.year || (h.date||'').split('/')[0] || '0');
+      // 【暦の年ではなく年度で見る】2025年1〜3月のテストは2024年度（旧教科書）だが、
+      // 暦の年で見ていたため新しい教科書の対応表で判定し直されていた。
+      const y = parseInt(testSchoolYear(h)) || 0;
       if (y && y < 2025) { skipped++; return; }
       const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
       if (!hasMaterial) { skipped++; return; }
@@ -5073,7 +5149,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (!changes.length) {
       // 範囲が変わらなくても、掃除した結果は保存する
       if (cleaned) {
-        try { histSave(hist); } catch {}
+        try { histSave(histAll()); } catch {}
         renderTestHistory();
       }
       alert(`範囲が変わるテストはありませんでした。\n（判定できなかったもの：${skipped}件`
@@ -5096,7 +5172,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       hist[c.idx].range     = c.after;
       if (c.inferredGrade) { hist[c.idx].gradePrev = hist[c.idx].grade || ''; hist[c.idx].grade = c.inferredGrade; }
     });
-    try { histSave(hist); }
+    try { histSave(histAll()); }
     catch { alert('ブラウザへの保存に失敗しました（容量オーバーの可能性）。'); return; }
 
     // Firestore側も書き換え
@@ -5206,20 +5282,20 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   // その数字をそのまま打てるようにする。「p.」や「〜」は入力させない。
   // 前学年ぶんの範囲は、前学年の文法がすべて復習として出しうるため機械では推定できない
   //（実例：正解が中1 p.116〜126のところ、推定はUnit 7から始まってしまった）。
-  let rangeEditIdx = -1;
+  let rangeEditTarget = null;   // 直しているテストそのもの（番号だとずれるため）
 
   function closeRangeEdit() {
     const m = document.getElementById('rangeEditModal');
     if (m) m.style.display = 'none';
-    rangeEditIdx = -1;
+    rangeEditTarget = null;
   }
 
-  function fixTestRange(idx) {
+  function fixTestRange(ref) {
     let hist = [];
     try { hist = histAll(); } catch {}
-    const h = hist[idx];
+    const h = hist[histIndexOfRef(ref, hist)];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
-    rangeEditIdx = idx;
+    rangeEditTarget = h;
 
     const gradeN = gradeNumOf(h.grade);
     const prevG  = gradeN > 1 ? normalizeGrade('中' + (gradeN - 1)) : '';
@@ -5284,10 +5360,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   async function saveRangeEdit() {
-    if (rangeEditIdx < 0) return;
+    if (!rangeEditTarget) return;
     let hist = [];
     try { hist = histAll(); } catch {}
-    const h = hist[rangeEditIdx];
+    const h = hist.includes(rangeEditTarget) ? rangeEditTarget : null;
     if (!h) { closeRangeEdit(); return; }
     const mo = document.getElementById('rangeEditModal');
 
@@ -5320,7 +5396,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.prevGradeRange = prevText;
     h.prevGradeGrade = prevText ? mo.dataset.prevGrade : '';
     h.prevGradePages = prevText ? prev.pages : null;
-    try { histSave(hist); }
+    try { histSave(histAll()); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h, {
       range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '手入力', rangePages: h.rangePages,
@@ -5330,10 +5406,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     alert('範囲を書き換えました。');
   }
 
-  async function fixTestGrade(idx) {
+  async function fixTestGrade(ref) {
     let hist = [];
     try { hist = histAll(); } catch {}
-    const h = hist[idx];
+    const h = hist[histIndexOfRef(ref, hist)];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
 
     const input = prompt(`「${h.name||''}」の学年を入力してください（中1／中2／中3）。\n現在：${h.grade||'不明'}`, h.grade||'');
@@ -5369,7 +5445,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     h.rangePrev = h.range || '';
     h.grade = g;
     h.range = newRange;
-    try { histSave(hist); }
+    try { histSave(histAll()); }
     catch { alert('ブラウザへの保存に失敗しました。'); return; }
     if (h.firestoreId) await updateTestInFirestore(h, { grade: h.grade, range: h.range, gradePrev: h.gradePrev, rangePrev: h.rangePrev });
     renderTestHistory();
@@ -5381,10 +5457,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (m) m.style.display = 'none';
   }
 
-  function showRangeDiag(idx) {
+  function showRangeDiag(ref) {
     let hist = [];
     try { hist = histAll(); } catch {}
-    const h = hist[idx];
+    const h = hist[histIndexOfRef(ref, hist)];
     if (!h) { alert('このテストのデータが見つかりません。'); return; }
     if (!getNHItems().length) { alert('教科書データが読み込まれていません。'); return; }
 
@@ -5558,15 +5634,26 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     alert(`${hist.length}件の履歴を削除しました。`);
   }
 
-  function deleteTestHistoryItem(index) {
+  // 【消す前に必ず確かめる】以前は✕を押した瞬間に、全校舎の共有データから消えていた。
+  async function deleteTestHistoryItem(ref) {
+    const hist0 = histAll();
+    const entry = hist0[histIndexOfRef(ref, hist0)];
+    if (!entry) { alert('このテストのデータが見つかりません（すでに消えている可能性があります）。'); return; }
+    const ok = await showConfirm(
+      `次のテストを履歴から消します。\n\n${entry.name || '（名前なし）'}\n範囲：${entry.range || '範囲不明'}\n\n`
+      + (entry.rangeEditedBy ? `⚠️ この範囲は${entry.rangeEditedBy}で人が確かめたものです。\n` : '')
+      + '・全校舎の共有データからも消えます\n・元に戻せません', '消す');
+    if (!ok) return;
     try {
+      // 確認している間に履歴が変わっていることがあるので、消す直前にもう一度探す
       const hist = histAll();
-      const entry = hist[index];
-      if (entry?.firestoreId) deleteTestFromFirestore(entry.firestoreId);
-      hist.splice(index, 1);
+      const idx = hist.indexOf(entry);
+      if (idx < 0) { alert('このテストのデータが見つかりません（すでに消えている可能性があります）。'); return; }
+      if (entry.firestoreId) deleteTestFromFirestore(entry.firestoreId);
+      hist.splice(idx, 1);
       histSave(hist);
       renderTestHistory();
-    } catch {}
+    } catch (e) { console.error('履歴の削除に失敗:', e); }
   }
 
   // ── SEARCH ─────────────────────────────────────────────────────────
@@ -6878,13 +6965,38 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       prevImgs = prevImgs.slice(0, prevResults.length);
     }
 
-    // 【同じ紙を二度読まない】読み取り済みと同じ名前のものは送らない（そのぶん費用がかからない）
-    const known = new Set(prevResults.map(x => x && x.file).filter(Boolean));
-    const todo  = pendingSyllabus.filter(x => !known.has(x.name));
+    // 【同じ紙を二度読まない】読み取り済みの写真と同じものは送らない（そのぶん費用がかからない）
+    // 【名前だけで決めない】別々のスマホで撮ると「IMG_0001.jpg」のように名前が重なる。
+    // 名前だけで見ていたため、別の写真が「読み取り済み」として黙って飛ばされていた。
+    // 名前が同じで、撮影時刻か写真の中身も同じときだけ、同じ写真とみなす。
+    // （撮影時刻も写真も残っていない古い読み取り結果は、比べようがないので今までどおり名前で判断する）
+    const prevByName = new Map();
+    prevResults.forEach((x, i) => {
+      if (!x || !x.file) return;
+      if (!prevByName.has(x.file)) prevByName.set(x.file, []);
+      prevByName.get(x.file).push(i);
+    });
+    const isSamePaper = img => (prevByName.get(img.name) || []).some(i => {
+      const pr = prevResults[i] || {}, pi = prevImgs[i] || {};
+      if (pr.shot && img.shot && pr.shot === img.shot) return true;
+      if (pi.b64 && img.b64 && pi.b64 === img.b64) return true;
+      return !pr.shot && !pi.b64;
+    });
+    const todo = pendingSyllabus.filter(x => !isSamePaper(x));
+    // 名前が重なる別の写真は、見分けがつくよう名前に番号を足す
+    // （名前は写真の貼り直しや重複の見分けに使うため、同じ名前が2つあると取り違える）
+    const usedNames = new Set(prevResults.map(x => x && x.file).filter(Boolean));
+    todo.forEach(x => {
+      if (!usedNames.has(x.name)) { usedNames.add(x.name); return; }
+      let n = 2;
+      while (usedNames.has(`${x.name}（同名${n}）`)) n++;
+      x.name = `${x.name}（同名${n}）`;
+      usedNames.add(x.name);
+    });
     const skipped = pendingSyllabus.length - todo.length;
     if (!todo.length) {
       setSt(stEl, 'ok', `選んだ ${pendingSyllabus.length} 枚は、すべて読み取り済みでした（送っていないので費用はかかりません）`);
-      alert(`選んだ ${pendingSyllabus.length} 枚は、すべて読み取り済みの紙と同じ名前でした。\n`
+      alert(`選んだ ${pendingSyllabus.length} 枚は、すべて読み取り済みの写真と同じでした。\n`
           + `AIには送っていないので、費用はかかりません。\n`
           + `読み直したい行があるときは、その行の「この1枚を読み直す」を使ってください。`);
       pendingSyllabus = prevImgs;
@@ -9753,10 +9865,11 @@ function findTestByDateEx(hist, school, grade, date) {
     return '';
   }
 
-  async function revertTestRange(idx) {
+  async function revertTestRange(ref) {
     let hist = [];
     try { hist = histAll(); } catch {}
-    const h = hist[idx];
+    const h = hist[histIndexOfRef(ref, hist)];
+    if (!h) { alert('このテストのデータが見つかりません。'); return; }
     const target = revertTargetOf(h);
     if (!target) { alert('戻せる範囲が記録されていません。'); return; }
     const ok = await showConfirm(
@@ -9766,7 +9879,7 @@ function findTestByDateEx(hist, school, grade, date) {
     h.range = target;
     h.rangePrev = now;                 // もう一度押せば行き来できる
     h.rangeEditedBy = '';              // 機械の判定に戻すので、印は外す
-    try { histSave(hist); } catch {}
+    try { histSave(histAll()); } catch {}
     if (h.firestoreId) await updateTestInFirestore(h,
       { range: h.range, rangePrev: h.rangePrev, rangeEditedBy: '' });
     renderTestHistory();
@@ -9890,7 +10003,7 @@ function findTestByDateEx(hist, school, grade, date) {
       catch (e) { ng++; console.warn('反映に失敗:', i, e); }
     }
     let saveNg = false;
-    try { histSave(hist); } catch (e) { saveNg = true; console.error(e); }
+    try { histSave(histAll()); } catch (e) { saveNg = true; console.error(e); }
 
     // 共有への書き込みは、少しずつ並行して進める（1件ずつだと100回待つことになる）
     let sent = 0, sendNg = 0;
@@ -10464,25 +10577,48 @@ function findTestByDateEx(hist, school, grade, date) {
     return null;
   }
 
+  // 【入試の語が教科書のどこに載っているか】
+  // 以前は「完全一致」か「5文字以上なら文字列として含まれる」で判定していたため、
+  //   ・other が another／mother の中に見つかって「掲載あり」になる
+  //   ・played が教科書の play と結びつかず「掲載なし」になる
+  // という食い違いが出ていた。教科書比較と同じ照合（語形変化・熟語の書き方のゆれ）で探し、
+  // それでも無いときだけ、語として区切れている場合に熟語の中に含まれるものを探す。
+  const _nhKeyCache = new WeakMap();
+  function nhItemKeys(item) {
+    let ks = _nhKeyCache.get(item);
+    if (!ks) {
+      ks = new Set([...compareKeys(item.content), ...phraseVariantKeys(item.content)]);
+      _nhKeyCache.set(item, ks);
+    }
+    return ks;
+  }
   function findInNHLibrary(word) {
     if (!word) return null;
     const wLow = (word||'').toLowerCase().trim();
     if (wLow.length < 2) return null;
-    let best = null, bestPage = Infinity;
+    // 探す形：そのままの形・語形変化をもどした形・熟語の書き方をそろえた形
+    const want = new Set(compareMatchCandidates(word)
+      .filter(c => c.rule === 'raw' || c.rule === 'lemma' || c.rule === 'phrase')
+      .map(c => c.key));
+    const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordRe = wLow.length >= 5 ? new RegExp(`(^|[^a-z])${escRe(wLow)}([^a-z]|$)`) : null;
+    let best = null, bestPage = Infinity, bestLoose = null, bestLoosePage = Infinity;
     for (const book of library) {
       if (!isNHBook(book.id)) continue;
       const grade = bookGrade(book) || '中3';
       for (const item of (book.items||[])) {
-        const c = (item.content||'').toLowerCase().trim();
-        if (c === wLow || (c.includes(wLow) && wLow.length >= 5)) {
-          if ((item.page||0) < bestPage) {
-            bestPage = item.page||0;
-            best = { grade, unit:item.unit||'', lesson:item.lesson||'', page:item.page||0 };
-          }
+        const page = item.page || 0;
+        const ref = { grade, unit:item.unit||'', lesson:item.lesson||'', page };
+        const keys = nhItemKeys(item);
+        if ([...want].some(k => keys.has(k))) {
+          if (page < bestPage) { bestPage = page; best = ref; }
+        } else if (wordRe && page < bestLoosePage) {
+          const c = (item.content||'').toLowerCase();
+          if (wordRe.test(c)) { bestLoosePage = page; bestLoose = ref; }
         }
       }
     }
-    return best;
+    return best || bestLoose;
   }
 
   async function onExamFilesSelected(files) {
@@ -10550,6 +10686,26 @@ function findTestByDateEx(hist, school, grade, date) {
     const finalSource = (document.getElementById('examSource')?.value || '').trim() || '愛知県公立';
 
     const stEl = document.getElementById('examStatus');
+    // 【上書きの確認は、AIに送る前に】
+    // 以前は分析（＝費用）が終わってから「上書きしますか」と聞いていたため、
+    // キャンセルすると払った分がまるごと無駄になっていた。
+    // 年度が入力されていれば、その時点で分かるので先に聞く。
+    // （年度を空欄にしてAIに読ませる場合は、分析のあとでしか分からないので従来どおり）
+    let overwriteOkFor = '';
+    if (parsed && parsed.year) {
+      const srcOf0 = e => e.source || '愛知県公立';
+      let ex0 = [];
+      try { ex0 = JSON.parse(localStorage.getItem(EXAM_HIST_KEY)||'[]'); } catch {}
+      const dup0 = ex0.filter(e => e.year === parsed.year && srcOf0(e) === finalSource);
+      if (dup0.length) {
+        const ow0 = await showConfirm(
+          `${finalSource} ${parsed.nengo || ''}年度(${parsed.year}年)の分析が既に${dup0.length}件あります。\n`
+          + `分析すると、古い分析を削除して今回の結果で上書きします。\n\n`
+          + `・キャンセルすればAIには送らないので、費用はかかりません`, '分析して上書きする');
+        if (!ow0) { setSt(stEl,'err','取り消しました（AIには送っていないので費用はかかっていません）'); return; }
+        overwriteOkFor = parsed.year;
+      }
+    }
     document.getElementById('examStartBtn').disabled = true;
     setSt(stEl,'load','入試問題を分析中（しばらくお待ちください）...');
 
@@ -10639,7 +10795,8 @@ function findTestByDateEx(hist, school, grade, date) {
       const srcOf = e => e.source || '愛知県公立';
       const sameKey = existingExams.filter(e => e.year === finalYear && srcOf(e) === finalSource);
       if (sameKey.length) {
-        const ow = await showConfirm(
+        // 分析の前に同じ年度で上書きの了承をもらっていれば、もう一度は聞かない
+        const ow = (overwriteOkFor && overwriteOkFor === finalYear) ? true : await showConfirm(
           `${finalSource} ${finalNengo}年度(${finalYear}年)の分析が既に${sameKey.length}件あります。古い分析を削除して今回の結果で上書きしますか？（キャンセルすると今回の結果は保存されません）`,
           '上書きする'
         );
@@ -11303,10 +11460,50 @@ function findTestByDateEx(hist, school, grade, date) {
   }
   function compareJudgeKey(side, content) { return side + '::' + compareGroupKey(content); }
   function getCompareJudgment(side, content) { return compareJudgments[compareJudgeKey(side, content)] || ''; }
+  // 【全校舎で共有する】クラウドの nhscope_config/compare_judgments に {j: {鍵: 印}} で置く。
+  // 1件ずつ足し引きするので、別の校舎が同時に別の語を仕分けても消し合わない。
+  const CMP_JUDGE_DOC  = 'compare_judgments';
+  const CMP_JUDGE_FLAG = 'nhscope_compare_judgments_shared';
+  async function syncCompareJudgments() {
+    if (!canCloud()) return;
+    try {
+      const ref = db.collection(FB_CONFIG_COL).doc(CMP_JUDGE_DOC);
+      const d = await ref.get();
+      const cloud = (d.exists && (d.data() || {}).j) || {};
+      const merged = { ...cloud };
+      let flagged = false;
+      try { flagged = !!localStorage.getItem(CMP_JUDGE_FLAG); } catch {}
+      // 最初の1回だけ、この端末で付けてきた印のうちクラウドに無いものを足す（消さないため）
+      if (!flagged) {
+        const upload = {};
+        Object.keys(compareJudgments || {}).forEach(k => {
+          if (!(k in cloud)) { merged[k] = compareJudgments[k]; upload[k] = compareJudgments[k]; }
+        });
+        if (Object.keys(upload).length) await ref.set({ j: upload }, { merge: true });
+        try { localStorage.setItem(CMP_JUDGE_FLAG, '1'); } catch {}
+      }
+      compareJudgments = merged;
+      saveCompareJudgmentsToStorage();
+    } catch (e) { console.warn('採用／保留／除外の同期に失敗:', e); }
+  }
+  function saveCompareJudgmentToCloud(k, status) {
+    if (!canCloud()) return;
+    try {
+      const ref = db.collection(FB_CONFIG_COL).doc(CMP_JUDGE_DOC);
+      const p = status
+        ? ref.set({ j: { [k]: status } }, { merge: true })
+        : ref.update(new firebase.firestore.FieldPath('j', k), firebase.firestore.FieldValue.delete());
+      p.catch(e => {
+        console.warn('採用／保留／除外の共有に失敗:', e);
+        try { showToast('⚠️ 仕分けを他の校舎と共有できませんでした（この端末には保存済み）', 'error'); } catch {}
+      });
+    } catch (e) { console.warn('採用／保留／除外の共有に失敗:', e); }
+  }
   function setCompareJudgment(side, content, status) {
     const k = compareJudgeKey(side, content);
     if (status) compareJudgments[k] = status; else delete compareJudgments[k];
     saveCompareJudgmentsToStorage();
+    saveCompareJudgmentToCloud(k, status);
     renderCompare();
   }
   const CMP_JUDGE_LABEL = { adopt: '採用', hold: '保留', exclude: '除外' };
@@ -12091,15 +12288,42 @@ function findTestByDateEx(hist, school, grade, date) {
     const ncItems = getNCItems().filter(it => it.type === '単語' || it.type === '熟語');
     const nhSet = new Set();
     nhItems.forEach(it => { const k = coNormalize(it.content); if (k) nhSet.add(k); });
+    // 【教科書比較①〜③と同じ照合も使う】
+    // ここは独自の正規化だけで比べていたため、e-mail／email、do my best／do one's best、
+    // looks／look のように NEW HORIZON にも実質ある語が「NEW CROWNのみ」に残っていた。
+    // NH・NC の両側に同じ照合（compareMatchCandidates）をかけ、確かな一致（hide）は外し、
+    // 怪しい一致（note）は一覧に残して「NEW HORIZONに ○○ あり」と添える。
+    // 仕分けの記録（crownOnlyOverrides）の鍵は今までどおり coNormalize のまま（記録を失わないため）。
+    const nhIndex = new Map();
+    nhItems.forEach(i => {
+      compareMatchCandidates(i.content).forEach(c => {
+        if (c.rule === 'weak-lastword') return;
+        const cur = nhIndex.get(c.key);
+        if (!cur || (cur.strength === 'note' && c.strength === 'hide')) {
+          nhIndex.set(c.key, { content: (i.content || '').trim(), rule: c.rule, strength: c.strength });
+        }
+      });
+    });
     const map = new Map();
     ncItems.forEach(it => {
       const k = coNormalize(it.content);
       if (!k || nhSet.has(k)) return;
+      let hidden = false;
+      const notes = [];
+      for (const c of compareMatchCandidates(it.content)) {
+        const o = nhIndex.get(c.key);
+        if (!o) continue;
+        const rule = c.rule !== 'raw' ? c.rule : o.rule;
+        if (c.strength === 'hide' && o.strength === 'hide') { hidden = true; break; }
+        if (!notes.some(n => n.with === o.content)) notes.push({ rule, with: o.content });
+      }
+      if (hidden) return;
       const where = [it.grade || '', [it.unit, it.lesson].filter(Boolean).join(' ')].filter(Boolean).join(' ');
       if (!map.has(k)) {
-        map.set(k, { key: k, content: (it.content || '').trim(), translation: (it.translation || '').trim(), places: [] });
+        map.set(k, { key: k, content: (it.content || '').trim(), translation: (it.translation || '').trim(), places: [], notes: [] });
       }
       const row = map.get(k);
+      notes.forEach(n => { if (!row.notes.some(x => x.with === n.with)) row.notes.push(n); });
       if (!row.translation && (it.translation || '').trim()) row.translation = (it.translation || '').trim();
       if (where && !row.places.includes(where)) row.places.push(where);
     });
@@ -12180,7 +12404,8 @@ function findTestByDateEx(hist, school, grade, date) {
     const rowsHtml = pgc.rows.map(r => `
       <tr data-key="${esc(r.key)}">
         <td style="text-align:right;color:var(--muted);font-size:12px">${r._no}</td>
-        <td style="font-weight:600;overflow-wrap:break-word">${esc(r.content)}</td>
+        <td style="font-weight:600;overflow-wrap:break-word">${esc(r.content)}${(r.notes || []).length
+          ? `<div style="font-size:10px;font-weight:400;color:#B45309;margin-top:2px">${esc(compareNoteText(r.notes, 'nc'))}</div>` : ''}</td>
         ${activeCat === '単語'
           ? `<td><input class="form-in" style="width:100%;font-size:12px;padding:3px 6px" value="${esc(r.pos)}" onchange="handleCrownOnlyPosChange(this)"></td>`
           : ''}
@@ -12794,7 +13019,13 @@ function findTestByDateEx(hist, school, grade, date) {
         const parts = rangeStr.split(/\s*[〜～~]\s*/);
         const hGradeN  = gradeNumOf(h.grade);
         const hFromPos = rangePos(parts[0], hGradeN);
-        const hToPos   = rangePos(parts[parts.length-1], hGradeN);
+        // 【テスト側の「Unit 3」もその単元の終わりまで】
+        // 検索条件の側だけ +0.8 していたため、「〜 Unit 3」（Unit 3 まるごと）のテストが
+        // Unit 3 の先頭で終わるものとして扱われ、「〜 Unit 3 Part 1」で探したときに
+        // 未習の Part 2・3 を含むテストまで出ていた。
+        const hLast    = parts[parts.length-1];
+        let   hToPos   = rangePos(hLast, hGradeN);
+        if (hToPos >= 0 && tsWholeUnit(hLast)) hToPos += 0.8;
         if (hFromPos < 0 || hToPos < 0) return;
         if (hFromPos < fromPos - 0.001 || hToPos > toPos + 0.001) return;
         exact = Math.abs(hFromPos - fromPos) < 0.001 && Math.abs(hToPos - toPos) < 0.001;
@@ -12942,6 +13173,11 @@ function findTestByDateEx(hist, school, grade, date) {
   let _histWarned = false;
 
   // 読み出し。写しを返すので、呼び出し側が並べ替えても元が壊れない
+  // 【書き戻すときは、いまの履歴で保存する】
+  // 確認画面などで待っている間に、まとめて分析しているテストが保存されることがある。
+  // 待つ前に取った写しで保存すると、その間に増えたテストが消えてしまう。
+  // 1件ごとの記録は写しといまの履歴で同じものを指しているので、直した内容は
+  // histAll() で取り直して保存しても失われない（待っている間に消されたものだけが外れる）。
   function histAll() { return TESTHIST.slice(); }
 
   // 書き込み。メモリを先に更新し、IndexedDBへは順番待ちで書く
@@ -13008,10 +13244,12 @@ function findTestByDateEx(hist, school, grade, date) {
     try { localStorage.setItem(BACKUP_KEY, JSON.stringify(snapshot)); } catch {}
   }
 
-  function saveBackup() {
+  // bookId を渡すと、その教科書を保存する（解析中に画面の教科書が切り替わっても、
+  // 解析している教科書のほうを保存するため）。省略時は画面で選んでいる教科書。
+  function saveBackup(bookId = activeId) {
     if (!Array.isArray(library) || library.length === 0) return;
-    // 現在編集中の教科書に最終更新時刻を刻む（複数端末の競合解決に使う）
-    const ab = library.find(b => b.id === activeId);
+    // 編集した教科書に最終更新時刻を刻む（複数端末の競合解決に使う）
+    const ab = library.find(b => b.id === bookId);
     if (ab) ab.localUpdatedAt = Date.now();
     // 保存前にページ順でソート（Unit順の保証）
     library.forEach(book => {
@@ -13020,7 +13258,7 @@ function findTestByDateEx(hist, school, grade, date) {
       }
     });
     persistLibrary();
-    saveLibraryToFirestore(activeId);
+    saveLibraryToFirestore(bookId);
   }
 
   // ── 自動分割実行 ─────────────────────────────────────────────────
@@ -13050,23 +13288,39 @@ function findTestByDateEx(hist, school, grade, date) {
     return [...best.values()];
   }
 
-  function deduplicateData() {
+  // 【消す前に件数と中身を見せて確かめる】
+  // 以前はボタンを押した瞬間に全校舎の教科書データが書き換わり、元に戻せなかった。
+  async function deduplicateData() {
+    const book = activeBook();
     const items = getItems();
-    if (!items.length) { alert('データがありません。'); return; }
+    if (!book || !items.length) { alert('データがありません。'); return; }
     const deduped = dedupItems(items);
     const removed = items.length - deduped.length;
+    if (!removed) { alert('重複はありませんでした。'); return; }
+    const keep = new Set(deduped);
+    const gone = items.filter(it => !keep.has(it));
+    const sample = gone.slice(0, 10).map(it => `・${it.content}（p.${it.page || '-'} ${it.unit || ''}）`).join('\n');
+    const ok = await showConfirm(
+      `「${book.name}」で、同じ内容の項目 ${removed}件をまとめます（残すのは情報が多い方・ページが早い方）。\n\n`
+      + `消える項目の例：\n${sample}${removed > 10 ? `\nほか${removed - 10}件` : ''}\n\n`
+      + `・全校舎の共有データも書き換わります\n・元に戻せません。心配なら先に「💾 バックアップCSV」で残してください`,
+      `${removed}件をまとめる`);
+    if (!ok) return;
     setItems(deduped);
     renderPreview();
     updateBadge();
+    renderUnitView();
     saveBackup();
-    alert(removed > 0 ? `${removed}件の重複を削除しました。` : '重複はありませんでした。');
+    alert(`${removed}件の重複を削除しました。`);
   }
 
   // 解析後に自動で呼ぶ静音版（アラートを出さず、削除があった時だけtrueを返す）
-  function autoDedup() {
-    const items = getItems();
+  function autoDedup(bookId = activeId) {
+    const book = bookById(bookId);
+    if (!book) return false;
+    const items = book.items || [];
     const deduped = dedupItems(items);
-    if (deduped.length < items.length) { setItems(deduped); return true; }
+    if (deduped.length < items.length) { book.items = deduped; return true; }
     return false;
   }
 
@@ -13078,8 +13332,10 @@ function findTestByDateEx(hist, school, grade, date) {
     const items = getItems();
     if (!items.length) { alert('データがありません。'); return; }
     const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    const csv = ['Unit,ページ,種類,内容,訳・説明,メモ',
-      ...items.map(it => [it.unit, it.page || '', it.type, it.content, it.translation, it.notes].map(q).join(','))
+    // 【戻せる形で書き出す】セクション名（Part 1 など）の列が無かったため、
+    // このファイルから戻すとセクション名がすべて消えていた。
+    const csv = ['Unit,Lesson,ページ,種類,内容,訳・説明,メモ',
+      ...items.map(it => [it.unit, it.lesson, it.page || '', it.type, it.content, it.translation, it.notes].map(q).join(','))
     ].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -13104,11 +13360,11 @@ function findTestByDateEx(hist, school, grade, date) {
       const items = book?.items || [];
       counts.push(`${book?.name || defBook.name} ${items.length}件`);
       items.forEach(it => {
-        rows.push([book.name, it.unit, it.page || '', it.type, it.content, it.translation, it.notes].map(q).join(','));
+        rows.push([book.name, it.unit, it.lesson, it.page || '', it.type, it.content, it.translation, it.notes].map(q).join(','));
       });
     });
     if (!rows.length) { alert('データがありません。'); return; }
-    const csv = ['教科書,Unit,ページ,種類,内容,訳・説明,メモ', ...rows].join('\r\n');
+    const csv = ['教科書,Unit,Lesson,ページ,種類,内容,訳・説明,メモ', ...rows].join('\r\n');
     // ExcelでUTF-8を正しく開かせるためBOMを付ける
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -13152,7 +13408,7 @@ function findTestByDateEx(hist, school, grade, date) {
     const rangeOf = hh => out.has(hh) && out.get(hh).range ? out.get(hh).range : baseRange(hh);
     order.forEach(({ h }) => {
       try {
-        const y = parseInt(h.year || (h.date||'').split('/')[0] || '0');
+        const y = parseInt(testSchoolYear(h)) || 0;   // 暦の年ではなく年度で見る（範囲を再判定と同じ）
         if (y && y < 2025) { out.set(h, { range: '', memo: '2025年度より前（対象外）' }); return; }
         const hasMaterial = (h.question_types||[]).length || (h.tested_vocab||[]).length || (h.key_items||[]).length;
         if (!hasMaterial) { out.set(h, { range: '', memo: '判定の材料が保存されていない' }); return; }
@@ -13333,42 +13589,57 @@ function findTestByDateEx(hist, school, grade, date) {
     return rows;
   }
 
+  // 【バックアップCSVから戻す】
+  // 「💾 バックアップCSV」「📚 全教科書CSV」で書き出したファイルを、この教科書に戻す。
+  // 以前は取り込むボタンが画面に無く、あっても列名が食い違っていて
+  // セクション名（Lesson）とメモが消える作りだった。
+  // 戻すときは中身を変えない（重複の整理なども行わない）。
   async function importCSV(file) {
     document.getElementById('csvImport').value = '';
+    const book = activeBook();
+    if (!book) { alert('教科書が選ばれていません。'); return; }
     let text;
     try { text = await file.text(); } catch { alert('ファイルを読み込めませんでした。'); return; }
-    const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
+    let rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
     if (rows.length < 2) { alert('データ行がありません。'); return; }
-    // ヘッダ行を確認（Unit,Lesson,ページ,種類,内容,訳・説明,ノート）
     const header = rows[0].map(h => h.trim());
-    const col = name => header.indexOf(name);
-    const ci = { unit:col('Unit'), lesson:col('Lesson'), page:col('ページ'), type:col('種類'),
-                 content:col('内容'), tr:col('訳・説明'), notes:col('ノート') };
-    if (ci.content < 0) { alert('CSVの形式が違います（「内容」列が見つかりません）。CSV出力で作ったファイルを使ってください。'); return; }
-    const imported = rows.slice(1).map(r => {
+    const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
+    const ci = { book:col('教科書'), unit:col('Unit'), lesson:col('Lesson'), page:col('ページ'), type:col('種類'),
+                 content:col('内容'), tr:col('訳・説明'), notes:col('メモ','ノート') };
+    if (ci.content < 0) { alert('CSVの形式が違います（「内容」列が見つかりません）。「💾 バックアップCSV」で作ったファイルを使ってください。'); return; }
+    let body = rows.slice(1);
+    // 全教科書CSVなら、いま選んでいる教科書の行だけを使う
+    if (ci.book >= 0) {
+      body = body.filter(r => (r[ci.book] || '').trim() === book.name);
+      if (!body.length) { alert(`このCSVには「${book.name}」の行がありません。戻したい教科書を選んでから取り込んでください。`); return; }
+    }
+    const TYPES = ['単語','文法','熟語'];
+    const imported = body.map(r => {
       const p = parseInt(r[ci.page]);
+      const type = ci.type >= 0 ? (r[ci.type] || '').trim() : '';
       return {
-        unit:        ci.unit>=0  ? (r[ci.unit]||'').trim()   : '',
-        lesson:      ci.lesson>=0? (r[ci.lesson]||'').trim() : '',
+        unit:        ci.unit>=0   ? (r[ci.unit]||'').trim()   : '',
+        lesson:      ci.lesson>=0 ? (r[ci.lesson]||'').trim() : '',
         page:        p > 0 ? p : null,
-        type:        ci.type>=0  ? (r[ci.type]||'').trim()   : '単語',
+        type:        TYPES.includes(type) ? type : '単語',
         content:     (r[ci.content]||'').trim(),
-        translation: ci.tr>=0    ? (r[ci.tr]||'').trim()     : '',
-        notes:       ci.notes>=0 ? (r[ci.notes]||'').trim()  : ''
+        translation: ci.tr>=0     ? (r[ci.tr]||'').trim()     : '',
+        notes:       ci.notes>=0  ? (r[ci.notes]||'').trim()  : ''
       };
     }).filter(it => it.content);
     if (!imported.length) { alert('取り込める項目がありませんでした。'); return; }
 
-    const mode = await showConfirm(
-      `${imported.length}件を「${activeBook()?.name}」に取り込みます。\n\n「OK」＝既存データを置き換え\n「キャンセル」＝中止`,
-      '置き換えて取込');
-    if (!mode) return;
+    const ok = await showConfirm(
+      `「${book.name}」のデータを、このCSVの ${imported.length}件で置き換えます。\n\n`
+      + `・いまの ${(book.items || []).length}件は消えます（全校舎の共有データも置き換わります）\n`
+      + (ci.lesson < 0 ? '⚠️ このCSVにはセクション名（Part 1 など）の列がありません（古い形式）。セクション名は空になります\n' : '')
+      + `・心配なら、先に「💾 バックアップCSV」で今のデータを残してください`,
+      '置き換えて戻す');
+    if (!ok) return;
     setItems(imported);
-    const dd = autoDedup();
-    saveBackup(); renderPreview(); updateBadge();
-    alert(`${getItems().length}件を取り込みました${dd ? '（重複を自動整理）' : ''}。`);
+    saveBackup(); renderPreview(); renderUnitView(); updateBadge();
+    alert(`${imported.length}件を「${book.name}」に戻しました。`);
   }
-  
 
   // ── セットアップガイド ─────────────────────────────────────────────
   function openSetupGuide() { document.getElementById('setupGuideModal').style.display='flex'; }
@@ -13423,10 +13694,14 @@ function findTestByDateEx(hist, school, grade, date) {
     const statusEl = document.getElementById('imgStatus');
 
     // 「既存データを全削除してから解析」オプション
+    // 【解析を始めた教科書を覚えておく】途中で画面の教科書を切り替えても、ここに入れ続ける
+    const targetId = activeId;
+    const targetBook = bookById(targetId);
+    if (!targetBook) return;
     if (document.getElementById('imgClearFirst')?.checked) {
-      const ok = await showConfirm(`「${activeBook()?.name}」の既存データを全て削除してから解析します。教科書・学年は正しいですか？`, '削除して解析');
+      const ok = await showConfirm(`「${targetBook.name}」の既存データを全て削除してから解析します。教科書・学年は正しいですか？`, '削除して解析');
       if (!ok) return;
-      setItems([]); saveBackup(); updateBadge(); renderPreview();
+      targetBook.items = []; saveBackup(targetId); updateBadge(); renderPreview();
     }
 
     shouldStop = false;
@@ -13457,12 +13732,12 @@ function findTestByDateEx(hist, school, grade, date) {
       try {
         const b64 = await fileToResizedBase64(currentImageFiles[i]);
         // ページ番号はGeminiが画像内の印字から読む（連番は渡さない）
-        const items = await extractBatch([b64], []);
+        const items = await extractBatch([b64], [], targetId);
         if (items.length > 0) {
-          setItems([...getItems(), ...items]);
-          fixUnitsByPageTable(activeId); // 文法→Unit対応表で即補正
+          targetBook.items = [...(targetBook.items || []), ...items];
+          fixUnitsByPageTable(targetId); // 文法→Unit対応表で即補正
           totalItems += items.length;
-          saveBackup();
+          saveBackup(targetId);
         }
       } catch(e) {
         errorCount++;
@@ -13474,8 +13749,8 @@ function findTestByDateEx(hist, school, grade, date) {
 
     renderPreview();
     updateBadge();
-    const dd = autoDedup();
-    if (dd) { renderPreview(); updateBadge(); saveBackup(); }
+    const dd = autoDedup(targetId);
+    if (dd) { renderPreview(); updateBadge(); saveBackup(targetId); }
     statusEl.innerHTML = `<div style="color:var(--green);font-weight:600;padding:8px 0">✅ 完了：${totalItems}件を追加しました${errorCount ? `（${errorCount}枚エラー）` : ''}${dd ? '（重複を自動整理）' : ''}</div>`;
   }
 
