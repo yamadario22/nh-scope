@@ -304,7 +304,7 @@
 <div id="keyBarsFull">
 <div id="keyBanner" style="background:#FFF8E1;border-bottom:1px solid #FDE68A;padding:10px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
   <span style="font-size:13px;font-weight:600;color:#92400E">🔑 APIキー設定</span>
-  <input id="keyInputBanner" type="text" placeholder="APIキー（AIzaSy...）"
+  <input id="keyInputBanner" type="password" autocomplete="off" placeholder="APIキー（AIzaSy...）"
     style="flex:2;min-width:180px;max-width:360px;padding:6px 10px;font-family:monospace;font-size:12px;border:1px solid #FDE68A;border-radius:6px;outline:none;background:#fff">
   <input id="modelInputBanner" type="text" placeholder="モデル名（空欄でOK）"
     style="flex:1;min-width:140px;max-width:220px;padding:6px 10px;font-family:monospace;font-size:12px;border:1px solid #FDE68A;border-radius:6px;outline:none;background:#fff">
@@ -1054,8 +1054,20 @@
 <div id="printArea"></div>
 
 <script>
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  // 【PDFを読む部品が読めなくても、アプリ全体は止めない】
+  // 以前はここで部品を直接使っていたため、部品の読み込みに失敗すると
+  // この先のプログラムが1行も動かず、アプリがまるごと使えなくなっていた。
+  // PDFを開くときにだけ部品の有無を確かめ、無ければ分かる言葉で知らせる。
+  if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  function openPdf(buf) {
+    if (typeof pdfjsLib === 'undefined') {
+      return Promise.reject(new Error('PDFを読む部品を読み込めませんでした。インターネットの接続を確認して、ページを開き直してください。'));
+    }
+    return pdfjsLib.getDocument({ data: buf }).promise;
+  }
 
   // ── CONSTANTS ──────────────────────────────────────────────────────
   const BATCH = 2;    // 2ページ/バッチ（速度2倍・API呼び出し半減）
@@ -2820,7 +2832,7 @@
       return 'Gemini（AI）の前払い残高がなくなりました。AI Studio（https://ai.studio/projects）でチャージしてから、もう一度試してください。';
     if (m.startsWith('__QUOTA__') || m.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(m))
       return 'AIの利用上限に達したか、前払い残高が不足しているようです。少し時間をおくか、Google AI Studioで残高と利用状況を確認してください。';
-    if (/Failed to fetch|NetworkError|network/i.test(m) || m.includes('fetch'))
+    if (/Failed to fetch|NetworkError|network|Load failed/i.test(m))
       return 'ネットワークに繋がりませんでした。通信環境を確認して、もう一度試してください。';
     if (/503|high demand|overloaded|UNAVAILABLE/i.test(m))
       return 'AI側が一時的に混み合っています。少し待ってから、もう一度試してください。';
@@ -2842,11 +2854,15 @@
     // 使った量の記録も無かったため、いちばん枚数の多い処理が上限を無視して走り、
     // 「今月の利用」にも一切載っていなかった。
     assertUnderUsageLimit();
-    addUsage(guessCallYen(parts));
+    const callYen = guessCallYen(parts);
+    addUsage(callYen);
     try { renderUsageBar(); } catch {}
 
     const waitTimes = [15000, 30000, 60000, 120000, 240000]; // 指数バックオフ
 
+    // 【失敗した呼び出しは数えない】送る前に数えておき（同時に送っても上限を超えないように）、
+    // 結局失敗したら取り消す。エラーになった呼び出しには料金がかからないため。
+    try {
     for (let i = 0; i <= waitTimes.length; i++) {
       try {
         const res = await fetch(
@@ -2910,6 +2926,11 @@
       }
     }
     throw new Error('5回リトライしましたが失敗しました。しばらく待ってから再試行してください。');
+    } catch (e) {
+      addUsage(-callYen, -1);
+      try { renderUsageBar(); } catch {}
+      throw e;
+    }
   }
 
   // JSON強制出力版（テスト分析専用）。opts.thinkingBudgetで思考トークン制限（高速モード）
@@ -2956,23 +2977,24 @@
     }
     return { ...localUsage(), shared: false };
   }
-  function addUsage(yen) {
+  // dCalls に -1、yen にマイナスを渡すと取り消し（送ったのに失敗して料金が発生しなかったとき）
+  function addUsage(yen, dCalls = 1) {
     const k = usageMonthKey();
     try {
       const all = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}');
       const cur = all[k] || { calls: 0, yen: 0 };
-      all[k] = { calls: cur.calls + 1, yen: Math.round((cur.yen + yen) * 10) / 10 };
+      all[k] = { calls: Math.max(0, cur.calls + dCalls), yen: Math.max(0, Math.round((cur.yen + yen) * 10) / 10) };
       localStorage.setItem(USAGE_KEY, JSON.stringify(all));
     } catch {}
     if (usageShared && usageShared.month === k) {
-      usageShared.calls += 1;
-      usageShared.yen = Math.round((usageShared.yen + yen) * 10) / 10;
+      usageShared.calls = Math.max(0, usageShared.calls + dCalls);
+      usageShared.yen = Math.max(0, Math.round((usageShared.yen + yen) * 10) / 10);
     }
     // クラウド側は足し算で書く（同時に使っても数が合う）
     if (canCloud()) {
       try {
         db.collection(FB_CONFIG_COL).doc('usage_' + k).set({
-          calls: firebase.firestore.FieldValue.increment(1),
+          calls: firebase.firestore.FieldValue.increment(dCalls),
           yen:   firebase.firestore.FieldValue.increment(yen)
         }, { merge: true }).catch(e => console.warn('利用量の記録に失敗:', e));
       } catch(e) { console.warn('利用量の記録に失敗:', e); }
@@ -3028,10 +3050,14 @@
 
     // 【上限に達していたら送らない】
     assertUnderUsageLimit();
-    addUsage(guessCallYen(parts));
+    const callYen = guessCallYen(parts);
+    addUsage(callYen);
     try { renderUsageBar(); } catch {}
 
     const waitTimes = [15000, 30000, 60000];
+    // 【失敗した呼び出しは数えない】（callGemini と同じ）。ただし返事が空だったとき（noRetry）は
+    // AIが実際に動いて料金が発生しているので、取り消さない。
+    try {
     for (let i = 0; i <= waitTimes.length; i++) {
       try {
         const res = await fetch(
@@ -3081,6 +3107,10 @@
       }
     }
     throw new Error('リトライ失敗');
+    } catch (e) {
+      if (!e || !e.noRetry) { addUsage(-callYen, -1); try { renderUsageBar(); } catch {} }
+      throw e;
+    }
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -3288,7 +3318,7 @@ pageは教科書に印刷されているページ番号を正確に読み取る�
 
       setStatus('📄 PDFを解析中...');
       const buf = await file.arrayBuffer();
-      currentPDF = await pdfjsLib.getDocument({ data:buf }).promise;
+      currentPDF = await openPdf(buf);
       const n = currentPDF.numPages;
 
       setStatus(`✅ ${n}ページを読み込みました`);
@@ -4041,6 +4071,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         chunks.push({ imgs: imgs.slice(i, i + TEST_PAGES_PER_CALL), from: i + 1, to: Math.min(i + TEST_PAGES_PER_CALL, imgs.length) });
       }
 
+      const pageFailures = [];   // AIの読み取りに失敗したページ（全体の半分未満なら、残りで分析を続ける）
       const r = await runWithProgressCard(stEl, 'test', imgs.length, 'テストをAIが分析中', async () => {
         // ページごとの処理は互いに独立しているので、まとめて送って同時に待つ。
         // 1ページずつ順番に待つと、5ページで5回分の待ち時間がかかっていた（1件2分38秒）。
@@ -4065,6 +4096,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 ・この画像に写っている内容から学年が判断できる場合だけ書いてください
 ・表紙や注意書きだけで中身が見えない場合は、grade を空文字にしてください
 ・当てずっぽうで書かないでください。学年を間違えると出題範囲がまるごと外れます` });
+            // 【1ページの失敗でテスト全体を捨てない】
+            // 以前は1ページでも失敗するとテストごと失敗になり、読めた他のページの費用が無駄になっていた。
+            // 残高切れ・上限・APIキーなど、全ページに関わるエラーだけはすぐに止める。
+            try {
             results[c] = await callGeminiJSON(
             parts,
         `定期テスト分析の専門家。研究目的で次を抽出：
@@ -4118,9 +4153,18 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
             20000,
             getFastModeOpts()
           );
+            } catch (pe) {
+              const pm = String((pe && pe.message) || pe || '');
+              if (/__QUOTA__|上限|prepayment|credits?\s+(are\s+)?depleted|billing|API\s*key|APIキー|API_KEY|401|403|PERMISSION|モデル/i.test(pm)) throw pe;
+              pageFailures.push(`${ch.from}ページ目：${friendlyError(pe)}`);
+            }
             doneCount++;
             setSt(stEl, 'load', `${doneCount}/${chunks.length}ページ読み取り済み...`);
           }));
+        }
+        // 半分以上のページが読めなかったときは、残りだけで範囲を出しても信用できないので失敗にする
+        if (pageFailures.length && pageFailures.length * 2 >= chunks.length) {
+          throw new Error(`${chunks.length}ページ中${pageFailures.length}ページの読み取りに失敗しました（${pageFailures[0]}）`);
         }
         return mergeTestResults(results.filter(Boolean));
       });
@@ -4270,6 +4314,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           warnGrade: (Object.keys(r.gradeVotes||{}).length > 1 && !gradeWasPicked)
             ? `学年の判定が割れました（${Object.keys(r.gradeVotes||{}).map(k=>`${k}：${r.gradeVotes[k]}票`).join('／')}）` : '',
           warnThin:  thin ? `読み取りが少なめです（${pageCount}ページから大問${qtCount}件・出題語${tvCount}語）` : '',
+          warnFail:  pageFailures.length
+            ? `${pageCount}ページ中${pageFailures.length}ページはAIの読み取りに失敗したため、残りのページだけで分析しました（範囲が狭く出ている可能性があります）` : '',
           prevGradeRange: prevGrade ? prevGrade.range : '',
           prevGradeGrade: prevGrade ? prevGrade.grade : '',
           year: (extractTestDate(name).slice(0,4)) || new Date().getFullYear().toString()
@@ -4718,7 +4764,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         <div style="height:6px;width:${pct}%;background:${color};border-radius:3px"></div>
       </div>
       <span style="color:var(--muted);font-size:11px">
-        テスト分析1件 約¥13／範囲表1枚 約¥1.5／教科書解析1回（2ページ）約¥3 での概算です。
+        テスト分析1件 約¥13／範囲表1枚 約¥1.5／教科書解析1回（2ページ）約¥3 での概算です（失敗してAIが動かなかった分は数えません）。正確な金額は Google AI Studio の画面で確かめてください。
         教科書解析もふくめ、上限に達したら送信を止めます。
       </span>
       <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:0 6px"
@@ -4893,7 +4939,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                                 title="範囲の始まりは、この前回のテストの終わりより後ろから探しています。前回が間違っていると、このテストもずれます">
                                前回：${esc(h.prevTest.date||'')} ${esc(h.prevTest.range)} まで</div>` : '')
                        + (() => {
-                           const ws = [h.warnBlur, h.warnGrade, h.warnThin].filter(Boolean);
+                           const ws = [h.warnBlur, h.warnGrade, h.warnThin, h.warnFail].filter(Boolean);
                            return ws.length
                              ? `<div style="color:#B45309;font-size:10px;margin-top:2px">⚠️ ${ws.map(w=>esc(w)).join('／')}</div>`
                              : '';
@@ -6559,7 +6605,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         } else {
           // 読み取ったときとまったく同じ名前・同じ順序になるようにそろえる
           const buf = await f.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+          const pdf = await openPdf(buf);
           const MAX_PAGES = 40;
           const pages = [];
           for (let p = 1; p <= Math.min(pdf.numPages, MAX_PAGES); p++) {
@@ -6663,7 +6709,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         } else {
           // PDFは1ページずつ画像に変換する。範囲表は1枚1テストぶんなので、ページごとに分ける
           const buf = await f.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+          const pdf = await openPdf(buf);
           const MAX_PAGES = 40;
           // 【入りきらないページを黙って捨てない】
           // 1つのPDFに何十枚もまとめると、41枚目以降が何も言わずに消えていた。
@@ -6902,7 +6948,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   async function readOneSyllabusImage(img) {
     const r = await callGeminiJSON(
       [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-       { text: SYLLABUS_PROMPT }],
+       { text: SYLLABUS_PROMPT() }],
       '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
       SYLLABUS_SCHEMA, 20000, getFastModeOpts());
     const noSchool = !syllabusCleanStr(r.school);
@@ -6916,7 +6962,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       try {
         const h = await callGeminiJSON(
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
-           { text: HANDWRITING_PROMPT }],
+           { text: HANDWRITING_PROMPT() }],
           '写真の中の学校名・学年・日付を探す専門家。手書きも印刷もすみずみまで探す。',
           { type: 'OBJECT', properties: {
               school: { type: 'STRING' }, grade: { type: 'STRING' },
@@ -7130,7 +7176,15 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   };
 
   // 探し直し専用の指示文。手書きの学校名・学年と、印刷の学年・日付だけを探す（範囲の中身は読まない）。
-  const HANDWRITING_PROMPT =
+  // 【年度は決め打ちにしない】読み取るときの年度（4月始まり）から毎回作る。
+  // 以前は「令和7年度＝2025年度」と書いてあったため、令和8年度以降の範囲表で
+  // 年が書かれていないと、日付が1年ずれて読まれ、テストと結びつかなかった。
+  function syllabusYearHint() {
+    const now = new Date();
+    const sy = (now.getMonth() + 1) >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+    return { sy, next: sy + 1, reiwa: sy - 2018 };
+  }
+  const HANDWRITING_PROMPT = () => { const Y = syllabusYearHint(); return (
 `この写真は中学校のテスト範囲表です。まず**手書きで書き込まれた文字**を探してください。
 表の中身（各教科の範囲など）は読まなくて構いません。
 （最後の【あわせて、印刷された学年と日付も探す】の項目だけは、印刷の文字も読みます）
@@ -7163,12 +7217,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　日付は表の左端の欄に縦書きで書かれていることが多い（例：「11月14日(金)」「十一月十四日」）
 　　1つの日付の欄が、英語を含む数教科にまたがっていることがある。英語の行が含まれる日付を選ぶ
 　　範囲表の発行日（表題の横の「令和7年11月4日」など）はテストの日ではないので使わない
-　　年が書かれていない場合は、令和7年度＝2025年度として決める
-　　　4月〜12月 → 2025年　／　1月〜3月 → 2026年
+　　年が書かれていない場合は、令和${Y.reiwa}年度＝${Y.sy}年度として決める
+　　　4月〜12月 → ${Y.sy}年　／　1月〜3月 → ${Y.next}年
 ・date_raw：その日付が写真にどう書かれていたか、そのまま書く（例：「11月14日(金)」）
-見つからない項目は空欄にする。推測で埋めないこと。`;
+見つからない項目は空欄にする。推測で埋めないこと。`); };
 
-  const SYLLABUS_PROMPT =
+  const SYLLABUS_PROMPT = () => { const Y = syllabusYearHint(); return (
 `この写真は中学校が配布したテスト範囲表です。【英語】の範囲だけを読み取ってください。
 
 【読み取る項目】
@@ -7203,10 +7257,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　　「十一月十三日」→ 11月13日　／　「二月九日」→ 2月9日
 　　　漢数字を正確に読むこと。十一月を1月、十四日を4日などと読み違えないよう注意する
 　　複数の日付がある場合（テスト一日目・二日目）は、【英語】の行にある日付を選ぶ
-　　年が書かれていない場合は、令和7年度＝2025年度として次のように決める
-　　　4月〜12月 → 2025年（例：十一月十四日 → 2025-11-14）
-　　　1月〜3月　→ 2026年（例：二月九日 → 2026-02-09）
-　　　【重要】学年末テストは1〜3月なので、必ず2026年になる。2025年にしないこと
+　　年が書かれていない場合は、令和${Y.reiwa}年度＝${Y.sy}年度として次のように決める
+　　　4月〜12月 → ${Y.sy}年（例：十一月十四日 → ${Y.sy}-11-14）
+　　　1月〜3月　→ ${Y.next}年（例：二月九日 → ${Y.next}-02-09）
+　　　【重要】学年末テストは1〜3月なので、必ず${Y.next}年になる。${Y.sy}年にしないこと
 ・textbook_from / textbook_to：英語の【今の学年の教科書】のページ範囲（数字だけ）
 　　例：「教科書 P.6〜P.23」→ from=6, to=23
 　　とびとびの場合（「P.106〜121, 124〜126」）は、いちばん小さい数と大きい数を書く（from=106, to=126）
@@ -7266,7 +7320,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　これらのページは other_materials にだけ書く。textbook にも prev_grade にも絶対に入れない
 　　例：「教科書〜p.77（メインはUnit4 Part3〜Unit6 Read and Think）／めきめきEnglish〜P88」
 　　　　→ textbook_to=77（88ではない）
-・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`;
+・読み取れない項目は空欄（数字なら0）にする。推測で埋めない`); };
 
   // 範囲表に書かれていた単元名を、アプリの表記にそろえる。
   // 実在しない単元名が入ってきたら使わない（推測で埋められた場合の保険）。
@@ -10029,6 +10083,10 @@ function findTestByDateEx(hist, school, grade, date) {
     if (!files || !files.length) return;
     const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
     if (!fileArr.length) return;
+    // 【先に用意する】確認画面でキャンセルしたときにも表示に使うので、最初に取っておく
+    // （以前は後ろで用意していたため、キャンセルすると内部でエラーになり表示が変わらなかった）
+    const stEl = document.getElementById('testStatus');
+    const btn  = document.getElementById('testStartBtn');
 
     // 解答用紙だけのまとまりは、問題文がないため出題範囲を判定できない。
     // 問題用紙と一緒なら正答から文法が読み取れて精度が上がるので、その場合は使う。
@@ -10070,8 +10128,6 @@ function findTestByDateEx(hist, school, grade, date) {
       return;
     }
 
-    const stEl = document.getElementById('testStatus');
-    const btn  = document.getElementById('testStartBtn');
     btn.disabled = true;
     pendingTestGroups = null;
 
@@ -10103,7 +10159,7 @@ function findTestByDateEx(hist, school, grade, date) {
         for (const f of g.files) {
           if (imgs.length >= MAX_PER_TEST) break;
           const buf = await f.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+          const pdf = await openPdf(buf);
           const remain = MAX_PER_TEST - imgs.length;
           for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
             imgs.push(await toBase64(await pdf.getPage(i), testScale()));
@@ -10273,7 +10329,7 @@ function findTestByDateEx(hist, school, grade, date) {
         for (const f of g.files) {
           if (imgs.length >= MAX_PER_TEST) break;
           const buf = await f.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+          const pdf = await openPdf(buf);
           const remain = MAX_PER_TEST - imgs.length;
           for (let i = 1; i <= Math.min(pdf.numPages, remain); i++) {
             imgs.push(await toBase64(await pdf.getPage(i), testScale()));
@@ -10650,7 +10706,7 @@ function findTestByDateEx(hist, school, grade, date) {
       for (const pdf of targets) {
         if (allImgs.length>=MAX) break;
         const buf = await pdf.arrayBuffer();
-        const pdfDoc = await pdfjsLib.getDocument({data:buf}).promise;
+        const pdfDoc = await openPdf(buf);
         const remain = MAX-allImgs.length;
         for (let i=1; i<=Math.min(pdfDoc.numPages,remain); i++) {
           allImgs.push(await toBase64(await pdfDoc.getPage(i), testScale()));
@@ -10871,7 +10927,7 @@ function findTestByDateEx(hist, school, grade, date) {
     if (badExams.length) {
       badExams.forEach(b => {
         if (b.firestoreId && FIREBASE_READY && db) {
-          try { db.collection(FB_EXAMS_COL).doc(b.firestoreId).delete(); } catch {}
+          try { db.collection(FB_EXAMS_COL).doc(b.firestoreId).delete().catch(e => { console.warn('入試分析のクラウド反映に失敗:', e); try { showToast('⚠️ 入試分析の変更を他の校舎に反映できませんでした（この端末には保存済み）', 'error'); } catch {} }); } catch {}
         }
       });
       exams = exams.filter(e => !isEmptyExam(e));
@@ -11131,7 +11187,7 @@ function findTestByDateEx(hist, school, grade, date) {
     exam.summaries[pIdx].wc_confirmed = true; // 人が確認・修正した印
     saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
-      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ summaries: exam.summaries })); } catch {}
+      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ summaries: exam.summaries })).catch(e => { console.warn('入試分析のクラウド反映に失敗:', e); try { showToast('⚠️ 入試分析の変更を他の校舎に反映できませんでした（この端末には保存済み）', 'error'); } catch {} }); } catch {}
     }
     renderExamHistory();
   }
@@ -11200,7 +11256,7 @@ function findTestByDateEx(hist, school, grade, date) {
     exam.confirmed = !exam.confirmed;
     saveExamHistory(exams);
     if (exam.firestoreId && FIREBASE_READY && db) {
-      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ confirmed: exam.confirmed })); } catch {}
+      try { db.collection(FB_EXAMS_COL).doc(exam.firestoreId).update(stripUndefinedForFirestore({ confirmed: exam.confirmed })).catch(e => { console.warn('入試分析のクラウド反映に失敗:', e); try { showToast('⚠️ 入試分析の変更を他の校舎に反映できませんでした（この端末には保存済み）', 'error'); } catch {} }); } catch {}
     }
     renderExamHistory();
   }
@@ -13752,59 +13808,6 @@ function findTestByDateEx(hist, school, grade, date) {
     const dd = autoDedup(targetId);
     if (dd) { renderPreview(); updateBadge(); saveBackup(targetId); }
     statusEl.innerHTML = `<div style="color:var(--green);font-weight:600;padding:8px 0">✅ 完了：${totalItems}件を追加しました${errorCount ? `（${errorCount}枚エラー）` : ''}${dd ? '（重複を自動整理）' : ''}</div>`;
-  }
-
-  // ── 訳の空欄一括補完 ──────────────────────────────────────────────
-  async function fillEmptyTranslations() {
-    const items = getItems();
-    const empty = items.filter(it => !it.translation || it.translation.trim() === '');
-    if (!empty.length) { alert('訳が空の項目はありません。'); return; }
-
-    const ok = await showConfirm(`訳が空の${empty.length}件をGeminiで一括補完しますか？`, '補完する');
-    if (!ok) return;
-
-    const btn = document.querySelector('[onclick="fillEmptyTranslations()"]');
-    if (btn) btn.textContent = '⏳ 補完中...';
-
-    let done = 0;
-    const TRANS_BATCH = 15;
-
-    try {
-      for (let i = 0; i < empty.length; i += TRANS_BATCH) {
-        const batch = empty.slice(i, i + TRANS_BATCH);
-        const prompt = `以下の英語の単語・熟語・文法に日本語訳を付けてください。JSONのみで返してください。
-[${batch.map(it => `{"content":"${it.content}","type":"${it.type}"}`).join(',')}]
-→ [{"content":"...","translation":"日本語訳"},...] の形式で返してください。`;
-
-        const raw = await callGemini(
-          [{ text: prompt }],
-          'あなたは英語の翻訳専門家です。JSONのみ返してください。',
-          2000
-        );
-
-        try {
-          const results = JSON.parse(raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim());
-          if (Array.isArray(results)) {
-            results.forEach(r => {
-              const orig = items.find(it => it.content === r.content && !it.translation?.trim());
-              if (orig && r.translation) orig.translation = r.translation;
-            });
-            done += batch.length;
-          }
-        } catch {}
-
-        if (i + TRANS_BATCH < empty.length) await sleep(2000);
-      }
-
-      setItems(items);
-      saveBackup();
-      renderPreview();
-      if (btn) btn.textContent = `✅ ${done}件を補完しました`;
-      setTimeout(() => { if (btn) btn.textContent = '🔤 空の訳を一括補完'; }, 3000);
-    } catch(e) {
-      if (btn) btn.textContent = '🔤 空の訳を一括補完';
-      alert('補完中にエラーが発生しました: ' + e.message);
-    }
   }
 
   // ── UTILS ──────────────────────────────────────────────────────────
