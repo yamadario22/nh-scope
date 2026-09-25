@@ -6954,7 +6954,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 
     const ok = await showConfirm(
       `失敗した ${todo.length} 件を、もう一度AIに読み取らせます。\n\n`
-      + `・費用は1枚あたり約 ¥1〜2 かかります\n`
+      + `・費用は1枚あたり約 ¥1〜3 かかります（学校名・学年・日付が読めないと、探し直すぶん高くなります）\n`
       + `・成功した行は通常の結果に置き換わります\n`
       + `・まだ失敗する行はエラー行のまま残ります`,
       '読み直す');
@@ -8066,7 +8066,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 【費用のかかる操作なので、押す前に必ず確認する】
     const ok = await showConfirm(
       'この1枚を、もう一度AIに読み取らせます。\n\n'
-      + '・費用は1枚あたり約 ¥1〜2 かかります\n'
+      + '・費用は1枚あたり約 ¥1〜3 かかります（学校名・学年・日付が読めないと、探し直すぶん高くなります）\n'
       + '・手で直した学校名・学年・日付・範囲は、そのまま残ります\n'
       + '・読み取り結果（ページ・単元名・副教材）だけが入れ替わります',
       '読み直す');
@@ -8079,11 +8079,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     if (btn) { btn.disabled = true; btn.textContent = '読み直しています…'; }
     setSt(stEl, 'load', `${i+1}枚目を読み直しています...`);
     try {
-      const r = await callGeminiJSON(
-        [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
-        '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
-        SYLLABUS_SCHEMA, 20000, getFastModeOpts());
-      lastSyllabusResults[i] = { file: img.name, r };
+      const r = await readOneSyllabusImage(img);   // 学校名・学年・日付が空なら探し直す（最初の読み取りと同じ処理）
+      lastSyllabusResults[i] = { file: img.name, r, shot: (lastSyllabusResults[i] || {}).shot || img.shot || 0 };
       // 手で入れた学校名・学年・日付・範囲（syllabusFix）は消さない
       saveSyllabusState();   // 【保存する】これが無いと、お金を払った結果がリロードで消える
       setSt(stEl, 'ok', `${i+1}枚目を読み直しました`);
@@ -8109,7 +8106,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const filterActive = syllabusFilterActive();
     const cost = Math.round(targets.length * 1.5);
     let msg = `${targets.length}枚をAIに読み取らせ直します。\n\n`
-      + `・費用はおよそ ¥${cost} かかります（1枚あたり約¥1.5）\n`
+      + `・費用はおよそ ¥${cost} かかります（1枚あたり約¥1.5。学校名・学年・日付が読めない写真は探し直すぶん少し増えます）\n`
       + '・手で直した学校名・学年・日付・範囲は残ります\n'
       + '・読み取り結果（ページ・単元名・前学年ぶん・副教材）が入れ替わります';
     if (!filterActive) {
@@ -8137,11 +8134,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         + `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 8px;margin-left:8px"
                    onclick="abortBulkRerereadSyllabus()">中止</button>`);
       try {
-        const r = await callGeminiJSON(
-          [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } }, { text: SYLLABUS_PROMPT }],
-          '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
-          SYLLABUS_SCHEMA, 20000, getFastModeOpts());
-        lastSyllabusResults[i] = { file: img.name, r };
+        const r = await readOneSyllabusImage(img);   // 学校名・学年・日付が空なら探し直す（最初の読み取りと同じ処理）
+        lastSyllabusResults[i] = { file: img.name, r, shot: (lastSyllabusResults[i] || {}).shot || img.shot || 0 };
         // 手で入れた学校名・学年・日付・範囲（syllabusFix）は消さない
         done++;
       } catch (e) {
@@ -8348,7 +8342,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                          ${syllabusRereadBusy ? 'disabled' : ''}
                          onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>` : '';
-            if (panelOpen) return `<br><span style="font-size:10px;color:#B45309">✏️ すぐ下の枠で直せます</span>`;
+            // 直す枠が開いている行（学年などが読めなかった行）こそ読み直したいので、ボタンは出す
+            if (panelOpen) return `<br>${photo}${reread}<br><span style="font-size:10px;color:#B45309">✏️ すぐ下の枠で直せます</span>`;
             return `<br>${photo}${reread}${hasRange
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                        onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
