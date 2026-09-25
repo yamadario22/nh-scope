@@ -6803,10 +6803,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   }
 
   // 1件の写真を送って範囲表の内容を読み取る。
-  // 【手書きが読めなかったときだけ、探し直す】
+  // 【学校名・学年・日付が読めなかったときだけ、探し直す】
   // 範囲表の学校名・学年は手書きのことが多く、書き方がそろっていない
   // （縦向き・表の外・赤ペンなど）。1回目は表の中身を読むのが主目的なので
-  // 見落としやすい。そこで、読めなかったときに限り「手書きを探すことだけ」を
+  // 見落としやすい。そこで、読めなかったときに限り「学校名・学年・日付を探すことだけ」を
   // 頼む2回目を送る。目的を1つに絞ったほうが見つかりやすい。
   // 読めている写真では走らないので、余分な費用はかからない。
   async function readOneSyllabusImage(img) {
@@ -6815,25 +6815,43 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
        { text: SYLLABUS_PROMPT }],
       '中学校のテスト範囲表を読み取る専門家。英語の範囲だけを正確に読み取る。',
       SYLLABUS_SCHEMA, 20000, getFastModeOpts());
-    const missing = !String(r.school || '').trim()
-      || /^(null|undefined|なし|不明|記載なし)$/i.test(String(r.school || '').trim())
-      || !gradeNumOf(normalizeGrade(String(r.grade || '')));
-    if (missing) {
+    const noSchool = !syllabusCleanStr(r.school);
+    const noGrade  = !gradeNumOf(normalizeGrade(syllabusCleanStr(r.grade)));
+    // 【日付が読めなかったときも探し直す】
+    // 実例（東陵中1）：表題の「東陵中学校1年生」も、左の欄の「11月14日(金)」も印刷で
+    // はっきり写っているのに、1回目では学年も日付も空欄で返ってきた。
+    // 日付が無いとテストと結びつかず、学年が無いとページを単元に直せない。
+    const noDate   = !/^\d{4}-\d{2}-\d{2}$/.test(syllabusCleanStr(r.test_date));
+    if (noSchool || noGrade || noDate) {
       try {
         const h = await callGeminiJSON(
           [{ inlineData: { mimeType: 'image/jpeg', data: img.b64 } },
            { text: HANDWRITING_PROMPT }],
-          '写真の中の手書き文字を探す専門家。印刷ではなく手書きだけを探す。',
+          '写真の中の学校名・学年・日付を探す専門家。手書きも印刷もすみずみまで探す。',
           { type: 'OBJECT', properties: {
               school: { type: 'STRING' }, grade: { type: 'STRING' },
-              found_text: { type: 'STRING' }, where: { type: 'STRING' } } },
+              found_text: { type: 'STRING' }, where: { type: 'STRING' },
+              printed_grade: { type: 'STRING' }, printed_grade_raw: { type: 'STRING' },
+              test_date: { type: 'STRING' }, date_raw: { type: 'STRING' } } },
           4000, {});
         if (h) {
-          if (h.school && !String(r.school || '').trim()) r.school = h.school;
-          if (h.grade  && !gradeNumOf(normalizeGrade(String(r.grade || '')))) r.grade = h.grade;
+          if (noSchool && syllabusCleanStr(h.school)) r.school = h.school;
+          if (noGrade) {
+            // 手書きの学年を優先し、無ければ印刷の表題などから読んだ学年を使う
+            const g = [h.grade, h.printed_grade].map(syllabusCleanStr)
+              .find(x => gradeNumOf(normalizeGrade(x)));
+            if (g) r.grade = g;
+          }
+          if (noDate && /^\d{4}-\d{2}-\d{2}$/.test(syllabusCleanStr(h.test_date))) {
+            r.test_date = syllabusCleanStr(h.test_date);
+            if (syllabusCleanStr(h.date_raw) && !syllabusCleanStr(r.date_raw)) r.date_raw = h.date_raw;
+          }
           if (h.found_text) r.grade_raw = `${r.grade_raw || ''}${r.grade_raw ? ' ／ ' : ''}手書き：${h.found_text}${h.where ? `（${h.where}）` : ''}`;
+          if (noGrade && syllabusCleanStr(h.printed_grade_raw)) {
+            r.grade_raw = `${r.grade_raw || ''}${r.grade_raw ? ' ／ ' : ''}印刷：${h.printed_grade_raw}`;
+          }
         }
-      } catch(e) { console.warn('手書きの探し直しに失敗:', e); }
+      } catch(e) { console.warn('学校名・学年・日付の探し直しに失敗:', e); }
     }
     return r;
   }
@@ -6996,10 +7014,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     }
   };
 
-  // 手書き探し専用の指示文。表の中身は一切読まない。
+  // 探し直し専用の指示文。手書きの学校名・学年と、印刷の学年・日付だけを探す（範囲の中身は読まない）。
   const HANDWRITING_PROMPT =
-`この写真は中学校のテスト範囲表です。**手書きで書き込まれた文字だけ**を探してください。
-表に印刷されている内容は読まなくて構いません。
+`この写真は中学校のテスト範囲表です。まず**手書きで書き込まれた文字**を探してください。
+表の中身（各教科の範囲など）は読まなくて構いません。
+（最後の【あわせて、印刷された学年と日付も探す】の項目だけは、印刷の文字も読みます）
 
 【探し方】
 ・写真全体をすみずみまで見る。表の外側、紙の余白、写真の左右の縁、上下の端も必ず見る
@@ -7017,7 +7036,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
 　　「三好中1」→「中1」　／　「益富2」→「中2」　／　「中３岩津」→「中3」
 　　学校名の直後に付く数字は学年を表す
 
-手書きが1つも見つからなければ、すべて空欄にする。推測で埋めないこと。`;
+手書きが1つも見つからなければ、上の4項目は空欄にする。推測で埋めないこと。
+
+【あわせて、印刷された学年と日付も探す】ここだけは印刷の文字も読む
+・printed_grade：学年。表題や紙の右上・左上の欄に印刷されていることが多い
+　　「東陵中学校1年生」「1年 2学期 期末テスト」→「中1」
+　　「中1」「中2」「中3」のいずれかで書く
+　　【重要】「2学期」「1学期」の数字は学期であって学年ではない。取り違えないこと
+・printed_grade_raw：その学年が写真にどう書かれていたか、そのまま書く（例：「東陵中学校1年生」）
+・test_date：【英語】のテストが行われる日。「2025-11-14」の形で書く
+　　日付は表の左端の欄に縦書きで書かれていることが多い（例：「11月14日(金)」「十一月十四日」）
+　　1つの日付の欄が、英語を含む数教科にまたがっていることがある。英語の行が含まれる日付を選ぶ
+　　範囲表の発行日（表題の横の「令和7年11月4日」など）はテストの日ではないので使わない
+　　年が書かれていない場合は、令和7年度＝2025年度として決める
+　　　4月〜12月 → 2025年　／　1月〜3月 → 2026年
+・date_raw：その日付が写真にどう書かれていたか、そのまま書く（例：「11月14日(金)」）
+見つからない項目は空欄にする。推測で埋めないこと。`;
 
   const SYLLABUS_PROMPT =
 `この写真は中学校が配布したテスト範囲表です。【英語】の範囲だけを読み取ってください。
@@ -8287,6 +8321,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     const textbookToDisp = syllabusCleanNum(r.textbook_to) || '';
     const prevFromDisp = syllabusCleanNum(r.prev_grade_from) || '';
     const prevToDisp = syllabusCleanNum(r.prev_grade_to) || '';
+    // 【直す枠は、行の下に全幅で出す】
+    // 以前は1列目のセルの中に出していたため、前後の写真の並びなどで1列目が大きく広がり、
+    // 右側の「英語の範囲」「該当するテスト」が画面の外に押し出されて読めなかった。
+    const hasRangeForPanel = !!(r.textbook_from || r.textbook_to || unitText);
+    const panelOpen = !!(syllabusEditOpen[i] || (hasRangeForPanel && (!school || !grade)));
     return `<tr data-row="${i}">
         <td style="font-size:11px">
           <b>${esc(school||'（学校名なし）')}</b> ${esc(grade||'（学年不明）')}<br>
@@ -8309,7 +8348,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                          ${syllabusRereadBusy ? 'disabled' : ''}
                          onclick="rereadSyllabusRow(${i})">この1枚を読み直す</button>` : '';
-            if (syllabusEditOpen[i] || (hasRange && (!school || !grade))) return syllabusFixPanel(i, school, grade);
+            if (panelOpen) return `<br><span style="font-size:10px;color:#B45309">✏️ すぐ下の枠で直せます</span>`;
             return `<br>${photo}${reread}${hasRange
               ? `<button class="btn btn-secondary btn-sm" style="font-size:10px;padding:2px 7px;margin-top:4px;margin-right:4px"
                        onclick="openSyllabusEdit(${i})">学校名・学年を直す</button>` : ''}`
@@ -8320,7 +8359,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         </td>
         <td style="font-size:11px">
           ${r.textbook_from||r.textbook_to || unitText
-            ? `教科書 p.${fromPage||'?'}〜${textbookToDisp||'?'}<br><b>${esc(unitText||'（単元に変換できません）')}</b>`
+            ? `教科書 p.${fromPage||'?'}〜${textbookToDisp||'?'}<br><b>${esc(unitText||(grade ? '（単元に変換できません）' : '（学年が分からないため、単元に変換できません。学年を選んでください）'))}</b>`
             : (unitTextRaw
                 // 【変換に失敗しても、読み取れていること自体は分かるようにする】
                 // ページ番号も単元名も無い、という表示にすると「AIが何も読まなかった」
@@ -8382,7 +8421,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                </label>`
             : ''}
         </td>
-      </tr>`;
+      </tr>${panelOpen
+        ? `<tr data-panel="${i}"><td colspan="4" style="padding-top:0">${syllabusFixPanel(i, school, grade)}</td></tr>`
+        : ''}`;
   }
 
   function renderSyllabusResult(results, focusIdx) {
