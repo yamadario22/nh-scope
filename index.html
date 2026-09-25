@@ -2802,6 +2802,9 @@
   // ── エラーメッセージをやさしい日本語に変換（初心者が詰まらないように） ──
   function friendlyError(err) {
     const m = (err && err.message ? err.message : String(err||'')).trim();
+    // 前払い残高が尽きたときは、待っても直らない。チャージが要ることをはっきり伝える
+    if (/prepayment|credits?\s+(are\s+)?depleted|billing/i.test(m))
+      return 'Gemini（AI）の前払い残高がなくなりました。AI Studio（https://ai.studio/projects）でチャージしてから、もう一度試してください。';
     if (m.startsWith('__QUOTA__') || m.includes('429') || /quota|RESOURCE_EXHAUSTED/i.test(m))
       return 'AIの利用上限に達したか、前払い残高が不足しているようです。少し時間をおくか、Google AI Studioで残高と利用状況を確認してください。';
     if (/Failed to fetch|NetworkError|network/i.test(m) || m.includes('fetch'))
