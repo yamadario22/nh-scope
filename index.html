@@ -7480,6 +7480,43 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     renderSyllabusResult(lastSyllabusResults, run[0]);
   }
 
+  // 【ホッチキス止めの2枚目以降に、学校名・学年を引き継ぐ元の行を探す】
+  // 撮った順で直前の行を見る。直前の行も引き継ぎで埋まっていれば、それで束の1枚目まで
+  // さかのぼったことになる（直前の行は、この行より先に表の中身が決まっている）。
+  // 次のどれかに当たれば、別の束の可能性があるので引き継がない。
+  //   ・直前の行が読み取りに失敗している（束の1枚目だったかもしれない）
+  //   ・撮影時刻が30分以上離れている
+  //   ・どちらの日付も読めていて、14日以上離れている
+  //   ・テストの種類（中間／期末／学年末など）や学期が食い違う
+  //   ・この行に学校名・学年のどちらかが書かれていて、直前の行と食い違う
+  const SYL_INHERIT_MAX_SHOT_GAP = 30 * 60 * 1000;
+  const SYL_INHERIT_MAX_DATE_GAP_DAYS = 14;
+  function syllabusTestKind(name) {
+    const s = String(name || '').normalize('NFKC');
+    const kind = /学年末/.test(s) ? '学年末' : /期末/.test(s) ? '期末' : /中間/.test(s) ? '中間'
+               : /実力/.test(s) ? '実力' : '';
+    const tm = s.match(/([1-3])学期|前期|後期/);
+    return { kind, term: tm ? tm[0] : '' };
+  }
+  function syllabusInheritSource(i, me) {
+    const idxs = Object.keys(syllabusRows).map(Number).filter(j => j < Number(i)).sort((a, b) => a - b);
+    if (!idxs.length) return null;
+    const idx = idxs[idxs.length - 1];
+    const prev = syllabusRows[idx];
+    if (!prev || prev.readError || (!prev.school && !prev.grade)) return null;
+    if (me.shot && prev.shot && Math.abs(me.shot - prev.shot) > SYL_INHERIT_MAX_SHOT_GAP) return null;
+    if (me.date && prev.date) {
+      const gap = Math.abs(new Date(me.date) - new Date(prev.date)) / 86400000;
+      if (!(gap <= SYL_INHERIT_MAX_DATE_GAP_DAYS)) return null;
+    }
+    const a = syllabusTestKind(me.testName), b = syllabusTestKind(prev.testName);
+    if (a.kind && b.kind && a.kind !== b.kind) return null;
+    if (a.term && b.term && a.term !== b.term) return null;
+    if (me.school && prev.school && me.school !== prev.school) return null;
+    if (me.grade && prev.grade && me.grade !== prev.grade) return null;
+    return { idx, school: prev.school || '', grade: prev.grade || '' };
+  }
+
   // 【前後の写真から、ある項目が空の行だけを機械的に埋める】
   // 条件は厳格に絞る：撮った順で「直前の行」と「直後の行」の両方にその項目があり、
   // かつその2つが同じ値であるときだけ埋める。
@@ -8329,6 +8366,9 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
           <span style="color:var(--muted)">${esc(testName)} ${esc(date||'')}</span>
           ${(dateRaw || gradeRaw)
             ? `<br><span style="color:var(--muted);font-size:10px">写真の記載：${esc(gradeRaw)} ${esc(dateRaw)}</span>` : ''}
+          ${row.inheritFrom
+            ? `<br><span style="color:#7C3AED;font-size:10px">↩ ${esc([row.inheritFrom.school, row.inheritFrom.grade].filter(Boolean).join(' '))}
+                 は、撮った順で前の写真から引き継ぎました。違っていたら「学校名・学年を直す」で直してください</span>` : ''}
           ${syllabusFixBadgeHtml(fx)}
           ${fx.date ? `<br><span style="color:#059669;font-size:10px">✏️ 日付は手で直したものです</span>` : ''}
           ${(fx.from && fx.to) ? `<br><span style="color:#059669;font-size:10px">✏️ 範囲は手で直したものです</span>` : ''}
@@ -8487,6 +8527,22 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       if (!fx.date) {
         const fixedD = fixDateByWeekday(date, r.date_raw);
         if (fixedD) { dateFixedByWeekday = date; date = fixedD; }
+      }
+      // 【ホッチキス止めの2枚目以降は、直前の写真から学校名・学年を引き継ぐ】
+      // 学校名・学年は束の1枚目にしか書かれておらず、英語の日付・範囲が2枚目以降に
+      // あることが多い。束は1枚目から順に続けて撮っているので、撮った順で直前の行から
+      // 引き継ぐ（その行も引き継いでいれば、束の1枚目までさかのぼったことになる）。
+      // 別の束を巻き込まないよう、撮影時刻・日付・テストの種類が食い違うときは引き継がない。
+      // 引き継いだ行は人が見て確かめるよう、まとめて反映のチェックは外す（下の safe）。
+      let inheritFrom = null;
+      if (!school || !grade) {
+        const src = syllabusInheritSource(i, { school, grade, date, testName, shot: res.shot || 0 });
+        if (src) {
+          inheritFrom = { idx: src.idx, school: '', grade: '' };
+          if (!school && src.school) { school = src.school; inheritFrom.school = src.school; }
+          if (!grade  && src.grade)  { grade  = src.grade;  inheritFrom.grade  = src.grade; }
+          if (!inheritFrom.school && !inheritFrom.grade) inheritFrom = null;
+        }
       }
       // 教科書ページ → 単元名
       // 始まりが書かれていない場合（from=0）は、前回のテストの終わりの続きから始まるとみなす。
@@ -8891,9 +8947,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         }
       }
       if (fx.from && fx.to) safe = !!(match && unitText);   // 手で直した範囲は信用する
+      if (inheritFrom) safe = false;   // 前の写真から引き継いだ学校名・学年は、人が確かめるまで反映しない
 
       syllabusRows[i] = { school, grade, date, r, unitText, unitTextRaw, prevGrade, prevUnitText, prevUnitTextRaw,
                           fromPage, startNote, warns, matchIdx: match ? match.idx : -1,
+                          inheritFrom, shot: res.shot || 0,
                           // 【番号だけでは足りない】テスト履歴は新しい分析が先頭に入るので、
                           // 「上から何番目」はすぐズレる。IDとファイル名も持たせて、
                           // 書き込む直前に本人確認をする。
@@ -9009,6 +9067,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
       if (row.unitText && !/〜/.test(row.unitText)) return { prio: 5, label: '範囲が1点' };
       if ((row.warns || []).some(x => /日離れています/.test(x.text || ''))) return { prio: 6, label: '日付が離れている' };
+      // 前の写真から引き継いだ学校名・学年は、束の境目を間違えていないか人が確かめる
+      if (row.inheritFrom) return { prio: 6.5, label: '前の写真から引き継いだ' };
       if (/とみなして|テスト分析が出した|続きから始めました|縮めました/.test(row.startNote || ''))
         return { prio: 7, label: '始まりが推測' };
       if (row.matchIdx < 0) return { prio: 8, label: 'テストに結びつかない' };
@@ -9102,7 +9162,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       </div>` : '';
 
     const label = { 1:'読み取りに失敗', 2:'日付が読めていない', 2.5:'テストがない時期の日付', 3:'同じテストが複数',
-                    4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている',
+                    4:'範囲が広すぎる', 5:'範囲が1点', 6:'日付が離れている', 6.5:'前の写真から引き継いだ',
                     7:'始まりが推測', 8:'テストに結びつかない', 9:'問題なし', 10:'未回収' };
     // 絞り込み中（「確かめたい行だけ出す」または検索条件のいずれか）は、
     // 「全部入れる／外す」が画面に出ている行だけに効くようにし、ボタンにもそれと分かる表記を出す。
@@ -9127,7 +9187,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 onclick="bulkRereadShownSyllabus()">${syllabusRereadBusy ? '🔄 読み直しています…' : `🔄 表示中の${bulkRereadCount}件をまとめて読み直す`}</button>
         <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:6px" onclick="exportSyllabusCSV()">⬇ 範囲表CSV</button>`;
     const countsRowHtml =
-      [1,2,2.5,3,4,5,6,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　');
+      [1,2,2.5,3,4,5,6,6.5,7,8,9,10].map(k => counts[k] ? `${label[k]} <b>${counts[k]}</b>件` : '').filter(Boolean).join('　／　');
     const sylButtonsRowEl = document.getElementById('sylButtonsRow');
     if (sylButtonsRowEl) sylButtonsRowEl.innerHTML = buttonsRowHtml;
     const sylCountsRowEl = document.getElementById('sylCountsRow');
