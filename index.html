@@ -7763,7 +7763,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     // 読み取れている日付から、いちばん多い年度を選ぶ
     const cnt = {};
     (lastSyllabusResults || []).forEach(res => {
-      const d = String((res.r && res.r.test_date) || '');
+      const d = String(syllabusResolveDate(res.r || {}) || '');
       const m = d.match(/^(\d{4})-(\d{2})/);
       if (!m) return;
       const y = parseInt(m[1]), mo = parseInt(m[2]);
@@ -7846,9 +7846,72 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return use[0].iso;
   }
 
+  // ── 範囲表の日付の「年」を、曜日で正す ────────────────────────────
+  // 【なぜ必要か】
+  // 読み取りの指示は「年が書かれていなければ、今の年度として決める」になっている。
+  // そのため去年度（2025年度）の範囲表を今（2026年度）読むと、AIは 2026-06-18 のように
+  // 1年ずれた日付を作る。曜日が合わず日付が空欄になることもある。
+  // 日付が1年ずれると、前後15日で照合するテスト履歴（2025年）と結びつかない。
+  // 写真に曜日が書かれていれば、曜日は年で決まるので、年だけを計算で正せる。
+  //
+  // 【安全のための決まり】
+  //  ・曜日が書かれていないときは、年を推測しない（元の値をそのまま返す）
+  //  ・年の候補が1つに絞れないときも、何もしない
+  //  ・月日そのものは変えない（月のずれは fixDateByWeekday の担当）
+  //  ・元のデータ（r.test_date）は書き換えない。表示や照合のときに計算するだけ
+  function parseRawMonthDay(raw) {
+    const s = String(raw || '');
+    // 「6月18日(水)、19日(木)…」のように複数日あるときは、最初の月日と曜日を使う
+    const m = s.match(/(\d{1,2})\s*[月\/]\s*(\d{1,2})\s*日?\s*[（(]\s*([日月火水木金土])\s*[)）]/);
+    return m ? { mo: +m[1], da: +m[2], wd: m[3] } : null;
+  }
+  function validYMD(y, mo, da) {
+    const d = new Date(y, mo - 1, da);
+    return d.getFullYear() === y && d.getMonth() === mo - 1 && d.getDate() === da;
+  }
+  function isoYMD(y, mo, da) {
+    return `${y}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+  }
+  function syllabusResolveDate(r) {
+    r = r || {};
+    const given = syllabusCleanStr(r.test_date);
+    const hasGiven = /^\d{4}-\d{2}-\d{2}$/.test(given);
+    const p = parseRawMonthDay(syllabusCleanStr(r.date_raw));
+    if (!p || p.mo < 1 || p.mo > 12 || p.da < 1 || p.da > 31) return given;
+    const curSY = syllabusYearHint().sy;                 // 今の年度
+    const schoolYearOf = (y, mo) => (mo >= 4 ? y : y - 1);
+    if (hasGiven) {
+      const [y, mo, da] = given.split('-').map(Number);
+      if (mo !== p.mo || da !== p.da) return given;      // 月日が違うなら触らない
+      if (weekdayOf(given) === p.wd) return given;       // 曜日が合っている
+      const alts = [];
+      for (let k = -3; k <= 3; k++) {
+        if (k === 0) continue;
+        const yy = y + k;
+        if (!validYMD(yy, mo, da)) continue;
+        const sy = schoolYearOf(yy, mo);
+        if (sy > curSY || sy < curSY - 3) continue;      // 未来や古すぎる年度は候補にしない
+        const iso = isoYMD(yy, mo, da);
+        if (weekdayOf(iso) === p.wd) alts.push(iso);
+      }
+      return alts.length === 1 ? alts[0] : given;
+    }
+    // 日付が空欄のとき：写真の月日と曜日から、合う年を探す
+    const cands = [];
+    for (let sy = curSY; sy >= curSY - 3; sy--) {
+      const yy = p.mo >= 4 ? sy : sy + 1;
+      if (!validYMD(yy, p.mo, p.da)) continue;
+      const iso = isoYMD(yy, p.mo, p.da);
+      if (weekdayOf(iso) === p.wd) cands.push(iso);
+    }
+    return cands.length === 1 ? cands[0] : given;
+  }
+
   function guessSyllabusDate(i) {
     const res = (lastSyllabusResults || [])[i] || {};
     const r   = res.r || {};
+    const resolved = syllabusResolveDate(r);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(resolved)) return resolved;
     if (r.test_date && /^\d{4}-\d{2}-\d{2}$/.test(String(r.test_date))) return String(r.test_date);
     // 「11月18日(火)」「9/10」「十一月十七日」などから月日を拾う
     const src = [r.date_raw, r.test_name].filter(Boolean).join(' ');
@@ -8093,7 +8156,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         i,
         school: fx.school || syllabusCleanStr(r.school),
         grade:  fx.grade  || normalizeGrade(syllabusCleanStr(r.grade)),
-        date:   fx.date   || syllabusCleanStr(r.test_date),
+        date:   fx.date   || syllabusResolveDate(r),
         testName: syllabusCleanStr(r.test_name),
         range: syllabusCleanStr(r.unit_range),
         pages: (textbookFrom || textbookTo) ? `教科書 p.${textbookFrom||'?'}〜${textbookTo||'?'}` : '',
@@ -8413,7 +8476,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 学年は「中1」「中１」の書き方の違いで別物にならないよう、必ずそろえる
       const school = canonSchool(fx.school || String(r.school || ''));
       const grade  = normalizeGrade(fx.grade || r.grade || '');
-      const date   = fx.date || String(r.test_date || '');
+      const date   = fx.date || syllabusResolveDate(r);
       if (fx.to) { add(school, grade, date, fx.to, true); return; }   // 手で直した範囲がいちばん確か
       // 【範囲表に単元名が書いてある行も使う】
       // 「〜Unit 4まで」と紙に書いてあるなら、それは判定ではなく一次情報。
@@ -8684,7 +8747,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 手で直した内容があれば、それを優先する（手直しは syllabusFix に残る）
       const fx = syllabusFix[i] || {};
       if (fx.school) school = fx.school;
-      let date = fx.date || syllabusCleanStr(r.test_date);
+      let date = fx.date || syllabusResolveDate(r);
       // 【曜日で日付を検算する】
       // 写真に「19日(木)」としか書かれていないと、AIが月を推測して外す。
       // 曜日はカレンダーで決まるので、合わない月は計算で正せる。
