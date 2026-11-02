@@ -4849,6 +4849,8 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                 title="ページ→Unit対応表や教科書データを直したあと、Geminiを使わずに範囲だけ作り直します（料金はかかりません）">📐 範囲を再判定</button>
               <button class="btn btn-ghost btn-sm" onclick="exportTestHistoryCSV()"
                 title="絞り込みに関係なく、保存済みテストの分析履歴を全件CSVで書き出します（範囲判定の答え合わせ用）">⬇ 履歴CSV</button>
+              <button class="btn btn-ghost btn-sm" onclick="exportQuestionTypesJSON()"
+                title="保存済みテストの「大問・小問ごとの形式・問題数・文法」を全件書き出します（実力問題づくりで、よく出る形式を調べるため）。データは変わりません">⬇ 出題形式データ</button>
               <button class="btn btn-ghost btn-sm" onclick="resyncTestsToCloud()"
                 title="手元にはあるのにクラウドに無い（または消えてしまった）テストをまとめて送り直します（Geminiは使わないので料金はかかりません）">☁️ クラウドに送り直す</button>
               <button class="btn btn-danger btn-sm" onclick="clearTestHistory()">🗑 全て削除</button>
@@ -13680,6 +13682,33 @@ function findTestByDateEx(hist, school, grade, date) {
       }
     });
     return out;
+  }
+
+  // 【出題形式データの書き出し】
+  // 実力問題づくりで「この範囲・この文法なら、どの形式がよく出るか」を集計するために使う。
+  // 履歴を読んで書き出すだけで、保存されたデータには一切手を加えない。
+  function exportQuestionTypesJSON() {
+    let hist = [];
+    try { hist = histAll(); } catch {}
+    if (!hist.length) { alert('保存されているテストがありません。'); return; }
+    const pick = q => ({ section: q.section || '', type: q.type || '', count: q.count || 0, theme: q.theme || '',
+      grammar: q.grammar || '', grammar_example: q.grammar_example || '', phrases: q.phrases || '' });
+    const out = hist.map(h => ({
+      school: h.school || extractSchoolName(h.name || '') || '',
+      grade: normalizeGrade(h.grade || ''),
+      testDate: h.testDate || extractTestDate(h.name || '') || '',
+      range: h.range || '',
+      rangeEditedBy: h.rangeEditedBy || '',
+      question_types: (h.question_types || []).map(q => ({ ...pick(q), sub_questions: (q.sub_questions || []).map(pick) }))
+    }));
+    const blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `出題形式データ_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    alert(`${out.length}件のテストの出題形式を書き出しました。`);
   }
 
   function exportTestHistoryCSV() {
