@@ -7907,6 +7907,44 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     return cands.length === 1 ? cands[0] : given;
   }
 
+  // 【月が書かれていない「19日(木)」だけの日付】
+  // 範囲表の日付欄が「19日(木)」「20日(火)」とだけ書かれ、月が無いことがある
+  // （同じ束の別の写真に月が書かれている）。月がないと年も決められない。
+  // そこで、同じ学校・同じ学年で分析済みのテストの日付を見て、
+  // 「日にちと曜日が合う日」がちょうど1つに絞れたときだけ、その日付を使う。
+  //  ・絞れなければ何もしない（空欄のまま）
+  //  ・写真に月日が書かれているものは対象外（syllabusResolveDate の担当）
+  //  ・履歴の日付の前後3日だけを見る（範囲表の日付はテスト期間の1日なので）
+  function syllabusDateFromHistory(hist, school, grade, raw) {
+    const s = String(raw || '');
+    if (!school || !grade) return '';
+    if (/\d{1,2}\s*[月\/]\s*\d{1,2}/.test(s)) return '';
+    const m = s.match(/(\d{1,2})\s*日\s*[（(]\s*([日月火水木金土])\s*[)）]/);
+    if (!m) return '';
+    const dd = +m[1], wd = m[2];
+    const sc = canonSchool(school);
+    const curSY = syllabusYearHint().sy;
+    const found = new Set();
+    (hist || []).forEach(h => {
+      if (canonSchool(h.school || extractSchoolName(h.name || '')) !== sc) return;
+      if (normalizeGrade(h.grade || '') !== grade) return;
+      const hd = h.testDate || extractTestDate(h.name || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(hd || ''))) return;
+      const base = new Date(hd + 'T00:00:00');
+      if (isNaN(base)) return;
+      for (let k = -3; k <= 3; k++) {
+        const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + k);
+        if (d.getDate() !== dd) continue;
+        const iso = isoYMD(d.getFullYear(), d.getMonth() + 1, d.getDate());
+        if (weekdayOf(iso) !== wd) continue;
+        const sy = d.getMonth() + 1 >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+        if (sy > curSY || sy < curSY - 3) continue;
+        found.add(iso);
+      }
+    });
+    return found.size === 1 ? [...found][0] : '';
+  }
+
   function guessSyllabusDate(i) {
     const res = (lastSyllabusResults || [])[i] || {};
     const r   = res.r || {};
@@ -8776,6 +8814,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       // 教科書ページ → 単元名
       // 始まりが書かれていない場合（from=0）は、前回のテストの終わりの続きから始まるとみなす。
       // 学年最初のテストなら Unit 0 から。
+      // 月が書かれていない「19日(木)」型は、履歴のテストの日付で1つに絞れたときだけ使う
+      let dateFromHistory = '';
+      if (!date && !fx.date) {
+        const dh = syllabusDateFromHistory(hist, school, grade, r.date_raw);
+        if (dh) { date = dh; dateFromHistory = dh; }
+      }
       const found = findTestByDateEx(hist, school, grade, date);
       const match = found.match;
       // 【結びつかないとき、その理由を出す】
@@ -9081,6 +9125,10 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                          + `登録されていません。10月に定期テストを行うのは東三河のごく一部の学校だけなので、`
                          + `月の読み違いの可能性があります。10月で正しいなら、右のボタンから登録してください`,
                      needFix: true });
+      }
+      if (dateFromHistory) {
+        warns.push({ text: `写真には月が書かれていなかったので（${esc(r.date_raw || '')}）、`
+                         + `分析済みのテストの日付から ${dateFromHistory} と判断しました。違っていたら日付を直してください` });
       }
       if (dateFixedByWeekday) {
         warns.push({ text: `写真に書かれた曜日と合わなかったので、日付を ${dateFixedByWeekday} から ${date} に直しました`
