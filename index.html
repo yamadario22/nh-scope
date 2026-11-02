@@ -7770,7 +7770,14 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
   //   ① 写真から読めた月日があれば、その束の年度を当てて日付を作る
   //   ② 選べる範囲も、その年度の4月〜翌3月に絞る
   function syllabusSchoolYear() {
-    // 読み取れている日付から、いちばん多い年度を選ぶ
+    const best = syllabusDominantYear();
+    if (best !== null) return best;
+    const now = new Date();
+    return now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  }
+  // 読み取れている日付から、いちばん多い年度を返す。日付が1つも読めていなければ null。
+  // （今日の年度で決めつけない。日付が無い行を結びつけるときは、こちらを使う）
+  function syllabusDominantYear() {
     const cnt = {};
     (lastSyllabusResults || []).forEach(res => {
       const d = String(syllabusResolveDate(res.r || {}) || '');
@@ -7782,9 +7789,7 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
     });
     let best = null, n = 0;
     Object.keys(cnt).forEach(k => { if (cnt[k] > n) { n = cnt[k]; best = parseInt(k); } });
-    if (best !== null) return best;
-    const now = new Date();
-    return now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+    return best;
   }
 
   function syllabusYearRange() {
@@ -7953,6 +7958,50 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
       }
     });
     return found.size === 1 ? [...found][0] : '';
+  }
+
+  // 【日付が写真に全く書かれていない行】
+  // 「1学期期末テスト」のように、テスト名だけが分かる行を、
+  // 同じ学校・同じ学年・同じ年度の、同じ学期のテストに結びつける。
+  //  ・年度は、同じ読み込みの中で日付が読めている行の多数派を使う（読めている行が無ければ何もしない）
+  //  ・学期が書かれていない（「第2回定期テスト」など）ときは何もしない
+  //  ・該当するテストが1つ、または複数でも日付が7日以内に収まるとき（先生ごとにファイルが分かれる場合）だけ使う
+  //  ・結びつけた行には注意書きが付くので、まとめて反映のチェックは自動で外れる
+  function syllabusTermFromName(name) {
+    const s = String(name || '').replace(/\s+/g, '').replace(/[１２３]/g, c => '123'['１２３'.indexOf(c)]);
+    if (!s) return '';
+    if (/学年末/.test(s)) return '学年末テスト';
+    const kind = /中間/.test(s) ? '中間' : (/期末/.test(s) ? '期末' : '');
+    if (!kind) return '';
+    if (/前期/.test(s)) return `前期${kind}テスト`;
+    if (/後期/.test(s)) return kind === '中間' ? '後期中間テスト' : '学年末テスト';
+    const m = s.match(/([123])学期/);
+    if (!m) return '';
+    if (m[1] === '3') return '学年末テスト';
+    return `${m[1]}学期${kind}テスト`;
+  }
+  function syllabusDateFromTestName(hist, school, grade, testName) {
+    if (!school || !grade) return null;
+    const term = syllabusTermFromName(testName);
+    if (!term) return null;
+    const sy = syllabusDominantYear();
+    if (sy === null) return null;
+    const sc = canonSchool(school);
+    const dates = [];
+    (hist || []).forEach(h => {
+      if (canonSchool(h.school || extractSchoolName(h.name || '')) !== sc) return;
+      if (normalizeGrade(h.grade || '') !== grade) return;
+      const hd = h.testDate || extractTestDate(h.name || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(hd || ''))) return;
+      if (schoolYearOf(hd) !== sy) return;
+      if (testTermOf(h) !== term) return;
+      dates.push(hd);
+    });
+    if (!dates.length) return null;
+    dates.sort();
+    const span = (new Date(dates[dates.length - 1] + 'T00:00:00') - new Date(dates[0] + 'T00:00:00')) / 86400000;
+    if (span > 7) return null;
+    return { date: dates[0], term, sy };
   }
 
   function guessSyllabusDate(i) {
@@ -8830,6 +8879,12 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
         const dh = syllabusDateFromHistory(hist, school, grade, r.date_raw);
         if (dh) { date = dh; dateFromHistory = dh; }
       }
+      // 日付が全く無い行は、テスト名（学期）・学校・学年で、同じ年度のテストを1つに絞れたときだけ使う
+      let dateFromName = null;
+      if (!date && !fx.date) {
+        const dn = syllabusDateFromTestName(hist, school, grade, r.test_name);
+        if (dn) { date = dn.date; dateFromName = dn; }
+      }
       const found = findTestByDateEx(hist, school, grade, date);
       const match = found.match;
       // 【結びつかないとき、その理由を出す】
@@ -9135,6 +9190,11 @@ ${EXTRACTION_COMPLETENESS_RULES}`;
                          + `登録されていません。10月に定期テストを行うのは東三河のごく一部の学校だけなので、`
                          + `月の読み違いの可能性があります。10月で正しいなら、右のボタンから登録してください`,
                      needFix: true });
+      }
+      if (dateFromName) {
+        warns.push({ text: `日付が写真に書かれていなかったので、テスト名「${esc(r.test_name || '')}」と学校・学年から、`
+                         + `${dateFromName.sy}年度の${dateFromName.term}（${dateFromName.date}）と判断しました。`
+                         + `年度や学期が違っていたら、日付を直してください` });
       }
       if (dateFromHistory) {
         warns.push({ text: `写真には月が書かれていなかったので（${esc(r.date_raw || '')}）、`
