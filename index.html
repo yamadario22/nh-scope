@@ -1328,12 +1328,22 @@
       // 疑問詞のあとに to が続く形が書かれていたら、ここでは判定しない。
       [/^(?!.*(how|what|where|when|who)\s*to\b)(?!.*疑問詞\s*[+＋]\s*(to|不定詞)).*(間接疑問|動詞.*(人).*(what|where|when|who|how).*節|(what|where|when|who|how)などで始まる節)/i, 'Unit 4','Part 1'],
       // Unit 3 Read and Think 1・2：原形不定詞（let 人 原形不定詞 / help 人 原形不定詞）
-      [/let\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i,  'Unit 3','Read and Think 1'],
-      [/help\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i, 'Unit 3','Read and Think 2'],
+      // 【単語の途中・Let's には反応させない】
+      // 以前は「let」「help」の文字が含まれるだけで当たっていた。
+      // 実例：「Let's ～（勧誘）」（中1）、「complete」「helpful」などの中の let / help に当たり、
+      // 中3の範囲の終わりが Unit 3 に誤って伸びていた。
+      // 前に英字が続かず、後ろにも英字が続かない「単語としての let / help」だけを拾う。
+      // （Let's は let の直後に ' が付くので除く。lookbehind は古いブラウザで構文エラーになるため使わない）
+      [/(^|[^a-z])let(?![a-z'’])\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i,  'Unit 3','Read and Think 1'],
+      [/(^|[^a-z])help(?![a-z])\s*(人|[a-z]+)?\s*(原形不定詞|原形)?/i, 'Unit 3','Read and Think 2'],
       // 「I want everyone to know ....」＝Unit 3 Part 2。
       // AIは「want + O + to do」「want 人 to do」のように記号を挟んで書くため、
       // 目的語の位置に記号や英字が入っても拾えるようにする
-      [/(want|tell|ask)\s*[+＋]?\s*(人|目的語|[AO]|[A-Za-z]+)?\s*[+＋]?\s*(to\b|to不定詞|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
+      // 【目的語が必要】「want to ～」（中1 Unit 1）のように、want の直後に to が続くだけのものは
+      // 中3 Unit 3 の文法ではない。「want 人 to ～」のように、間に目的語があるものだけを拾う。
+      // 以前は目的語が省略できたため、中3のテストに出る中1の復習（want to）で
+      // 範囲の終わりが Unit 3 Part 2 に誤って伸びていた。
+      [/(^|[^a-z])(want|tell|ask)(s|ed|ing)?(?![a-z])\s*[+＋]?\s*(人|目的語|[AO](?![a-z])|[A-Za-z]+)\s*[+＋]?\s*(to(?![a-z])|to不定詞|不定詞)|動詞\s*[+＋]\s*目的語\s*[+＋]?\s*to/i, 'Unit 3','Part 2'],
       // Unit 4 Read and Think 1・2：後置修飾（現在分詞・過去分詞）
       // 「不規則動詞の過去分詞」は現在完了で使う活用形のことであって、後置修飾ではない。
       // 修飾・名詞と一緒に書かれているときだけ後置修飾とみなす。
